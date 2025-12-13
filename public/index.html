@@ -1,76 +1,417 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN" data-theme="dark">
+
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TikTok LIVE Chat Reader (Demo)</title>
+    <title>TikTok Live Monitor</title>
 
-    <meta name="description" content="A chat reader for TikTok LIVE utilizing TikTok-Live-Connector and Socket.IO to forward the data to the client. This demo project uses the unofficial TikTok API to retrieve chat comments, gifts and other events from TikTok LIVE.">
-    <meta name="keywords" content="TikTok,Live,Livestream,Chat,Reader,Scraper,Tracker,tiktok.com,broadcast,api,library,node,node.js,javascript">
+    <!-- Tailwind + DaisyUI -->
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
 
-    <link rel="stylesheet" href="style.css">
+    <!-- Third Party Libs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"  crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-
+    <!-- App Scripts -->
     <script src="connection.js"></script>
+    <script src="config.js"></script>
+    <script src="room_list.js"></script>
+    <script src="user_analysis.js"></script>
     <script src="app.js"></script>
 
-    <script>
-        function generateOverlay() {
-            let username = $('#uniqueIdInput').val();
-            let url = `/obs.html?username=${username}&showLikes=1&showChats=1&showGifts=1&showFollows=1&showJoins=1&bgColor=rgb(24,23,28)&fontColor=rgb(227,229,235)&fontSize=1.3em`;
-        
-            if(username) {
-                window.open(url, '_blank');
-            } else {
-                alert("Enter username");
-            }
-        }
-    </script>
+    <link rel="stylesheet" href="style.css"> <!-- Minimal overrides -->
 </head>
-<body>
-    <div class="head">
-        <h1>TikTok LIVE Chat Reader</h1>
-        <span class="subTitle">Source: <a href="https://github.com/zerodytrash/TikTok-Chat-Reader">https://github.com/zerodytrash/TikTok-Chat-Reader</a></span>      
+
+<body class="bg-base-300 min-h-screen flex flex-col">
+
+    <!-- Navbar -->
+    <div class="navbar bg-base-100 shadow-lg z-10">
+        <div class="flex-1">
+            <a class="btn btn-ghost text-xl text-primary font-bold">TikTok Monitor</a>
+        </div>
+        <div class="flex-none">
+            <ul class="menu menu-horizontal px-1 gap-2">
+                <li><a class="nav-btn active" onclick="switchSection('roomList')">📺 房间列表</a></li>
+                <li><a class="nav-btn" onclick="switchSection('userAnalysis')">📊 用户分析</a></li>
+                <li><a class="nav-btn" onclick="switchSection('systemConfig')">⚙️ 系统配置</a></li>
+            </ul>
+        </div>
     </div>
 
-    <div>
-        A chat reader for <a href="https://www.tiktok.com/live">TikTok LIVE</a> utilizing <a href="https://github.com/zerodytrash/TikTok-Live-Connector">TikTok-Live-Connector</a> and <a href="https://socket.io/">Socket.IO</a> to forward the data to the client. More Tools available at <a href="https://tikfinity.zerody.one/" target="_blank">TikFinity</a>.
-    </div>
+    <!-- Main Content -->
+    <main class="flex-grow container mx-auto p-4 overflow-y-auto">
 
-    <div class="inputFields">
-        <p>Enter the <b>@username</b> of a user who is currently live:</p>
-        <input type="text" id="uniqueIdInput">
-        <input type="button" id="connectButton" value="connect">
-        <a href="#" onclick="generateOverlay()">Generate Overlay URL</a>
-    </div>
+        <!-- SECTION: Room List -->
+        <section id="section-roomList" class="content-section block">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold">监控房间列表</h2>
+                <button class="btn btn-primary btn-sm md:btn-md gap-2" onclick="openAddRoomModal()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                    </svg>
+                    添加房间
+                </button>
+            </div>
 
-    <table class="splitstatetable">
-        <tr>
-            <td>
-                <pre id="stateText"></pre>
-            </td>
-            <td>
-                <div id="roomStats"></div>
-            </td>
-        </tr>
-    </table>
-
-    <table class="splitchattable">
-        <tr>
-            <td>
-                <div class="chatcontainer">
-                    <h3 class="containerheader">Chats</h3>
+            <div id="roomListContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                <!-- Cards injected via room_list.js -->
+                <div class="col-span-full text-center py-10 text-base-content/50">
+                    <span class="loading loading-spinner loading-lg"></span>
+                    <p>正在加载房间...</p>
                 </div>
-            </td>
-            <td>
-                <div class="giftcontainer">
-                    <h3 class="containerheader">Gifts</h3>
+            </div>
+        </section>
+
+        <!-- SECTION: Room Detail -->
+        <section id="section-roomDetail" class="content-section hidden h-full">
+            <div class="grid grid-rows-[auto_1fr] h-[calc(100vh-100px)] gap-4">
+
+                <!-- Header -->
+                <div class="bg-base-100 rounded-box p-4 shadow-md flex justify-between items-center flex-wrap gap-4">
+                    <div class="flex items-center gap-4">
+                        <button class="btn btn-sm btn-ghost" onclick="exitRoom()">← 返回</button>
+                        <div>
+                            <h2 id="detailRoomName" class="text-xl font-bold">房间名</h2>
+                            <div class="badge badge-outline" id="detailRoomId">ID</div>
+                            <button class="btn btn-xs btn-error btn-outline hidden" id="stopRecordBtn"
+                                onclick="stopCurrentRecord()">⏹ 停止本场</button>
+                        </div>
+                    </div>
+
+                    <div class="flex items-center gap-4">
+                        <div id="detailStats"
+                            class="stats shadow stats-vertical md:stats-horizontal bg-base-200 scale-90 md:scale-100">
+                            <div class="stat p-2">
+                                <div class="stat-title text-xs">时长</div>
+                                <div class="stat-value text-lg" id="d_duration">00:00</div>
+                            </div>
+                            <div class="stat p-2">
+                                <div class="stat-title text-xs">总进房</div>
+                                <div class="stat-value text-lg text-secondary" id="d_member">0</div>
+                            </div>
+                            <div class="stat p-2">
+                                <div class="stat-title text-xs">总点赞</div>
+                                <div class="stat-value text-lg text-error" id="d_like">0</div>
+                            </div>
+                            <div class="stat p-2">
+                                <div class="stat-title text-xs">总礼物</div>
+                                <div class="stat-value text-lg text-warning" id="d_gift">0</div>
+                            </div>
+                        </div>
+
+                        <select id="sessionSelect" class="select select-bordered select-sm w-48"
+                            onchange="changeSession(this.value)">
+                            <option value="live">🟢 实时直播 (LIVE)</option>
+                        </select>
+                    </div>
                 </div>
-            </td>
-        </tr>
-    </table>
+
+                <!-- Detail Content -->
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 overflow-hidden">
+                    <!-- Left/Main: Chat or Content -->
+                    <div class="lg:col-span-2 flex flex-col gap-4 overflow-hidden">
+                        <div role="tablist" class="tabs tabs-boxed tabs-sm">
+                            <a role="tab" class="tab tab-active" onclick="switchDetailTab('currentLive', this)">实时弹幕</a>
+                            <a role="tab" class="tab" onclick="switchDetailTab('giftStats', this)">礼物明细</a>
+                            <a role="tab" class="tab" onclick="switchDetailTab('interactStats', this)">互动榜单</a>
+                            <a role="tab" class="tab" onclick="switchDetailTab('timeStats', this)">时段分析</a>
+                        </div>
+
+                        <div id="tab-currentLive"
+                            class="detail-tab-content h-full bg-base-100 rounded-box p-2 overflow-hidden border border-base-content/10 relative">
+
+                            <div class="absolute top-2 right-2 z-10 flex gap-2">
+                                <button class="btn btn-xs btn-success hidden" id="saveSessionBtn"
+                                    onclick="saveCurrentSession()">💾 保存本场数据</button>
+                                <button class="btn btn-xs btn-primary opacity-80 hover:opacity-100" id="connectBtn"
+                                    onclick="connectToLive(currentDetailRoomId)">🔌 连接直播</button>
+                            </div>
+
+                            <div class="chat-container h-full overflow-y-auto space-y-1 p-2" id="chatContainer">
+                                <div class="text-center opacity-50 my-10">准备连接...</div>
+                            </div>
+                        </div>
+
+                        <div id="tab-giftStats"
+                            class="detail-tab-content hidden h-full bg-base-100 rounded-box p-4 overflow-y-auto">
+                            <h3 class="font-bold mb-2">礼物统计</h3>
+                            <table class="table table-xs table-zebra w-full" id="giftTable">
+                                <thead>
+                                    <tr>
+                                        <th>账号</th>
+                                        <th>礼物</th>
+                                        <th class="text-right">数量</th>
+                                        <th class="text-right">单价 (💎)</th>
+                                        <th class="text-right">总价 (💎)</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+
+                        <div id="tab-interactStats"
+                            class="detail-tab-content hidden h-full bg-base-100 rounded-box p-4 overflow-y-auto">
+                            <div class="grid grid-cols-3 gap-4">
+                                <div>
+                                    <h4 class="font-bold mb-2 text-warning">送礼榜 (Top 20)</h4>
+                                    <table class="table table-xs table-compact" id="topGiftersTable">
+                                        <thead>
+                                            <tr>
+                                                <th>昵称</th>
+                                                <th>价值</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                                <div>
+                                    <h4 class="font-bold mb-2 text-info">发言榜 (Top 20)</h4>
+                                    <table class="table table-xs table-compact" id="topContributorsTable">
+                                        <!-- Repurposed for Chatters as per code logic -->
+                                        <thead>
+                                            <tr>
+                                                <th>昵称</th>
+                                                <th>次数</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                                <div>
+                                    <h4 class="font-bold mb-2 text-error">点赞榜 (Top 20)</h4>
+                                    <table class="table table-xs table-compact" id="topLikersTable">
+                                        <thead>
+                                            <tr>
+                                                <th>昵称</th>
+                                                <th>点赞数</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody></tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div id="tab-timeStats" class="detail-tab-content hidden h-full bg-base-100 rounded-box p-4">
+                            <div class="h-64 w-full">
+                                <canvas id="timeStatsChart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Info Panel -->
+                    <div class="hidden lg:block bg-base-100 rounded-box p-4 shadow-sm">
+                        <h3 class="text-lg font-bold mb-4">主播信息</h3>
+                        <div class="space-y-2 text-sm opacity-80">
+                            <div class="flex justify-between">
+                                <span>开始时间:</span>
+                                <span id="info_startTime">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>最高在线:</span>
+                                <span id="info_maxViewers" class="font-mono text-secondary">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>收到点赞:</span>
+                                <span id="info_totalLikes" class="font-mono text-error">-</span>
+                            </div>
+                            <div class="flex justify-between">
+                                <span>收到评论:</span>
+                                <span id="info_totalComments" class="font-mono">-</span>
+                            </div>
+                            <div class="divider my-2"></div>
+                            <div class="flex justify-between font-bold">
+                                <span>礼物总值:</span>
+                                <span id="info_totalGift" class="text-warning">0</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- SECTION: User Analysis -->
+        <section id="section-userAnalysis" class="content-section hidden">
+            <div class="flex gap-2 mb-4">
+                <button class="btn btn-sm btn-outline sub-nav-btn active" onclick="switchUserTab('list')">用户列表</button>
+                <button class="btn btn-sm btn-outline sub-nav-btn" onclick="switchUserTab('charts')">全局图表</button>
+            </div>
+
+            <div id="userAnalysis-list" class="user-sub-content">
+                <div class="flex gap-2 mb-4">
+                    <input type="text" id="userLangFilter" placeholder="过滤语言 (如 English)"
+                        class="input input-bordered input-sm w-full max-w-xs">
+                    <button class="btn btn-sm btn-accent" onclick="renderUserList()">刷新</button>
+                </div>
+
+                <div class="overflow-x-auto bg-base-100 rounded-box shadow">
+                    <table class="table table-zebra table-sm w-full" id="userListTable">
+                        <thead>
+                            <tr>
+                                <th>#</th>
+                                <th>账号</th>
+                                <th>昵称</th>
+                                <th>礼物价值</th>
+                                <th>语言</th>
+                                <th>贡献指数</th>
+                                <th>常驻房间</th>
+                                <th>最近活跃</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+                <div class="flex items-center justify-center gap-2 mt-4 flex-wrap">
+                    <span class="text-sm opacity-50">共 <span id="userTotalCount">0</span> 用户</span>
+                    <div class="join" id="userPagination">
+                        <!-- Pagination buttons generated by JS -->
+                    </div>
+                </div>
+            </div>
+
+            <div id="userAnalysis-charts" class="user-sub-content hidden flex flex-col gap-10">
+                <!-- 24H Charts Row -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-base-100 p-4 rounded-box shadow h-80">
+                        <h3 class="font-bold mb-4 text-center">24小时 - 礼物价值</h3>
+                        <div class="h-64 relative">
+                            <canvas id="chart24hGift"></canvas>
+                        </div>
+                    </div>
+                    <div class="bg-base-100 p-4 rounded-box shadow h-80">
+                        <h3 class="font-bold mb-4 text-center">24小时 - 弹幕数量</h3>
+                        <div class="h-64 relative">
+                            <canvas id="chart24hChat"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Weekly Charts Row -->
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div class="bg-base-100 p-4 rounded-box shadow h-80">
+                        <h3 class="font-bold mb-4 text-center">周趋势 - 礼物价值</h3>
+                        <div class="h-64 relative">
+                            <canvas id="chartWeeklyGift"></canvas>
+                        </div>
+                    </div>
+                    <div class="bg-base-100 p-4 rounded-box shadow h-80">
+                        <h3 class="font-bold mb-4 text-center">周趋势 - 弹幕数量</h3>
+                        <div class="h-64 relative">
+                            <canvas id="chartWeeklyChat"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- User Detail Slide-over -->
+            <div id="userDetailPanel"
+                class="fixed inset-y-0 right-0 w-96 bg-base-200 shadow-2xl transform translate-x-full transition-transform duration-300 overflow-y-auto p-4 z-50">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="text-xl font-bold">用户详情</h3>
+                    <button class="btn btn-square btn-sm btn-ghost"
+                        onclick="$('#userDetailPanel').addClass('translate-x-full')">✕</button>
+                </div>
+                <div id="userDetailContent">加载中...</div>
+            </div>
+        </section>
+
+        <!-- SECTION: System Config -->
+        <section id="section-systemConfig" class="content-section hidden">
+            <div class="card bg-base-100 shadow-xl max-w-2xl mx-auto">
+                <div class="card-body">
+                    <h2 class="card-title mb-4">系统配置</h2>
+
+                    <div class="form-control w-full">
+                        <label class="label"><span class="label-text">服务端口 (重启生效)</span></label>
+                        <input type="number" id="cfg_port" class="input input-bordered w-full" placeholder="8081">
+                    </div>
+
+                    <div class="form-control w-full">
+                        <label class="label"><span class="label-text">监控间隔 (分钟)</span></label>
+                        <input type="number" id="cfg_interval" class="input input-bordered w-full" placeholder="5">
+                    </div>
+
+                    <div class="form-control w-52 mt-4">
+                        <label class="label cursor-pointer">
+                            <span class="label-text">启用自动监控</span>
+                            <input type="checkbox" id="cfg_autoMonitor" class="toggle toggle-primary" />
+                        </label>
+                    </div>
+
+                    <div class="form-control w-full">
+                        <label class="label"><span class="label-text">SOCKS 代理</span></label>
+                        <input type="text" id="cfg_proxy" class="input input-bordered w-full"
+                            placeholder="socks5://127.0.0.1:1080">
+                    </div>
+
+                    <div class="form-control w-full">
+                        <label class="label"><span class="label-text">EulerStream API Key</span></label>
+                        <input type="text" id="cfg_eulerKey" class="input input-bordered w-full">
+                    </div>
+
+                    <div class="form-control w-full">
+                        <label class="label"><span class="label-text">TikTok SessionID</span></label>
+                        <input type="text" id="cfg_sessionId" class="input input-bordered w-full">
+                    </div>
+
+                    <div class="form-control w-full">
+                        <label class="label"><span class="label-text">AI API Key</span></label>
+                        <input type="text" id="cfg_aiKey" class="input input-bordered w-full">
+                    </div>
+                    <div class="form-control w-full">
+                        <label class="label"><span class="label-text">AI API URL</span></label>
+                        <input type="text" id="cfg_aiUrl" class="input input-bordered w-full">
+                    </div>
+
+                    <div class="card-actions justify-end mt-6">
+                        <button class="btn btn-error" onclick="restartServer()">重启服务</button>
+                        <button class="btn btn-primary" onclick="saveConfig()">保存更改</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <!-- Modal: Add Room -->
+    <dialog id="roomModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">添加 / 编辑 房间</h3>
+            <input type="hidden" id="editRoomIdRaw">
+
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">房间 ID (UniqueId)</span></label>
+                <input type="text" id="roomUniqueId" placeholder="例如: my1mint4" class="input input-bordered w-full" />
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">房间名称 (备注)</span></label>
+                <input type="text" id="roomNameInput" placeholder="备注名称" class="input input-bordered w-full" />
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label cursor-pointer justify-start gap-4">
+                    <span class="label-text">自动录制</span>
+                    <input type="checkbox" id="roomMonitorToggle" class="toggle toggle-success" checked />
+                </label>
+            </div>
+
+            <div class="modal-action">
+                <form method="dialog">
+                    <button class="btn" onclick="closeRoomModal()">取消</button>
+                </form>
+                <button class="btn btn-primary" onclick="saveRoom()">保存</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button onclick="closeRoomModal()">关闭</button>
+        </form>
+    </dialog>
+
 </body>
+
 </html>
