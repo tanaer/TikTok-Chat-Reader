@@ -1,0 +1,5 @@
+TikTokLive
+flask
+flask-socketio
+peewee
+eventlet

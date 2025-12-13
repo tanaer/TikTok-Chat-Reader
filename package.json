@@ -1,8 +1,17 @@
 {
+  "name": "tiktok-chat-reader",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
+  },
   "dependencies": {
     "dotenv": "^16.0.0",
     "express": "^4.17.2",
+    "node-fetch": "^3.3.2",
     "socket.io": "^4.4.1",
-    "tiktok-live-connector": "^1.1.5"
+    "socks-proxy-agent": "^8.0.2",
+    "sql.js": "^1.11.0",
+    "tiktok-live-connector": "file:../TikTok-Live-Connector"
   }
 }

@@ -1,84 +1,173 @@
+/**
+ * TikTok Chat Reader - Node.js Server
+ * Combined Socket.IO (TikTok events) + REST API (data management)
+ */
 require('dotenv').config();
 
 const express = require('express');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { TikTokConnectionWrapper, getGlobalConnectionCount } = require('./connectionWrapper');
-const { clientBlocked } = require('./limiter');
+const { manager } = require('./manager');
+const { AutoRecorder } = require('./auto_recorder');
 
 const app = express();
 const httpServer = createServer(app);
 
-// Enable cross origin resource sharing
+// Start Auto Recorder (Dynamic interval from DB)
+const autoRecorder = new AutoRecorder();
+
+// Enable CORS & JSON parsing
+// Enable CORS & JSON parsing
+app.use(express.json());
+app.use(express.static('public')); // Serve static files first for performance
+
 const io = new Server(httpServer, {
     cors: {
         origin: '*'
     }
 });
 
-
+// ========================
+// Socket.IO - TikTok Events (USES AutoRecorder for persistent connections)
+// ========================
 io.on('connection', (socket) => {
-    let tiktokConnectionWrapper;
+    let subscribedRoomId = null;  // Room this socket is subscribed to
+    let eventListeners = [];      // Track event listeners for cleanup
 
     console.info('New connection from origin', socket.handshake.headers['origin'] || socket.handshake.headers['referer']);
 
-    socket.on('setUniqueId', (uniqueId, options) => {
-
-        // Prohibit the client from specifying these options (for security reasons)
-        if (typeof options === 'object' && options) {
-            delete options.requestOptions;
-            delete options.websocketOptions;
-        } else {
-            options = {};
+    socket.on('setUniqueId', async (uniqueId, options) => {
+        // Clean up previous subscription
+        if (subscribedRoomId && eventListeners.length > 0) {
+            const prevWrapper = autoRecorder.getConnection(subscribedRoomId);
+            if (prevWrapper) {
+                eventListeners.forEach(({ event, handler }) => {
+                    prevWrapper.connection.off(event, handler);
+                });
+            }
+            eventListeners = [];
         }
 
-        // Session ID in .env file is optional
-        if (process.env.SESSIONID) {
-            options.sessionId = process.env.SESSIONID;
-            console.info('Using SessionId');
-        }
+        subscribedRoomId = uniqueId;
 
-        // Check if rate limit exceeded
-        if (process.env.ENABLE_RATE_LIMIT && clientBlocked(io, socket)) {
-            socket.emit('tiktokDisconnected', 'You have opened too many connections or made too many connection requests. Please reduce the number of connections/requests or host your own server instance. The connections are limited to avoid that the server IP gets blocked by TokTok.');
+        // Check if AutoRecorder is already connected to this room
+        if (autoRecorder.isConnected(uniqueId)) {
+            console.log(`[Socket] Room ${uniqueId} already connected via AutoRecorder, subscribing to events`);
+            const wrapper = autoRecorder.getConnection(uniqueId);
+            subscribeToWrapper(socket, wrapper, uniqueId);
+            socket.emit('tiktokConnected', { roomId: uniqueId, alreadyConnected: true });
             return;
         }
 
-        // Connect to the given username (uniqueId)
+        // Start recording via AutoRecorder (runs independently of socket)
         try {
-            tiktokConnectionWrapper = new TikTokConnectionWrapper(uniqueId, options, true);
-            tiktokConnectionWrapper.connect();
+            socket.emit('tiktokConnecting', { roomId: uniqueId });
+            const result = await autoRecorder.startRoom(uniqueId);
+
+            // Subscribe to events
+            const wrapper = autoRecorder.getConnection(uniqueId);
+            if (wrapper) {
+                subscribeToWrapper(socket, wrapper, uniqueId);
+            }
+            socket.emit('tiktokConnected', result.state);
         } catch (err) {
+            // Clear subscriptions on failure to prevent receiving wrong room's events
+            eventListeners = [];
+            subscribedRoomId = null;
             socket.emit('tiktokDisconnected', err.toString());
-            return;
+        }
+    });
+
+    // Subscribe this socket to a wrapper's events (for UI display only)
+    function subscribeToWrapper(socket, wrapper, roomId) {
+        const handlers = {
+            roomUser: msg => socket.emit('roomUser', msg),
+            member: msg => {
+                socket.emit('member', {
+                    uniqueId: msg.user?.uniqueId || msg.uniqueId,
+                    nickname: msg.user?.nickname || msg.nickname,
+                    userId: msg.user?.userId || msg.userId
+                });
+            },
+            chat: msg => {
+                socket.emit('chat', {
+                    uniqueId: msg.user?.uniqueId || msg.uniqueId,
+                    nickname: msg.user?.nickname || msg.nickname,
+                    comment: msg.comment,
+                    userId: msg.user?.userId || msg.userId
+                });
+            },
+            gift: msg => {
+                const gift = msg.gift || {};
+                const extendedGift = msg.extendedGiftInfo || {};
+                let giftImage = '';
+                if (gift.icon?.url_list?.[0]) giftImage = gift.icon.url_list[0];
+                else if (extendedGift.image?.url_list?.[0]) giftImage = extendedGift.image.url_list[0];
+                else if (extendedGift.icon?.url_list?.[0]) giftImage = extendedGift.icon.url_list[0];
+
+                socket.emit('gift', {
+                    uniqueId: msg.user?.uniqueId || msg.uniqueId,
+                    nickname: msg.user?.nickname || msg.nickname,
+                    giftId: msg.giftId || gift.id,
+                    giftName: gift.giftName || extendedGift.name || 'Gift',
+                    giftImage: giftImage,
+                    diamondCount: gift.diamondCount || extendedGift.diamond_count || 0,
+                    repeatCount: msg.repeatCount || 1,
+                    repeatEnd: msg.repeatEnd
+                });
+            },
+            like: msg => {
+                socket.emit('like', {
+                    uniqueId: msg.user?.uniqueId || msg.uniqueId,
+                    nickname: msg.user?.nickname || msg.nickname,
+                    likeCount: msg.likeCount,
+                    totalLikeCount: msg.totalLikeCount
+                });
+            },
+            streamEnd: () => socket.emit('streamEnd'),
+            social: msg => socket.emit('social', msg),
+            questionNew: msg => socket.emit('questionNew', msg),
+            linkMicBattle: msg => socket.emit('linkMicBattle', msg),
+            linkMicArmies: msg => socket.emit('linkMicArmies', msg),
+            liveIntro: msg => socket.emit('liveIntro', msg),
+            emote: msg => socket.emit('emote', msg),
+            envelope: msg => socket.emit('envelope', msg),
+            subscribe: msg => socket.emit('subscribe', msg)
+        };
+
+        // Add event listeners
+        for (const [event, handler] of Object.entries(handlers)) {
+            wrapper.connection.on(event, handler);
+            eventListeners.push({ event, handler });
         }
 
-        // Redirect wrapper control events once
-        tiktokConnectionWrapper.once('connected', state => socket.emit('tiktokConnected', state));
-        tiktokConnectionWrapper.once('disconnected', reason => socket.emit('tiktokDisconnected', reason));
+        // Handle wrapper disconnect (notify UI)
+        wrapper.once('disconnected', reason => {
+            socket.emit('tiktokDisconnected', reason);
+        });
+    }
 
-        // Notify client when stream ends
-        tiktokConnectionWrapper.connection.on('streamEnd', () => socket.emit('streamEnd'));
-
-        // Redirect message events
-        tiktokConnectionWrapper.connection.on('roomUser', msg => socket.emit('roomUser', msg));
-        tiktokConnectionWrapper.connection.on('member', msg => socket.emit('member', msg));
-        tiktokConnectionWrapper.connection.on('chat', msg => socket.emit('chat', msg));
-        tiktokConnectionWrapper.connection.on('gift', msg => socket.emit('gift', msg));
-        tiktokConnectionWrapper.connection.on('social', msg => socket.emit('social', msg));
-        tiktokConnectionWrapper.connection.on('like', msg => socket.emit('like', msg));
-        tiktokConnectionWrapper.connection.on('questionNew', msg => socket.emit('questionNew', msg));
-        tiktokConnectionWrapper.connection.on('linkMicBattle', msg => socket.emit('linkMicBattle', msg));
-        tiktokConnectionWrapper.connection.on('linkMicArmies', msg => socket.emit('linkMicArmies', msg));
-        tiktokConnectionWrapper.connection.on('liveIntro', msg => socket.emit('liveIntro', msg));
-        tiktokConnectionWrapper.connection.on('emote', msg => socket.emit('emote', msg));
-        tiktokConnectionWrapper.connection.on('envelope', msg => socket.emit('envelope', msg));
-        tiktokConnectionWrapper.connection.on('subscribe', msg => socket.emit('subscribe', msg));
+    socket.on('requestDisconnect', () => {
+        // User manually requested stop - this DOES stop the AutoRecorder recording
+        console.log('Client requested disconnect');
+        if (subscribedRoomId && autoRecorder.isConnected(subscribedRoomId)) {
+            autoRecorder.disconnectRoom(subscribedRoomId);
+        }
+        socket.emit('tiktokDisconnected', '用户手动断开');
     });
 
     socket.on('disconnect', () => {
-        if (tiktokConnectionWrapper) {
-            tiktokConnectionWrapper.disconnect();
+        // Clean up event listeners but DON'T disconnect the AutoRecorder
+        // Recording continues even when user leaves page!
+        if (subscribedRoomId && eventListeners.length > 0) {
+            const wrapper = autoRecorder.getConnection(subscribedRoomId);
+            if (wrapper) {
+                eventListeners.forEach(({ event, handler }) => {
+                    wrapper.connection.off(event, handler);
+                });
+            }
+            console.log(`[Socket] User left page, cleaned up listeners for ${subscribedRoomId}. Recording continues.`);
         }
     });
 });
@@ -86,12 +175,591 @@ io.on('connection', (socket) => {
 // Emit global connection statistics
 setInterval(() => {
     io.emit('statistic', { globalConnectionCount: getGlobalConnectionCount() });
-}, 5000)
+}, 5000);
 
-// Serve frontend files
-app.use(express.static('public'));
+// ========================
+// REST API - Data Management
+// ========================
 
-// Start http listener
-const port = process.env.PORT || 8081;
-httpServer.listen(port);
-console.info(`Server running! Please visit http://localhost:${port}`);
+// Config API
+app.get('/api/config', async (req, res) => {
+    try {
+        const settings = await manager.getAllSettings();
+        res.json(settings);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Settings API - POST to save settings
+app.post('/api/settings', async (req, res) => {
+    try {
+        const settings = req.body;
+        for (const [key, value] of Object.entries(settings)) {
+            await manager.saveSetting(key, typeof value === 'boolean' ? String(value) : value);
+        }
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Alias: POST /api/config also saves settings
+app.post('/api/config', async (req, res) => {
+    try {
+        const settings = req.body;
+        for (const [key, value] of Object.entries(settings)) {
+            await manager.saveSetting(key, typeof value === 'boolean' ? String(value) : value);
+        }
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Room Sessions API
+app.get('/api/rooms/:id/sessions', async (req, res) => {
+    try {
+        const sessions = await manager.getSessions(req.params.id);
+        res.json(sessions);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Archive Stale Live Events API (Fix for long sessions)
+app.post('/api/rooms/:id/archive_stale', async (req, res) => {
+    try {
+        console.log(`[API] Archiving stale events for room ${req.params.id}`);
+        const result = await manager.archiveStaleLiveEvents(req.params.id);
+        res.json(result);
+    } catch (err) {
+        console.error('Error archiving stale events:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Maintenance API: Rebuild missing session records from events
+app.post('/api/maintenance/rebuild_sessions', async (req, res) => {
+    try {
+        console.log('[API] Rebuilding missing sessions...');
+        const result = await manager.rebuildMissingSessions();
+        res.json(result);
+    } catch (err) {
+        console.error('Error rebuilding sessions:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Maintenance API: Merge Short Sessions
+app.post('/api/maintenance/merge_sessions', async (req, res) => {
+    try {
+        console.log('[API] Merging short sessions...');
+        const result = await manager.mergeContinuitySessions();
+        res.json(result);
+    } catch (err) {
+        console.error('Error merging sessions:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Price API
+app.post('/api/price', (req, res) => {
+    const { id, price } = req.body;
+    manager.savePrice(id, parseFloat(price));
+    res.json({ success: true });
+});
+
+// Room API
+app.get('/api/rooms/stats', async (req, res) => {
+    try {
+        const liveRoomIds = autoRecorder.getLiveRoomIds();
+        const stats = await manager.getRoomStats(liveRoomIds);
+        res.json(stats);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/rooms', async (req, res) => {
+    try {
+        const rooms = await manager.getRooms();
+        res.json(rooms);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
+app.get('/api/rooms/:id/stats_detail', async (req, res) => {
+    try {
+        const roomId = req.params.id;
+        const sessionId = req.query.sessionId || null;
+
+        // Get stats
+        const data = await manager.getRoomDetailStats(roomId, sessionId);
+
+        // Get isLive status
+        const liveRoomIds = autoRecorder.getLiveRoomIds();
+        const isLive = liveRoomIds.includes(roomId);
+
+        // Get last session for fallback
+        const sessions = await manager.getSessions(roomId);
+        const lastSession = sessions && sessions.length > 0 ? sessions[0] : null;
+
+        res.json({
+            ...data,
+            isLive,
+            lastSession,
+            currentSessionId: sessionId
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Session API
+app.post('/api/sessions/end', async (req, res) => {
+    try {
+        const { roomId, snapshot, startTime } = req.body;
+
+        // Create session first to get session_id
+        const sessionId = await manager.createSession(roomId, snapshot);
+
+        // Tag all untagged events for this room with the new session_id
+        await manager.tagEventsWithSession(roomId, sessionId, startTime);
+
+        console.log(`[SESSION] Ended session ${sessionId} for room ${roomId}, events tagged`);
+        res.json({ success: true, sessionId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/sessions', async (req, res) => {
+    try {
+        const roomId = req.query.roomId;
+        const sessions = await manager.getSessions(roomId);
+        res.json(sessions);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/sessions/:id', async (req, res) => {
+    try {
+        const data = await manager.getSession(req.params.id);
+        if (data) {
+            res.json(data);
+        } else {
+            res.status(404).json({ error: 'Not found' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// History API
+app.get('/api/history', async (req, res) => {
+    try {
+        const roomId = req.query.roomId;
+        const stats = await manager.getTimeStats(roomId);
+        res.json(stats);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// User Analysis API
+app.get('/api/analysis/users', async (req, res) => {
+    try {
+        const lang = req.query.lang || '';
+        const page = parseInt(req.query.page) || 1;
+        const pageSize = parseInt(req.query.pageSize) || 50;
+        const result = await manager.getTopGifters(page, pageSize, lang);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/analysis/user/:userId', async (req, res) => {
+    try {
+        const data = await manager.getUserAnalysis(req.params.userId);
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
+app.get('/api/analysis/stats', async (req, res) => {
+    try {
+        const stats = await manager.getGlobalStats();
+        res.json(stats);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/analysis/ai', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        // Get user chat history
+        const history = await manager.getUserChatHistory(userId, 50);
+
+        if (!history || history.length === 0) {
+            return res.json({ result: "该用户没有足够的弹幕记录进行分析。" });
+        }
+
+        const chatText = history.map(h => h.comment).join('\n');
+
+        // Call AI API
+        const dbSettings = await manager.getAllSettings();
+        const apiKey = dbSettings.ai_api_key || process.env.AI_API_KEY;
+        const apiUrl = dbSettings.ai_api_url || process.env.AI_API_URL || 'https://api-inference.modelscope.cn/v1/';
+
+        if (!apiKey) {
+            return res.status(500).json({ error: "AI API Key not configured" });
+        }
+
+        const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
+        const response = await fetch(`${apiUrl}chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: 'deepseek-ai/DeepSeek-V3.2',
+                messages: [
+                    { role: 'system', content: '你是一个专业的主播运营助手。请根据用户的弹幕历史，简要分析该用户的：1、常用语种 2、掌握语种 3、感兴趣的话题 4、 聊天风格。请用简洁的中文回答。' },
+                    { role: 'user', content: `用户弹幕记录：\n${chatText}` }
+                ],
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.text();
+            throw new Error(`AI API Error: ${err}`);
+        }
+
+        const completion = await response.json();
+        const result = completion.choices?.[0]?.message?.content || "无法获取分析结果";
+
+        // Parse result for languages
+        let commonLang = '';
+        let masteredLang = '';
+
+        const commonMatch = result.match(/1、常用语种[：:]?\s*([^\n\r]+)/);
+        if (commonMatch) commonLang = commonMatch[1].replace(/[,，、]/g, ',');
+
+        const masteredMatch = result.match(/2、掌握语种[：:]?\s*([^\n\r]+)/);
+        if (masteredMatch) masteredLang = masteredMatch[1].replace(/[,，、]/g, ',');
+
+        if (commonLang || masteredLang) {
+            await manager.updateUserLanguages(userId, commonLang, masteredLang);
+        }
+
+        res.json({ result: result });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
+app.post('/api/rooms', async (req, res) => {
+    try {
+        const { roomId, name, address, isMonitorEnabled } = req.body;
+        console.log(`[API] POST /api/rooms - roomId: ${roomId}, isMonitorEnabled: ${isMonitorEnabled} (type: ${typeof isMonitorEnabled})`);
+
+        // If isMonitorEnabled is undefined, default to 1 (true) for new rooms, or preserve existing?
+        // Manager handles upsert. We should pass what we have.
+        // Frontend "saveRoom" sends all fields.
+        const room = await manager.updateRoom(roomId, name, address, isMonitorEnabled);
+        console.log(`[API] Room updated:`, room);
+
+        // If monitor was just disabled, disconnect immediately and save session
+        if (isMonitorEnabled === false || isMonitorEnabled === 0 || isMonitorEnabled === '0') {
+            console.log(`[API] Room ${roomId} monitor disabled. Triggering immediate disconnect...`);
+            await autoRecorder.disconnectRoom(roomId);
+        }
+
+        res.json({ success: true, room });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/rooms/:id', async (req, res) => {
+    try {
+        await manager.deleteRoom(req.params.id);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/rooms/:id/stats_detail', async (req, res) => {
+    try {
+        const roomId = req.params.id;
+        const sessionId = req.query.sessionId || null;
+        const data = await manager.getRoomDetailStats(roomId, sessionId);
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/rooms/:id/stop', async (req, res) => {
+    try {
+        const roomId = req.params.id;
+        const result = await autoRecorder.disconnectRoom(roomId);
+        res.json({ success: true, stopped: result });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Debug API - View all active connections
+app.get('/api/debug/connections', (req, res) => {
+    const connections = autoRecorder.getLiveRoomIds();
+    res.json({ activeConnections: connections });
+});
+
+// Debug API - Force clear a stale connection (for testing)
+app.delete('/api/debug/connections/:id', async (req, res) => {
+    const roomId = req.params.id;
+    console.log(`[Debug] Force clearing connection for ${roomId}`);
+    const result = await autoRecorder.disconnectRoom(roomId);
+    res.json({ cleared: true, roomId, result });
+});
+
+// Migrate events from numeric room_id to username room_id
+app.post('/api/migrate-events', async (req, res) => {
+    try {
+        await manager.migrateEventRoomIds();
+        res.json({ success: true, message: 'Events migrated successfully' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Fix orphaned events - create sessions for events without session_id
+app.post('/api/fix-orphaned-events', async (req, res) => {
+    try {
+        const result = await manager.fixOrphanedEvents();
+        res.json({ success: true, ...result });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete empty sessions (sessions with 0 events)
+app.post('/api/delete-empty-sessions', async (req, res) => {
+    try {
+        const result = await manager.deleteEmptySessions();
+        res.json({ success: true, ...result });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Rebuild missing session records (for events with session_id but no session record)
+app.post('/api/rebuild-missing-sessions', async (req, res) => {
+    try {
+        const result = await manager.rebuildMissingSessions();
+        res.json({ success: true, ...result });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Session API
+app.post('/api/sessions/end', async (req, res) => {
+    try {
+        const { roomId, snapshot, startTime } = req.body;
+
+        // Create session first to get session_id
+        const sessionId = await manager.createSession(roomId, snapshot);
+
+        // Tag all untagged events for this room with the new session_id
+        await manager.tagEventsWithSession(roomId, sessionId, startTime);
+
+        console.log(`[SESSION] Ended session ${sessionId} for room ${roomId}, events tagged`);
+        res.json({ success: true, sessionId });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/sessions', async (req, res) => {
+    try {
+        const roomId = req.query.roomId;
+        const sessions = await manager.getSessions(roomId);
+        res.json(sessions);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/sessions/:id', async (req, res) => {
+    try {
+        const data = await manager.getSession(req.params.id);
+        if (data) {
+            res.json(data);
+        } else {
+            res.status(404).json({ error: 'Not found' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// History API
+app.get('/api/history', async (req, res) => {
+    try {
+        const roomId = req.query.roomId;
+        const stats = await manager.getTimeStats(roomId);
+        res.json(stats);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// User Analysis API
+app.get('/api/analysis/users', async (req, res) => {
+    try {
+        const lang = req.query.lang || '';
+        const page = parseInt(req.query.page) || 1;
+        const pageSize = parseInt(req.query.pageSize) || 50;
+        const result = await manager.getTopGifters(page, pageSize, lang);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/analysis/user/:userId', async (req, res) => {
+    try {
+        const data = await manager.getUserAnalysis(req.params.userId);
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
+app.get('/api/analysis/stats', async (req, res) => {
+    try {
+        const stats = await manager.getGlobalStats();
+        res.json(stats);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/analysis/ai', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        // Get user chat history
+        const history = await manager.getUserChatHistory(userId, 50);
+
+        if (!history || history.length === 0) {
+            return res.json({ result: "该用户没有足够的弹幕记录进行分析。" });
+        }
+
+        const chatText = history.map(h => h.comment).join('\n');
+
+        // Call AI API
+        const dbSettings = await manager.getAllSettings();
+        const apiKey = dbSettings.ai_api_key || process.env.AI_API_KEY;
+        const apiUrl = dbSettings.ai_api_url || process.env.AI_API_URL || 'https://api-inference.modelscope.cn/v1/';
+
+        if (!apiKey) {
+            return res.status(500).json({ error: "AI API Key not configured" });
+        }
+
+        const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
+        const response = await fetch(`${apiUrl}chat/completions`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: 'deepseek-ai/DeepSeek-V3.2',
+                messages: [
+                    { role: 'system', content: '你是一个专业的主播运营助手。请根据用户的弹幕历史，简要分析该用户的：1、常用语种 2、掌握语种 3、感兴趣的话题 4、 聊天风格。请用简洁的中文回答。' },
+                    { role: 'user', content: `用户弹幕记录：\n${chatText}` }
+                ],
+                stream: false
+            })
+        });
+
+        if (!response.ok) {
+            const err = await response.text();
+            throw new Error(`AI API Error: ${err}`);
+        }
+
+        const completion = await response.json();
+        const result = completion.choices?.[0]?.message?.content || "无法获取分析结果";
+
+        // Parse result for languages
+        let commonLang = '';
+        let masteredLang = '';
+
+        const commonMatch = result.match(/1、常用语种[：:]?\s*([^\n\r]+)/);
+        if (commonMatch) commonLang = commonMatch[1].replace(/[,，、]/g, ',');
+
+        const masteredMatch = result.match(/2、掌握语种[：:]?\s*([^\n\r]+)/);
+        if (masteredMatch) masteredLang = masteredMatch[1].replace(/[,，、]/g, ',');
+
+        if (commonLang || masteredLang) {
+            await manager.updateUserLanguages(userId, commonLang, masteredLang);
+        }
+
+        res.json({ result: result });
+
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Static Files (Moved to top)
+
+// ========================
+// Start Server
+// ========================
+(async () => {
+    await manager.ensureDb();
+
+    // Load Port from Settings or Default
+    let port = 8081;
+    try {
+        const p = await manager.getSetting('port');
+        if (p) port = parseInt(p);
+    } catch (e) {
+        console.error('Failed to load port setting:', e);
+    }
+
+    // Override with Env if present (optional, but good practice)
+    if (process.env.PORT) port = parseInt(process.env.PORT);
+
+    const server = httpServer.listen(port, '0.0.0.0', () => {
+        console.log(`Server running on http://localhost:${port}`);
+        if (process.env.PROXY_URL) {
+            console.info(`Using SOCKS proxy: ${process.env.PROXY_URL}`);
+        }
+    });
+})();

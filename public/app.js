@@ -1,225 +1,440 @@
-// This will use the demo backend if you open index.html locally via file://, otherwise your server will be used
-let backendUrl = location.protocol === 'file:' ? "https://tiktok-chat-reader.zerody.one/" : undefined;
-let connection = new TikTokIOConnection(backendUrl);
 
-// Counter
-let viewerCount = 0;
-let likeCount = 0;
-let diamondsCount = 0;
+// app.js - Main Application Logic
 
-// These settings are defined by obs.html
-if (!window.settings) window.settings = {};
+let socket = null;
+let currentSection = 'roomList';
+let currentDetailRoomId = null;
+let currentSessionId = 'live'; // 'live' or session UUID
+let roomIsLive = false;
+let connectedRoomId = null; // Track actually connected room to prevent cross-room event display
 
+// Initialization
 $(document).ready(() => {
-    $('#connectButton').click(connect);
-    $('#uniqueIdInput').on('keyup', function (e) {
-        if (e.key === 'Enter') {
-            connect();
+    initSocket();
+
+    // Initial Load
+    loadConfig(); // from config.js
+    renderRoomList(); // from room_list.js
+
+    // Event Listeners (Global)
+    // ...
+});
+
+function initSocket() {
+    socket = io();
+
+    // Connection Events
+    socket.on('connect', () => {
+        console.log('Connected to backend');
+    });
+
+    socket.on('tiktokConnected', (state) => {
+        console.log('TikTok Connected:', state);
+        connectedRoomId = state.roomId || null;
+        if (currentSection === 'roomDetail' && state.roomId) {
+            addSystemMessage(`Connected to Room: ${state.roomId}`);
+            updateRoomStatusUI(true);
         }
     });
 
-    if (window.settings.username) connect();
-})
+    socket.on('tiktokDisconnected', (reason) => {
+        console.log('TikTok Disconnected:', reason);
+        connectedRoomId = null; // Clear connected room on disconnect
+        addSystemMessage(`Disconnected: ${reason}`);
+        if (currentSection === 'roomDetail') updateRoomStatusUI(false);
+    });
 
-function connect() {
-    let uniqueId = window.settings.username || $('#uniqueIdInput').val();
-    if (uniqueId !== '') {
+    socket.on('streamEnd', () => {
+        addSystemMessage('Stream Ended.');
+        if (currentSection === 'roomDetail') updateRoomStatusUI(false);
+    });
 
-        $('#stateText').text('Connecting...');
+    // Chat Events
+    socket.on('chat', (msg) => {
+        if (!isViewingLive()) return;
+        addChatMessage(msg);
+    });
 
-        connection.connect(uniqueId, {
-            enableExtendedGiftInfo: true
-        }).then(state => {
-            $('#stateText').text(`Connected to roomId ${state.roomId}`);
+    socket.on('gift', (msg) => {
+        if (!isViewingLive()) return;
+        addGiftMessage(msg);
+        updateGiftStats(msg);
+    });
 
-            // reset stats
-            viewerCount = 0;
-            likeCount = 0;
-            diamondsCount = 0;
-            updateRoomStats();
+    socket.on('member', (msg) => {
+        if (!isViewingLive()) return;
+        updateMemberStats(msg);
+    });
 
-        }).catch(errorMessage => {
-            $('#stateText').text(errorMessage);
+    socket.on('like', (msg) => {
+        if (!isViewingLive()) return;
+        updateLikeStats(msg);
+    });
+}
 
-            // schedule next try if obs username set
-            if (window.settings.username) {
-                setTimeout(() => {
-                    connect(window.settings.username);
-                }, 30000);
-            }
-        })
+// Navigation
+function switchSection(sectionId) {
+    currentSection = sectionId;
+    $('.content-section').hide();
+    $(`#section-${sectionId}`).show();
 
+    // Update Nav Active State
+    $('.nav-btn').removeClass('active');
+    $(`.nav-btn[onclick="switchSection('${sectionId}')"]`).addClass('active');
+
+    if (sectionId === 'roomList') {
+        renderRoomList();
+    } else if (sectionId === 'userAnalysis') {
+        if (typeof renderUserList === 'function') renderUserList();
+    } else if (sectionId === 'systemConfig') {
+        if (typeof loadConfig === 'function') loadConfig();
+    }
+}
+
+// =======================
+// Room Detail Logic
+// =======================
+
+async function loadRoom(id) {
+    currentDetailRoomId = id;
+    $('#detailRoomId').text(id);
+    $('#chatContainer').empty();
+
+    // Show loading state
+    showLoadingState();
+
+    try {
+        // First check if room is live and get session list
+        const [statsRes, sessions] = await Promise.all([
+            $.get(`/api/rooms/${id}/stats_detail?sessionId=live`),
+            $.get(`/api/rooms/${id}/sessions`)
+        ]);
+
+        roomIsLive = statsRes.isLive === true;
+
+        // Populate session dropdown
+        const select = $('#sessionSelect');
+        select.empty();
+        select.append('<option value="live">🟢 实时直播 (LIVE)</option>');
+
+        if (sessions && sessions.length > 0) {
+            sessions.forEach(s => {
+                select.append(`<option value="${s.session_id}">${new Date(s.created_at).toLocaleString()} (存档)</option>`);
+            });
+        }
+
+        if (roomIsLive) {
+            // Room is live - auto-connect and show live data
+            currentSessionId = 'live';
+            select.val('live');
+            hideLoadingState();
+            updateRoomStatusUI(true);
+            addSystemMessage('🟢 房间正在直播中，已自动接入实时数据');
+
+            // Auto-connect to live stream
+            connectToLive(id);
+
+            // Show stats
+            updateRoomHeader(statsRes.summary);
+            updateLeaderboards(statsRes.leaderboards);
+
+        } else if (sessions && sessions.length > 0) {
+            // Not live - auto-select last session
+            const lastSessionId = sessions[0].session_id;
+            currentSessionId = lastSessionId;
+            select.val(lastSessionId);
+
+            // Load last session stats
+            const lastStats = await $.get(`/api/rooms/${id}/stats_detail?sessionId=${lastSessionId}`);
+            hideLoadingState();
+            updateRoomStatusUI(false);
+            addSystemMessage(`📼 房间未开播，已加载最近一场数据 (${new Date(sessions[0].created_at).toLocaleString()})`);
+
+            updateRoomHeader(lastStats.summary);
+            updateLeaderboards(lastStats.leaderboards);
+
+        } else {
+            // No sessions and not live - show empty state
+            currentSessionId = 'live';
+            select.val('live');
+            hideLoadingState();
+            updateRoomStatusUI(false);
+            addSystemMessage('⚠️ 该房间暂无任何数据');
+
+            // Show empty data
+            updateRoomHeader({ duration: 0, totalVisits: 0, totalComments: 0, totalLikes: 0, totalGiftValue: 0 });
+            updateLeaderboards({ gifters: [], chatters: [], likers: [] });
+        }
+
+    } catch (err) {
+        console.error('loadRoom error:', err);
+        hideLoadingState();
+        addSystemMessage('❌ 加载失败: ' + err.message);
+    }
+}
+
+function showLoadingState() {
+    $('#d_duration').text('--:--');
+    $('#d_member, #d_like, #d_gift').text('...');
+    $('#info_totalLikes, #info_totalComments, #info_totalGift, #info_maxViewers').text('...');
+    $('#giftTable tbody, #topGiftersTable tbody, #topContributorsTable tbody, #topLikersTable tbody')
+        .html('<tr><td colspan="3" class="text-center"><span class="loading loading-spinner loading-sm"></span> 加载中...</td></tr>');
+}
+
+function hideLoadingState() {
+    // Loading complete - tables will be updated by updateLeaderboards
+}
+
+function exitRoom() {
+    switchSection('roomList');
+}
+
+async function loadSessionList(roomId) {
+    // Now handled in loadRoom for better control
+}
+
+function changeSession(val) {
+    currentSessionId = val;
+    $('#chatContainer').empty();
+
+    if (val === 'live') {
+        addSystemMessage('切换到实时视图');
+        if (roomIsLive) {
+            connectToLive(currentDetailRoomId);
+        }
+        loadDetailStats(currentDetailRoomId, 'live');
     } else {
-        alert('no username entered');
+        disconnectLive();
+        loadHistoryData(val);
+        loadDetailStats(currentDetailRoomId, val);
     }
 }
 
-// Prevent Cross site scripting (XSS)
-function sanitize(text) {
-    return text.replace(/</g, '&lt;')
+async function loadDetailStats(roomId, sessionId) {
+    try {
+        const res = await $.get(`/api/rooms/${roomId}/stats_detail?sessionId=${sessionId}`);
+        updateRoomHeader(res.summary);
+        updateLeaderboards(res.leaderboards);
+    } catch (e) { console.error('Stats load error', e); }
 }
 
-function updateRoomStats() {
-    $('#roomStats').html(`Viewers: <b>${viewerCount.toLocaleString()}</b> Likes: <b>${likeCount.toLocaleString()}</b> Earned Diamonds: <b>${diamondsCount.toLocaleString()}</b>`)
-}
+function updateRoomHeader(summary) {
+    if (!summary) return;
+    $('#d_duration').text(formatDuration(summary.duration));
+    $('#d_member').text(summary.totalVisits.toLocaleString());
+    $('#d_like').text(summary.totalLikes.toLocaleString());
+    $('#d_gift').text(summary.totalGiftValue.toLocaleString());
 
-function generateUsernameLink(data) {
-    return `<a class="usernamelink" href="https://www.tiktok.com/@${data.uniqueId}" target="_blank">${data.uniqueId}</a>`;
-}
+    // Update Info Side Panel
+    $('#info_totalLikes').text(summary.totalLikes.toLocaleString());
+    $('#info_totalComments').text(summary.totalComments.toLocaleString());
+    $('#info_totalGift').text(summary.totalGiftValue.toLocaleString());
+    $('#info_maxViewers').text(summary.totalVisits.toLocaleString());
 
-function isPendingStreak(data) {
-    return data.giftType === 1 && !data.repeatEnd;
-}
-
-/**
- * Add a new message to the chat container
- */
-function addChatItem(color, data, text, summarize) {
-    let container = location.href.includes('obs.html') ? $('.eventcontainer') : $('.chatcontainer');
-
-    if (container.find('div').length > 500) {
-        container.find('div').slice(0, 200).remove();
-    }
-
-    container.find('.temporary').remove();;
-
-    container.append(`
-        <div class=${summarize ? 'temporary' : 'static'}>
-            <img class="miniprofilepicture" src="${data.profilePictureUrl}">
-            <span>
-                <b>${generateUsernameLink(data)}:</b> 
-                <span style="color:${color}">${sanitize(text)}</span>
-            </span>
-        </div>
-    `);
-
-    container.stop();
-    container.animate({
-        scrollTop: container[0].scrollHeight
-    }, 400);
-}
-
-/**
- * Add a new gift to the gift container
- */
-function addGiftItem(data) {
-    let container = location.href.includes('obs.html') ? $('.eventcontainer') : $('.giftcontainer');
-
-    if (container.find('div').length > 200) {
-        container.find('div').slice(0, 100).remove();
-    }
-
-    let streakId = data.userId.toString() + '_' + data.giftId;
-
-    let html = `
-        <div data-streakid=${isPendingStreak(data) ? streakId : ''}>
-            <img class="miniprofilepicture" src="${data.profilePictureUrl}">
-            <span>
-                <b>${generateUsernameLink(data)}:</b> <span>${data.describe}</span><br>
-                <div>
-                    <table>
-                        <tr>
-                            <td><img class="gifticon" src="${data.giftPictureUrl}"></td>
-                            <td>
-                                <span>Name: <b>${data.giftName}</b> (ID:${data.giftId})<span><br>
-                                <span>Repeat: <b style="${isPendingStreak(data) ? 'color:red' : ''}">x${data.repeatCount.toLocaleString()}</b><span><br>
-                                <span>Cost: <b>${(data.diamondCount * data.repeatCount).toLocaleString()} Diamonds</b><span>
-                            </td>
-                        </tr>
-                    </tabl>
-                </div>
-            </span>
-        </div>
-    `;
-
-    let existingStreakItem = container.find(`[data-streakid='${streakId}']`);
-
-    if (existingStreakItem.length) {
-        existingStreakItem.replaceWith(html);
+    // Start Time from database
+    if (summary.startTime) {
+        const start = new Date(summary.startTime);
+        $('#info_startTime').text(start.toLocaleString('zh-CN'));
     } else {
-        container.append(html);
+        $('#info_startTime').text('未开播');
     }
-
-    container.stop();
-    container.animate({
-        scrollTop: container[0].scrollHeight
-    }, 800);
 }
 
+function formatDuration(sec) {
+    if (!sec) return '00:00';
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = sec % 60;
+    return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
 
-// viewer stats
-connection.on('roomUser', (msg) => {
-    if (typeof msg.viewerCount === 'number') {
-        viewerCount = msg.viewerCount;
-        updateRoomStats();
+function updateLeaderboards(boards) {
+    if (!boards) return;
+
+    // Gift Stats Table (礼物明细 Tab - shows per-user per-gift breakdown)
+    renderGiftTable('#giftTable tbody', boards.giftDetails);
+
+    // Top Gifters (送礼榜)
+    renderTopTable('#topGiftersTable tbody', boards.gifters, '💎', 'value');
+
+    // Top Chatters (发言榜) - use CHATTERS data
+    renderTopTable('#topContributorsTable tbody', boards.chatters, '💬', 'count');
+
+    // Top Likers (点赞榜) - use LIKERS data
+    renderTopTable('#topLikersTable tbody', boards.likers, '❤️', 'count');
+}
+
+function renderGiftTable(selector, data) {
+    const tbody = $(selector);
+    tbody.empty();
+    if (!data || data.length === 0) {
+        tbody.append('<tr><td colspan="5" class="text-center opacity-50">暂无数据</td></tr>');
+        return;
     }
-})
+    data.forEach(row => {
+        const account = row.uniqueId || row.nickname || '匿名';
+        const giftName = row.giftName || '未知礼物';
+        const count = row.count || 1;
+        const unitPrice = row.unitPrice || 0;
+        const totalValue = row.totalValue || 0;
+        tbody.append(`<tr>
+            <td>${account}</td>
+            <td>${giftName}</td>
+            <td class="text-right">${count.toLocaleString()}</td>
+            <td class="text-right">💎 ${unitPrice.toLocaleString()}</td>
+            <td class="text-right">💎 ${totalValue.toLocaleString()}</td>
+        </tr>`);
+    });
+}
 
-// like stats
-connection.on('like', (msg) => {
-    if (typeof msg.totalLikeCount === 'number') {
-        likeCount = msg.totalLikeCount;
-        updateRoomStats();
+function renderTopTable(selector, data, icon, valueKey) {
+    const tbody = $(selector);
+    tbody.empty();
+    if (!data || data.length === 0) {
+        tbody.append('<tr><td colspan="2" class="text-center opacity-50">暂无数据</td></tr>');
+        return;
     }
+    data.forEach(row => {
+        const val = row[valueKey] || row.value || row.count || 0;
+        tbody.append(`<tr><td>${row.nickname || '匿名'}</td><td>${icon} ${val.toLocaleString()}</td></tr>`);
+    });
+}
 
-    if (window.settings.showLikes === "0") return;
+function connectToLive(roomId) {
+    addSystemMessage(`Connecting to ${roomId} live...`);
+    socket.emit('setUniqueId', roomId);
+    if (socket) socket.emit('connectTiktok');
+}
 
-    if (typeof msg.likeCount === 'number') {
-        addChatItem('#447dd4', msg, msg.label.replace('{0:user}', '').replace('likes', `${msg.likeCount} likes`))
+function disconnectLive() {
+    socket.emit('requestDisconnect');
+    console.log('Switching to history, disconnected manual connection.');
+}
+
+async function loadHistoryData(sessionId) {
+    addSystemMessage(`Loading session ${sessionId}...`);
+    addSystemMessage("History playback not fully implemented yet (requires Event Replay API). Showing Metadata only.");
+
+    const session = await $.get(`/api/sessions/${sessionId}`);
+    addSystemMessage(`Session Info: ${JSON.stringify(session)}`);
+}
+
+function isViewingLive() {
+    // Must be viewing room detail, in live mode, AND the connected room matches
+    return currentSection === 'roomDetail' &&
+        currentSessionId === 'live' &&
+        connectedRoomId === currentDetailRoomId;
+}
+
+// UI Helpers
+function addSystemMessage(text) {
+    $('#chatContainer').append(`<div class="chat-message text-center text-xs opacity-50 py-1">[System] ${text}</div>`);
+    scrollToBottom();
+}
+
+window.stopCurrentRecord = async function () {
+    if (!currentDetailRoomId) return;
+    if (!confirm('确定要停止当前房间的自动录制吗? (如果您在自动录制期间停止，可能会导致本场实录被切断)')) return;
+
+    try {
+        await $.post(`/api/rooms/${currentDetailRoomId}/stop`);
+        addSystemMessage('已发送停止录制请求。');
+        $('#stopRecordBtn').addClass('hidden');
+    } catch (e) {
+        alert('停止失败: ' + (e.responseText || e.statusText));
     }
-})
+};
 
-// Member join
-let joinMsgDelay = 0;
-connection.on('member', (msg) => {
-    if (window.settings.showJoins === "0") return;
+// Manual save session
+window.saveCurrentSession = async function () {
+    if (!currentDetailRoomId) return;
+    if (!confirm('确定要手动保存当前场次数据吗?')) return;
 
-    let addDelay = 250;
-    if (joinMsgDelay > 500) addDelay = 100;
-    if (joinMsgDelay > 1000) addDelay = 0;
-
-    joinMsgDelay += addDelay;
-
-    setTimeout(() => {
-        joinMsgDelay -= addDelay;
-        addChatItem('#21b2c2', msg, 'joined', true);
-    }, joinMsgDelay);
-})
-
-// New chat comment received
-connection.on('chat', (msg) => {
-    if (window.settings.showChats === "0") return;
-
-    addChatItem('', msg, msg.comment);
-})
-
-// New gift received
-connection.on('gift', (data) => {
-    if (!isPendingStreak(data) && data.diamondCount > 0) {
-        diamondsCount += (data.diamondCount * data.repeatCount);
-        updateRoomStats();
+    try {
+        const now = new Date().toISOString();
+        await $.ajax({
+            url: '/api/sessions/end',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({
+                roomId: currentDetailRoomId,
+                snapshot: { manual: true, savedAt: now },
+                startTime: null
+            })
+        });
+        addSystemMessage('✅ 场次数据已保存');
+        // Refresh session list
+        loadRoom(currentDetailRoomId);
+    } catch (e) {
+        alert('保存失败: ' + (e.responseText || e.statusText));
     }
+};
 
-    if (window.settings.showGifts === "0") return;
-
-    addGiftItem(data);
-})
-
-// share, follow
-connection.on('social', (data) => {
-    if (window.settings.showFollows === "0") return;
-
-    let color = data.displayType.includes('follow') ? '#ff005e' : '#2fb816';
-    addChatItem(color, data, data.label.replace('{0:user}', ''));
-})
-
-connection.on('streamEnd', () => {
-    $('#stateText').text('Stream ended.');
-
-    // schedule next try if obs username set
-    if (window.settings.username) {
-        setTimeout(() => {
-            connect(window.settings.username);
-        }, 30000);
+// Expose checks for UI updates
+function updateRoomStatusUI(isLive) {
+    if (isLive) {
+        $('#stopRecordBtn').removeClass('hidden');
+        $('#connectBtn').addClass('hidden');
+        $('#saveSessionBtn').removeClass('hidden');
+    } else {
+        $('#stopRecordBtn').addClass('hidden');
+        $('#connectBtn').removeClass('hidden');
+        $('#saveSessionBtn').addClass('hidden');
     }
-})
+}
+
+function addChatMessage(msg) {
+    const div = `<div class="chat-message hover:bg-base-200 transition-colors">
+        <span class="nickname text-accent">${msg.nickname}:</span>
+        <span class="comment text-base-content">${msg.comment}</span>
+    </div>`;
+    $('#chatContainer').append(div);
+    scrollToBottom();
+}
+
+function addGiftMessage(msg) {
+    const div = `<div class="chat-message gift bg-yellow-900/20 border-l-2 border-yellow-500 pl-2">
+        <span class="nickname text-yellow-400">${msg.nickname}</span>
+        <span class="text-sm">sent ${msg.giftName} x${msg.repeatCount} 💎${msg.diamondCount}</span>
+    </div>`;
+    $('#chatContainer').append(div);
+    scrollToBottom();
+}
+
+function updateGiftStats(msg) {
+    // Basic aggregation for UI table
+}
+
+function updateMemberStats(msg) {
+    // ...
+}
+
+function updateLikeStats(msg) {
+    // ...
+}
+
+function scrollToBottom() {
+    const el = $('#chatContainer');
+    el.scrollTop(el[0].scrollHeight);
+}
+
+function clearStats() {
+    $('#giftTable tbody').empty();
+    // ...
+}
+
+// Update tab switching for DaisyUI
+function switchDetailTab(tabId, btnElement) {
+    $('#section-roomDetail .tab').removeClass('tab-active');
+    $(btnElement).addClass('tab-active');
+    $('.detail-tab-content').addClass('hidden');
+    $(`#tab-${tabId}`).removeClass('hidden');
+}
+
+// Assign to window for inline onclick handlers
+window.switchDetailTab = switchDetailTab;
+window.changeSession = changeSession;
+window.exitRoom = exitRoom;
+window.connectToLive = connectToLive;
+window.saveCurrentSession = saveCurrentSession;
+window.stopCurrentRecord = stopCurrentRecord;
