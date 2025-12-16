@@ -93,10 +93,23 @@ class TikTokConnectionWrapper extends EventEmitter {
                 msg?.includes?.('SIGI_STATE') ||
                 msg?.includes?.("isn't online") ||
                 msg?.includes?.('UserOfflineError') ||
-                msg?.includes?.('Error while connecting');
+                msg?.includes?.('Error while connecting') ||
+                msg?.includes?.('SignAPIError') ||
+                msg?.includes?.('Sign Error') ||
+                msg?.includes?.('sign server') ||
+                msg?.includes?.('504') ||
+                msg?.includes?.('500');
             if (isExpectedError) {
-                // Brief message only - no stack trace
-                this.log(`[WARN] ${msg.split(',')[0].replace('Error while connecting', '').trim() || 'Connection issue'}`);
+                // Brief message only - extract key info
+                let briefMsg = 'Connection issue';
+                if (msg?.includes?.('504') || msg?.includes?.('500') || msg?.includes?.('sign server')) {
+                    briefMsg = 'Sign server temporarily unavailable';
+                } else if (msg?.includes?.("isn't online")) {
+                    briefMsg = 'User offline';
+                } else if (msg?.includes?.('Failed to extract') || msg?.includes?.('SIGI_STATE')) {
+                    briefMsg = 'Failed to parse room info';
+                }
+                this.log(`[WARN] ${briefMsg}`);
             } else {
                 this.log(`Error: ${msg}`);
                 console.error(err);
