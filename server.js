@@ -88,10 +88,6 @@ io.on('connection', (socket) => {
             return;
         }
 
-        // DEBUG: Check listener count on wrapper.connection for chat event
-        const listenerCount = wrapper.connection.listenerCount('chat');
-        console.log(`[Socket] ${roomId} wrapper.connection has ${listenerCount} chat listeners before subscribe`);
-
         const handlers = {
             roomUser: msg => socket.emit('roomUser', msg),
             member: msg => {

@@ -68,23 +68,6 @@ class TikTokConnectionWrapper extends EventEmitter {
 
         this.connection = new TikTokLiveConnection(uniqueId, connectionOptions);
 
-        // DEBUG: Log first few events to verify events are being received at all
-        let debugEventCount = 0;
-        this.connection.on('chat', (msg) => {
-            debugEventCount++;
-            if (debugEventCount <= 3) {
-                console.log(`[Wrapper DEBUG] @${uniqueId} received chat event #${debugEventCount}: ${msg.user?.uniqueId}`);
-            }
-        });
-
-        // DEBUG: Check if any raw WebSocket data is coming in
-        let rawDataCount = 0;
-        this.connection.on('rawData', (msgId, params) => {
-            rawDataCount++;
-            if (rawDataCount <= 5) {
-                console.log(`[Wrapper RAW] @${uniqueId} received data #${rawDataCount}, msgId: ${msgId}`);
-            }
-        });
 
         this.connection.on('streamEnd', () => {
             this.log(`streamEnd event received, giving up connection`);
@@ -103,14 +86,17 @@ class TikTokConnectionWrapper extends EventEmitter {
         });
 
         this.connection.on('error', (err) => {
-            const msg = err?.info || err?.message || err;
-            // Suppress verbose stack trace for expected errors (like fetchIsLive failures)
+            const msg = err?.info || err?.message || String(err);
+            // Suppress verbose stack trace for expected/handled errors
             const isExpectedError = msg?.includes?.('falling back to API') ||
                 msg?.includes?.('Failed to extract') ||
-                msg?.includes?.('SIGI_STATE');
+                msg?.includes?.('SIGI_STATE') ||
+                msg?.includes?.("isn't online") ||
+                msg?.includes?.('UserOfflineError') ||
+                msg?.includes?.('Error while connecting');
             if (isExpectedError) {
-                // Just log a brief message for expected/handled errors
-                this.log(`[WARN] ${msg.split(',')[0]}`);
+                // Brief message only - no stack trace
+                this.log(`[WARN] ${msg.split(',')[0].replace('Error while connecting', '').trim() || 'Connection issue'}`);
             } else {
                 this.log(`Error: ${msg}`);
                 console.error(err);
