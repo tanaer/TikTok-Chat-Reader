@@ -25,7 +25,12 @@ app.use(express.static('public')); // Serve static files first for performance
 const io = new Server(httpServer, {
     cors: {
         origin: '*'
-    }
+    },
+    // Performance optimizations
+    transports: ['websocket', 'polling'], // Prefer WebSocket, fallback to polling
+    pingInterval: 10000,  // 10s instead of default 25s
+    pingTimeout: 5000,    // 5s instead of default 20s
+    upgradeTimeout: 10000 // Faster upgrade to WebSocket
 });
 
 // ========================

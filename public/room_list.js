@@ -226,7 +226,8 @@ window.enterRoom = enterRoom;
 window.deleteRoom = async function (id) {
     if (!confirm('确定要删除该房间吗?')) return;
     try {
-        await $.ajax({ url: `/api/rooms/${id}`, type: 'DELETE' });
+        // URL-encode room ID to handle special characters like @
+        await $.ajax({ url: `/api/rooms/${encodeURIComponent(id)}`, type: 'DELETE' });
         renderRoomList();
     } catch (e) { alert(e.statusText); }
 };
