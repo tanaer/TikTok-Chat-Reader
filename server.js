@@ -157,6 +157,24 @@ io.on('connection', (socket) => {
         });
     }
 
+    // Unsubscribe from live events (used when switching to history view)
+    // This DOES NOT stop recording - only cleans up UI event listeners
+    socket.on('unsubscribe', () => {
+        console.log(`[Socket] User unsubscribed from ${subscribedRoomId}. Recording continues in background.`);
+        // Clean up UI listeners but do NOT call autoRecorder.disconnectRoom()
+        if (subscribedRoomId && eventListeners.length > 0) {
+            const wrapper = autoRecorder.getConnection(subscribedRoomId);
+            if (wrapper) {
+                eventListeners.forEach(({ event, handler }) => {
+                    wrapper.connection.off(event, handler);
+                });
+            }
+            eventListeners = [];
+        }
+        // Clear subscribed room so events don't get sent to this socket
+        subscribedRoomId = null;
+    });
+
     socket.on('requestDisconnect', () => {
         // User manually requested stop - this DOES stop the AutoRecorder recording
         console.log('Client requested disconnect');
