@@ -176,7 +176,18 @@ class AutoRecorder {
             console.error('[AutoRecorder] Startup maintenance failed:', e);
         }
 
-        // Setup hourly consolidation job (every 60 mins)
+        // Setup periodic maintenance jobs
+        // 1. Cleanup stale events every 30 minutes (prevents 20+ hour "live" sessions)
+        setInterval(async () => {
+            try {
+                await manager.cleanupAllStaleEvents();
+                console.log('[AutoRecorder] Periodic stale event cleanup completed');
+            } catch (err) {
+                console.error('[AutoRecorder] Periodic cleanup failed:', err);
+            }
+        }, 30 * 60 * 1000); // Every 30 minutes
+
+        // 2. Session consolidation every 60 minutes
         setInterval(() => {
             manager.consolidateRecentSessions().catch(err => console.error('[AutoRecorder] Hourly consolidation failed:', err));
         }, 60 * 60 * 1000);
@@ -322,7 +333,7 @@ class AutoRecorder {
             const wrapper = new TikTokConnectionWrapper(uniqueId, options, true);
 
             // Hook up events - use 'on' instead of 'once' to handle reconnects
-            wrapper.on('connected', state => {
+            wrapper.on('connected', async state => {
                 console.log(`[AutoRecorder] ${uniqueId} is LIVE! Connected. RoomID: ${state.roomId}`);
 
                 // Check if already in activeConnections (reconnect case)
@@ -332,7 +343,18 @@ class AutoRecorder {
                     existing.lastEventTime = Date.now();
                     console.log(`[AutoRecorder] ${uniqueId} reconnected, refreshing event listeners`);
                 } else {
-                    // Initial connection
+                    // Initial connection - CRITICAL: Archive any old orphan events first
+                    // This prevents cross-session pollution (old events mixed with new stream)
+                    try {
+                        const orphanCount = await manager.getUntaggedEventCount(uniqueId, null);
+                        if (orphanCount > 0) {
+                            console.log(`[AutoRecorder] Found ${orphanCount} orphan events for ${uniqueId}, archiving before new stream...`);
+                            await manager.archiveStaleLiveEvents(uniqueId);
+                        }
+                    } catch (e) {
+                        console.error(`[AutoRecorder] Failed to cleanup orphans for ${uniqueId}:`, e);
+                    }
+
                     this.activeConnections.set(uniqueId, {
                         wrapper: wrapper,
                         startTime: new Date(),
