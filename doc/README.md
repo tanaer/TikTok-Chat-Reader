@@ -10,7 +10,8 @@
 - `doc/runtime-flows.md`：关键业务流程（自动监控/录制、手动接入、断开与归档、用户分析/AI）
 - `doc/data-model.md`：数据库与数据模型（`data.db`、表结构、字段含义、索引与迁移）
 - `doc/api.md`：对外接口（Socket.IO 事件 + REST API）
-- `doc/config.md`：配置项（`.env`、`settings` 表中的 key、当前代码里存在的 key 命名差异）
+- `doc/config.md`：配置项（`.env`、`settings` 表中的 key、历史 key 兼容映射）
+- `doc/monitor-archive-robustness.md`：开播监控 → 下播归档链路的健壮性审视与改进点
 
 ## 快速定位入口
 
@@ -20,4 +21,3 @@
 - 业务/查询层：`manager.js`
 - DB 模块（sql.js + 落盘）：`db.js`
 - 前端（静态资源）：`public/index.html` + `public/*.js`
-

@@ -81,6 +81,17 @@ io.on('connection', (socket) => {
 
     // Subscribe this socket to a wrapper's events (for UI display only)
     function subscribeToWrapper(socket, wrapper, roomId) {
+        console.log(`[Socket] Subscribing to wrapper events for ${roomId}, wsConnected: ${wrapper?.connection?.isConnected}`);
+
+        if (!wrapper?.connection) {
+            console.error(`[Socket] ERROR: wrapper.connection is null for ${roomId}!`);
+            return;
+        }
+
+        // DEBUG: Check listener count on wrapper.connection for chat event
+        const listenerCount = wrapper.connection.listenerCount('chat');
+        console.log(`[Socket] ${roomId} wrapper.connection has ${listenerCount} chat listeners before subscribe`);
+
         const handlers = {
             roomUser: msg => socket.emit('roomUser', msg),
             member: msg => {
@@ -91,6 +102,8 @@ io.on('connection', (socket) => {
                 });
             },
             chat: msg => {
+                // Debug log for first few chat messages
+                console.log(`[Socket] Forwarding chat from ${roomId}: ${msg.user?.uniqueId || msg.uniqueId}`);
                 socket.emit('chat', {
                     uniqueId: msg.user?.uniqueId || msg.uniqueId,
                     nickname: msg.user?.nickname || msg.nickname,
@@ -274,8 +287,24 @@ app.post('/api/price', (req, res) => {
 app.get('/api/rooms/stats', async (req, res) => {
     try {
         const liveRoomIds = autoRecorder.getLiveRoomIds();
-        const stats = await manager.getRoomStats(liveRoomIds);
-        res.json(stats);
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        const search = req.query.search || '';
+        const result = await manager.getRoomStats(liveRoomIds, { page, limit, search });
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Debug API for connection diagnostics
+app.get('/api/debug/connections', (req, res) => {
+    try {
+        const stats = autoRecorder.getConnectionStats();
+        res.json({
+            activeCount: stats.length,
+            connections: stats
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -283,8 +312,11 @@ app.get('/api/rooms/stats', async (req, res) => {
 
 app.get('/api/rooms', async (req, res) => {
     try {
-        const rooms = await manager.getRooms();
-        res.json(rooms);
+        const page = parseInt(req.query.page) || 1;
+        const limit = parseInt(req.query.limit) || 50;
+        const search = req.query.search || '';
+        const result = await manager.getRooms({ page, limit, search });
+        res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

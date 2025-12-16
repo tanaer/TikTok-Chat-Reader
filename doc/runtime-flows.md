@@ -35,7 +35,7 @@
    - 若已连接：跳过
    - 否则触发 `checkAndConnect(room)` 尝试连接（并在循环里 `await 1s` 做连接节流）
 
-> 监控循环间隔由 DB 设置控制：`settings.interval`（分钟）。注意此 key 与前端保存的 key 目前不完全一致，见 `doc/config.md`。
+> 监控循环间隔由 DB 设置控制：`settings.interval`（分钟）。UI 若保存 `scan_interval`，会在 `manager.js` 层自动映射到 `interval`（见 `doc/config.md`）。
 
 ### 1.2 建立 TikTok 连接
 
@@ -110,6 +110,12 @@
    - `sessionId = manager.createSession(roomId, snapshot)`
    - `manager.tagEventsWithSession(roomId, sessionId, startTime)` 将 `event.session_id` 填上
 
+健壮性要点（避免“重复断开/重复归档/跨场打标签”）：
+
+- `handleDisconnect` 对同一房间做幂等合并（多路触发最终只会归档一次）
+- 房间级 in-flight 锁：连接中/归档中不会再启动新的连接，避免并发竞争
+- 归档前 best-effort 等待事件落库 Promise settle，减少“最后几条事件未被归档”的概率
+
 ### 3.2 手动归档（前端按钮）
 
 前端：`public/app.js` -> `POST /api/sessions/end`
@@ -177,4 +183,3 @@
 - `POST /api/fix-orphaned-events`：对 `session_id IS NULL` 的历史事件按 room+date 造 session 并打标签
 - `POST /api/delete-empty-sessions`：删除没有任何 event 的 session
 - `POST /api/rebuild-missing-sessions`：对 event 里存在但 session 表缺失的 session_id 进行重建
-

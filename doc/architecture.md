@@ -102,7 +102,7 @@
 
 - `public/config.js`
   - 系统配置读写：`GET /api/config` + `POST /api/settings`
-  - 注意：当前代码里“settings key 命名”存在不一致，详见 `doc/config.md`
+  - 注意：settings key 有历史别名（`scan_interval`/`proxy_url`），已在 `manager.js` 层做兼容映射，详见 `doc/config.md`
 
 ### Python（历史实现/备用实现）
 
@@ -120,4 +120,3 @@
 - 代理：SOCKS5（环境变量 `PROXY_URL` 或 settings/请求参数）
 - EulerStream：用于签名/绕过限制的 API Key（`EULER_API_KEY` 或 settings）
 - AI 分析：后端调用 `node-fetch` 请求第三方 `chat/completions` API（默认 ModelScope）
-
