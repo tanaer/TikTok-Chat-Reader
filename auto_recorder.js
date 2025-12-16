@@ -510,8 +510,9 @@ class AutoRecorder {
 
         wrapper.connection.on('chat', msg => {
             updateLastEventTime();
-            // Debug: trace that backend is receiving chat events
-            console.log(`[AutoRecorder] CHAT from ${uniqueId}: ${msg.user?.uniqueId || msg.uniqueId}`);
+            eventCount.chat++;
+            // Only log first chat event as confirmation room is receiving data
+            if (eventCount.chat === 1) console.log(`[AutoRecorder] ✓ ${uniqueId} receiving events`);
             const roleInfo = extractRoleInfo(msg);
             const data = {
                 uniqueId: msg.user?.uniqueId || msg.uniqueId,

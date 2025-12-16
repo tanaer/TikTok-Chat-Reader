@@ -221,7 +221,11 @@ function saveDb() {
         }
         isDirty = false; // Reset dirty flag after successful save
     } catch (e) {
-        console.error('[DB] Save error:', e);
+        // Show simplified error message - suppress stack trace for common issues
+        const errMsg = e.code === 'UNKNOWN' || e.code === 'EBUSY' || e.code === 'EPERM'
+            ? `[DB] Save temporarily blocked (file busy), will retry...`
+            : `[DB] Save error: ${e.message || e}`;
+        console.log(errMsg);
     } finally {
         isSaving = false;
     }
