@@ -47,9 +47,8 @@
 
 - `session_id`：用于 TikTok 连接的 sessionId
 - `euler_api_key`：EulerStream Key（传给 wrapper）
-- `proxy` / `proxy_url`：代理
-  - 自动扫描连接（`checkAndConnect`）目前读取的是 `proxy`
-  - 手动启动连接（`startRoom`）会优先读 `proxy_url`，其次读 `proxy`
+- `proxy`：代理（canonical）
+  - 兼容：UI/旧脚本如果保存的是 `proxy_url`，`manager.getAllSettings()` / `manager.getSetting()` 会自动映射到 `proxy`
 
 ### 2.2 Server 相关
 
@@ -64,22 +63,17 @@ AI 配置读取：
 - `ai_api_key`（settings）或 `AI_API_KEY`（env）
 - `ai_api_url`（settings）或 `AI_API_URL`（env）
 
-## 3) 当前代码里存在的“key 命名不一致”现象
+## 3) 历史 key 兼容（已统一到 canonical）
 
-前端 `public/config.js` 保存配置时发送的 key：
+为兼容历史前端/脚本，本项目在 `manager.js` 对 settings key 做了兼容映射：
 
-- `scan_interval`
-- `proxy_url`
-- 以及：`auto_monitor_enabled` / `euler_api_key` / `session_id` / `port` / `ai_api_key` / `ai_api_url`
+- `scan_interval` -> `interval`
+- `proxy_url` -> `proxy`
 
-但 AutoRecorder 实际读取的是：
+行为约定：
 
-- 扫描间隔：`interval`（不是 `scan_interval`）
-- 代理：自动扫描读 `proxy`（不是 `proxy_url`），手动启动才兼容 `proxy_url`
+- 读取：`manager.getSetting('interval')` 会在 `interval` 不存在时回退读取 `scan_interval`（`proxy` 同理）
+- 保存：`manager.saveSetting(...)` 会把别名 key 统一写成 canonical key（DB 中以 `interval` / `proxy` 为准）
+- 批量读取：`manager.getAllSettings()` 会在 canonical 缺失时用别名回填（保证 AutoRecorder/Server 读取一致）
 
-因此如果仅通过当前 UI 保存配置：
-
-- 可能出现“UI 显示已保存，但 AutoRecorder 没按预期使用新配置”的情况
-
-这是一个需要后续统一/映射 key 的点（建议在 `server.js` 的 settings 保存层或 `manager.getSetting` 层做兼容映射）。
-
+因此即使前端 `public/config.js` 仍然发送 `scan_interval` / `proxy_url`，AutoRecorder 也能正确读取并生效。

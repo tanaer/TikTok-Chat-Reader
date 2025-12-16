@@ -115,9 +115,40 @@ class Manager {
         return { room_id: roomId, name: finalName, address: finalAddress, is_monitor_enabled: monitorVal };
     }
 
-    async getRooms() {
+    async getRooms(options = {}) {
         await this.ensureDb();
-        return query('SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled FROM room ORDER BY updated_at DESC');
+        const { page = 1, limit = 50, search = '' } = options;
+        const offset = (page - 1) * limit;
+
+        let sql = 'SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled FROM room';
+        let countSql = 'SELECT COUNT(*) as total FROM room';
+        const params = [];
+        const countParams = [];
+
+        // Fuzzy search on room_id and name
+        if (search && search.trim()) {
+            const likePattern = `%${search.trim()}%`;
+            sql += ' WHERE room_id LIKE ? OR name LIKE ?';
+            countSql += ' WHERE room_id LIKE ? OR name LIKE ?';
+            params.push(likePattern, likePattern);
+            countParams.push(likePattern, likePattern);
+        }
+
+        sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
+        params.push(limit, offset);
+
+        const rooms = query(sql, params);
+        const countResult = get(countSql, countParams);
+
+        return {
+            data: rooms,
+            pagination: {
+                page,
+                limit,
+                total: countResult?.total || 0,
+                totalPages: Math.ceil((countResult?.total || 0) / limit)
+            }
+        };
     }
 
     // Save numeric room ID when connecting to a room
@@ -127,6 +158,13 @@ class Manager {
 
         run(`UPDATE room SET numeric_room_id = ? WHERE room_id = ?`, [String(numericRoomId), uniqueId]);
         console.log(`[Manager] Saved numeric_room_id ${numericRoomId} for room ${uniqueId}`);
+    }
+
+    // Get cached numeric room ID from database (avoids fetching from TikTok)
+    async getCachedRoomId(uniqueId) {
+        await this.ensureDb();
+        const row = get(`SELECT numeric_room_id FROM room WHERE room_id = ?`, [uniqueId]);
+        return row?.numeric_room_id || null;
     }
 
     // Migrate events from numeric room_id to username room_id
@@ -359,7 +397,7 @@ class Manager {
             WHERE e.session_id IS NOT NULL AND s.session_id IS NULL
             GROUP BY e.session_id, e.room_id
         `);
-        
+
         // 2. Collided Sessions (Event room_id != Session room_id)
         const collidedSessions = query(`
             SELECT e.session_id, e.room_id, COUNT(*) as event_count,
@@ -369,7 +407,7 @@ class Manager {
             WHERE e.room_id != s.room_id
             GROUP BY e.session_id, e.room_id
         `);
-        
+
         console.log(`[Manager] Rebuild Check: ${missingSessions.length} missing, ${collidedSessions.length} collisions`);
 
         let sessionsCreated = 0;
@@ -378,16 +416,16 @@ class Manager {
         // Fix Collisions
         for (const c of collidedSessions) {
             const datePrefix = c.first_event ? c.first_event.slice(0, 10).replace(/-/g, '') : c.session_id.slice(0, 8);
-            
-            let newSessionId = datePrefix + '98'; 
+
+            let newSessionId = datePrefix + '98';
             let suffix = 98;
-            while(get(`SELECT 1 FROM session WHERE session_id = ?`, [newSessionId])) {
+            while (get(`SELECT 1 FROM session WHERE session_id = ?`, [newSessionId])) {
                 suffix--;
                 newSessionId = datePrefix + String(suffix).padStart(2, '0');
             }
-            
+
             console.log(`[Manager] Fixing collision for ${c.room_id}: ${c.session_id} -> ${newSessionId}`);
-            
+
             run(`INSERT INTO session (session_id, room_id, created_at, snapshot_json) VALUES (?, ?, ?, ?)`, [
                 newSessionId,
                 c.room_id,
@@ -398,10 +436,10 @@ class Manager {
                     note: `Split from collision`
                 })
             ]);
-            
-            run(`UPDATE event SET session_id = ? WHERE session_id = ? AND room_id = ?`, 
+
+            run(`UPDATE event SET session_id = ? WHERE session_id = ? AND room_id = ?`,
                 [newSessionId, c.session_id, c.room_id]);
-                
+
             collisionsFixed++;
             sessionsCreated++;
         }
@@ -426,7 +464,7 @@ class Manager {
 
     // Get events for a specific session
     // Get events for a specific session
-    
+
     // Merge sessions that are close together (same day, small gap)
     async mergeContinuitySessions(gapMinutes = 10) {
         await this.ensureDb();
@@ -448,58 +486,123 @@ class Manager {
                 ORDER BY created_at ASC
             `, [room.room_id]);
 
-            if (sessions.length < 2) continue;
-
-            let prev = sessions[0];
-            
-            for (let i = 1; i < sessions.length; i++) {
-                const curr = sessions[i];
-                
-                // Skip invalid data
-                if (!prev.end_time || !curr.start_time) {
-                    prev = curr;
-                    continue;
-                }
-
-                // Parse times
-                const prevEnd = new Date(prev.end_time).getTime();
-                const currStart = new Date(curr.start_time).getTime();
-                const gap = currStart - prevEnd; // can be negative if overlaps
-                
-                // Compare Dates (YYYY-MM-DD)
-                const prevDay = prev.start_time.slice(0, 10);
-                const currDay = curr.start_time.slice(0, 10);
-
-                // Logic: Same Day AND (Small Gap OR Overlap)
-                if (prevDay === currDay && gap < gapMs) {
-                    // Start Merge
-                    console.log(`[Manager] Merging ${curr.session_id} into ${prev.session_id} (Gap: ${(gap/1000/60).toFixed(1)}m)`);
-                    
-                    // 1. Move events to prev session
-                    run('UPDATE event SET session_id = ? WHERE session_id = ?', [prev.session_id, curr.session_id]);
-                    
-                    // 2. Delete current session record
-                    run('DELETE FROM session WHERE session_id = ?', [curr.session_id]);
-
-                    // 3. Update 'prev' end_time for next iteration
-                    // New end time is max(prev.end, curr.end)
-                    const currEnd = new Date(curr.end_time).getTime();
-                    if (currEnd > prevEnd) {
-                        prev.end_time = curr.end_time;
-                    }
-                    mergedCount++;
-                } else {
-                    // No merge, advance prev
-                    prev = curr;
-                }
-            }
+            mergedCount += await this._mergeSessionList(sessions, gapMs);
         }
-        
+
         console.log(`[Manager] Merged ${mergedCount} sessions.`);
         return { mergedCount };
     }
 
-async getSessionEvents(sessionId) {
+    // New optimized method for hourly job: Only check recent sessions
+    async consolidateRecentSessions(hours = 48, gapMinutes = 60) {
+        await this.ensureDb();
+        const timeLimit = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+
+        console.log(`[Manager] Consolidating sessions from last ${hours}h with gap < ${gapMinutes}m...`);
+
+        // Only check rooms active recently
+        const recentRooms = query(`SELECT DISTINCT room_id FROM session WHERE created_at > ?`, [timeLimit]);
+        let totalMerged = 0;
+        const gapMs = gapMinutes * 60 * 1000;
+
+        for (const room of recentRooms) {
+            const sessions = query(`
+                SELECT session_id, created_at,
+                       (SELECT MIN(timestamp) FROM event WHERE session_id = session.session_id) as start_time,
+                       (SELECT MAX(timestamp) FROM event WHERE session_id = session.session_id) as end_time
+                FROM session 
+                WHERE room_id = ? AND created_at > ?
+                ORDER BY created_at ASC
+            `, [room.room_id, timeLimit]);
+
+            totalMerged += await this._mergeSessionList(sessions, gapMs);
+        }
+
+        if (totalMerged > 0) {
+            console.log(`[Manager] Consolidate job merged ${totalMerged} fragmented sessions.`);
+        }
+        return { mergedCount: totalMerged };
+    }
+
+    async _mergeSessionList(sessions, gapMs) {
+        if (sessions.length < 2) return 0;
+        let mergedCount = 0;
+        let prev = sessions[0];
+
+        for (let i = 1; i < sessions.length; i++) {
+            const curr = sessions[i];
+
+            // Skip invalid data
+            if (!prev.end_time || !curr.start_time) {
+                prev = curr;
+                continue;
+            }
+
+            // Parse times
+            const prevEnd = new Date(prev.end_time).getTime();
+            const currStart = new Date(curr.start_time).getTime();
+            const gap = currStart - prevEnd; // can be negative if overlaps
+
+            // Compare Dates (YYYY-MM-DD)
+            const prevDay = prev.start_time.slice(0, 10);
+            const currDay = curr.start_time.slice(0, 10);
+
+            // Logic: Same Day AND (Small Gap OR Overlap)
+            if (prevDay === currDay && gap < gapMs) {
+                // Start Merge
+                // console.log(`[Manager] Merging ${curr.session_id} into ${prev.session_id} (Gap: ${(gap / 1000 / 60).toFixed(1)}m)`);
+
+                // 1. Move events to prev session
+                run('UPDATE event SET session_id = ? WHERE session_id = ?', [prev.session_id, curr.session_id]);
+
+                // 2. Delete current session record
+                run('DELETE FROM session WHERE session_id = ?', [curr.session_id]);
+
+                // 3. Update 'prev' end_time for next iteration
+                const currEnd = new Date(curr.end_time).getTime();
+                if (currEnd > prevEnd) {
+                    prev.end_time = curr.end_time;
+                }
+                mergedCount++;
+            } else {
+                // No merge, advance prev
+                prev = curr;
+            }
+        }
+        return mergedCount;
+    }
+
+    // Startup Cleanup: Archive any "live" events that are old (orphaned from crash)
+    async cleanupAllStaleEvents() {
+        await this.ensureDb();
+        console.log('[Manager] Checking for orphaned live events...');
+
+        const rooms = query('SELECT room_id FROM room WHERE is_monitor_enabled = 1');
+        let totalArchived = 0;
+
+        for (const room of rooms) {
+            // Check for stale events > 2 hours old that are still "live"
+            const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+
+            // Just count them first to see if we need to act
+            const staleCountRow = get(`
+                SELECT COUNT(*) as c FROM event 
+                WHERE room_id = ? AND session_id IS NULL AND timestamp < ?
+            `, [room.room_id, twoHoursAgo]);
+
+            if (staleCountRow && staleCountRow.c > 0) {
+                console.log(`[Manager] Found ${staleCountRow.c} orphaned events for ${room.room_id}. Archiving...`);
+                const result = await this.archiveStaleLiveEvents(room.room_id);
+                totalArchived += result.archived;
+            }
+        }
+
+        if (totalArchived > 0) {
+            console.log(`[Manager] Cleanup complete. Archived ${totalArchived} orphaned events.`);
+        }
+    }
+
+    async getSessionEvents(sessionId) {
         await this.ensureDb();
         return query('SELECT type, timestamp, data_json FROM event WHERE session_id = ? ORDER BY timestamp ASC',
             [sessionId]);
@@ -578,28 +681,30 @@ async getSessionEvents(sessionId) {
 
         const offset = (page - 1) * pageSize;
 
+        // Step 1: Get top gifters with basic aggregation (fast query)
         let langCondition = '';
-        let countParams = [];
-        let mainParams = [];
+        let params = [];
 
         if (langFilter) {
             langCondition = `AND (u.mastered_languages LIKE ? OR u.common_language LIKE ?)`;
-            countParams.push(`%${langFilter}%`, `%${langFilter}%`);
-            mainParams.push(`%${langFilter}%`, `%${langFilter}%`);
+            params.push(`%${langFilter}%`, `%${langFilter}%`);
         }
 
-        // Get total count for pagination
+        // Get total count
         const countResult = get(`
-            SELECT COUNT(DISTINCT u.user_id) as total
-            FROM event e
-            JOIN user u ON e.user_id = u.user_id
-            WHERE e.type = 'gift' ${langCondition}
-        `, countParams);
+            SELECT COUNT(*) as total FROM (
+                SELECT e.user_id
+                FROM event e
+                JOIN user u ON e.user_id = u.user_id
+                WHERE e.type = 'gift' ${langCondition}
+                GROUP BY e.user_id
+                HAVING SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) > 0
+            )
+        `, params);
         const totalCount = countResult ? countResult.total : 0;
 
-        mainParams.push(pageSize, offset);
-
-        // Optimized single query with subqueries - includes role and fan info
+        // Main query - simplified, no nested correlated subqueries
+        const mainParams = [...params, pageSize, offset];
         const rows = query(`
             SELECT 
                 u.user_id as userId,
@@ -607,70 +712,62 @@ async getSessionEvents(sessionId) {
                 u.nickname as nickname,
                 u.common_language as commonLanguage,
                 u.mastered_languages as masteredLanguages,
-                COALESCE(gift_agg.totalValue, 0) as totalValue,
-                gift_agg.topRoom,
-                gift_agg.roomCount,
-                COALESCE(chat_agg.chatCount, 0) as chatCount,
-                COALESCE(last_agg.lastActive, u.updated_at) as lastActive,
-                COALESCE(role_agg.isAdmin, 0) as isAdmin,
-                COALESCE(role_agg.isSuperAdmin, 0) as isSuperAdmin,
-                COALESCE(role_agg.isModerator, 0) as isModerator,
-                COALESCE(role_agg.fanLevel, 0) as fanLevel,
-                role_agg.fanClubName
-            FROM user u
-            LEFT JOIN (
-                SELECT 
-                    user_id,
-                    SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as totalValue,
-                    (SELECT room_id FROM event e2 WHERE e2.type = 'gift' AND e2.user_id = e1.user_id 
-                     GROUP BY room_id ORDER BY COUNT(*) DESC LIMIT 1) as topRoom,
-                    COUNT(DISTINCT room_id) as roomCount
-                FROM event e1
-                WHERE type = 'gift'
-                GROUP BY user_id
-            ) gift_agg ON u.user_id = gift_agg.user_id
-            LEFT JOIN (
-                SELECT user_id, COUNT(*) as chatCount
-                FROM event
-                WHERE type = 'chat'
-                GROUP BY user_id
-            ) chat_agg ON u.user_id = chat_agg.user_id
-            LEFT JOIN (
-                SELECT user_id, MAX(timestamp) as lastActive
-                FROM event
-                GROUP BY user_id
-            ) last_agg ON u.user_id = last_agg.user_id
-            LEFT JOIN (
-                SELECT 
-                    user_id,
-                    MAX(json_extract(data_json, '$.isAdmin')) as isAdmin,
-                    MAX(json_extract(data_json, '$.isSuperAdmin')) as isSuperAdmin,
-                    MAX(json_extract(data_json, '$.isModerator')) as isModerator,
-                    MAX(json_extract(data_json, '$.fanLevel')) as fanLevel,
-                    (SELECT json_extract(data_json, '$.fanClubName') FROM event e3 
-                     WHERE e3.user_id = e2.user_id AND json_extract(data_json, '$.fanClubName') IS NOT NULL 
-                     AND json_extract(data_json, '$.fanClubName') != '' ORDER BY timestamp DESC LIMIT 1) as fanClubName
-                FROM event e2
-                GROUP BY user_id
-            ) role_agg ON u.user_id = role_agg.user_id
-            WHERE gift_agg.totalValue > 0 ${langCondition}
-            ORDER BY gift_agg.totalValue DESC
+                SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as totalValue,
+                COUNT(DISTINCT e.room_id) as roomCount,
+                MAX(e.timestamp) as lastActive
+            FROM event e
+            JOIN user u ON e.user_id = u.user_id
+            WHERE e.type = 'gift' ${langCondition}
+            GROUP BY e.user_id
+            HAVING totalValue > 0
+            ORDER BY totalValue DESC
             LIMIT ? OFFSET ?
         `, mainParams);
 
-        // For each user, check if they are moderator in their top room
-        for (const user of rows) {
-            if (user.topRoom) {
-                const modCheck = get(`
-                    SELECT MAX(json_extract(data_json, '$.isModerator')) as isMod
-                    FROM event
-                    WHERE user_id = ? AND room_id = ? AND json_extract(data_json, '$.isModerator') = 1
-                    LIMIT 1
-                `, [user.userId, user.topRoom]);
-                user.isTopRoomModerator = modCheck && modCheck.isMod ? true : false;
-            } else {
-                user.isTopRoomModerator = false;
+        // Step 2: Get additional data in batch for the returned users
+        if (rows.length === 0) {
+            return { users: [], totalCount, page, pageSize };
+        }
+
+        const userIds = rows.map(r => r.userId);
+        const placeholders = userIds.map(() => '?').join(',');
+
+        // Batch: chat counts
+        const chatStats = query(`
+            SELECT user_id, COUNT(*) as chatCount
+            FROM event
+            WHERE type = 'chat' AND user_id IN (${placeholders})
+            GROUP BY user_id
+        `, userIds);
+        const chatMap = Object.fromEntries(chatStats.map(r => [r.user_id, r.chatCount]));
+
+        // Batch: top room per user (most gifts sent to)
+        const topRoomStats = query(`
+            SELECT user_id, room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as roomValue
+            FROM event
+            WHERE type = 'gift' AND user_id IN (${placeholders})
+            GROUP BY user_id, room_id
+            ORDER BY user_id, roomValue DESC
+        `, userIds);
+
+        // Extract top room per user
+        const topRoomMap = {};
+        for (const stat of topRoomStats) {
+            if (!topRoomMap[stat.user_id]) {
+                topRoomMap[stat.user_id] = stat.room_id;
             }
+        }
+
+        // Enrich rows
+        for (const user of rows) {
+            user.chatCount = chatMap[user.userId] || 0;
+            user.topRoom = topRoomMap[user.userId] || null;
+            user.isTopRoomModerator = false; // Skip moderator check for performance
+            user.isAdmin = 0;
+            user.isSuperAdmin = 0;
+            user.isModerator = 0;
+            user.fanLevel = 0;
+            user.fanClubName = null;
         }
 
         return { users: rows, totalCount, page, pageSize };
@@ -720,108 +817,199 @@ async getSessionEvents(sessionId) {
     async getGlobalStats() {
         await this.ensureDb();
 
-        // 24-Hour Distribution - ALL historical data grouped by hour of day
-        // Use substr instead of strftime for Beijing time string format 'YYYY-MM-DD HH:mm:ss'
-        const hourRows = query(`
-            SELECT substr(timestamp, 12, 2) as hour, type, data_json 
+        // Limit to last 30 days for practical use and better performance
+        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+            .toISOString().replace('T', ' ').slice(0, 19);
+
+        // 24-Hour Distribution - use SQL aggregation with indexed columns
+        // substr(timestamp, 12, 2) extracts hour from 'YYYY-MM-DD HH:mm:ss' format
+        const hourChatRows = query(`
+            SELECT substr(timestamp, 12, 2) as hour, COUNT(*) as cnt
             FROM event 
-            WHERE type = 'chat' OR type = 'gift'
-        `);
+            WHERE type = 'chat' AND timestamp >= ?
+            GROUP BY hour
+        `, [thirtyDaysAgo]);
+
+        const hourGiftRows = query(`
+            SELECT substr(timestamp, 12, 2) as hour, 
+                   SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val
+            FROM event 
+            WHERE type = 'gift' AND timestamp >= ?
+            GROUP BY hour
+        `, [thirtyDaysAgo]);
 
         const hourStats = {};
         for (let i = 0; i < 24; i++) hourStats[String(i).padStart(2, '0')] = { gift: 0, chat: 0 };
 
-        for (const r of hourRows) {
-            const h = r.hour;
-            if (!hourStats[h]) hourStats[h] = { gift: 0, chat: 0 };
-
-            if (r.type === 'chat') {
-                hourStats[h].chat++;
-            } else if (r.type === 'gift') {
-                try {
-                    const data = JSON.parse(r.data_json);
-                    const val = (data.diamondCount || 0) * (data.repeatCount || 1);
-                    hourStats[h].gift += val;
-                } catch (e) { }
-            }
+        for (const r of hourChatRows) {
+            if (hourStats[r.hour]) hourStats[r.hour].chat = r.cnt;
+        }
+        for (const r of hourGiftRows) {
+            if (hourStats[r.hour]) hourStats[r.hour].gift = r.val || 0;
         }
 
-        // Weekly Distribution - ALL historical data grouped by day of week
-        // strftime('%w') should work on date part, but let's keep it consistent
-        const dayRows = query(`
-            SELECT strftime('%w', substr(timestamp, 1, 10)) as day, type, data_json 
+        // Weekly Distribution - use SQL aggregation
+        const dayChatRows = query(`
+            SELECT strftime('%w', substr(timestamp, 1, 10)) as day, COUNT(*) as cnt
             FROM event 
-            WHERE type = 'chat' OR type = 'gift'
-        `);
+            WHERE type = 'chat' AND timestamp >= ?
+            GROUP BY day
+        `, [thirtyDaysAgo]);
+
+        const dayGiftRows = query(`
+            SELECT strftime('%w', substr(timestamp, 1, 10)) as day,
+                   SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val
+            FROM event 
+            WHERE type = 'gift' AND timestamp >= ?
+            GROUP BY day
+        `, [thirtyDaysAgo]);
 
         const dayStats = {};
         for (let i = 0; i < 7; i++) dayStats[i] = { gift: 0, chat: 0 };
 
-        for (const r of dayRows) {
+        for (const r of dayChatRows) {
             const d = parseInt(r.day);
-            if (r.type === 'chat') {
-                dayStats[d].chat++;
-            } else if (r.type === 'gift') {
-                try {
-                    const data = JSON.parse(r.data_json);
-                    const val = (data.diamondCount || 0) * (data.repeatCount || 1);
-                    dayStats[d].gift += val;
-                } catch (e) { }
-            }
+            dayStats[d].chat = r.cnt;
+        }
+        for (const r of dayGiftRows) {
+            const d = parseInt(r.day);
+            dayStats[d].gift = r.val || 0;
         }
 
         return { hourStats, dayStats };
     }
 
-    async getRoomStats(liveRoomIds = []) {
+    async getRoomStats(liveRoomIds = [], options = {}) {
         await this.ensureDb();
-        // Stats for CURRENT LIVE SESSION ONLY (session_id IS NULL)
+        const { page = 1, limit = 50, search = '' } = options;
 
-        const rooms = query('SELECT * FROM room ORDER BY updated_at DESC');
-        const stats = [];
+        let roomSql = 'SELECT * FROM room';
+        let countSql = 'SELECT COUNT(*) as total FROM room';
+        const params = [];
+        const countParams = [];
 
-        for (const r of rooms) {
-            // Only count events from current live session (session_id IS NULL)
-            const visitCount = get(`SELECT COUNT(*) as c FROM event WHERE room_id = ? AND type = 'member' AND session_id IS NULL`, [r.room_id])?.c || 0;
-
-            const giftValue = get(`
-                SELECT SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val 
-                FROM event 
-                WHERE room_id = ? AND type = 'gift' AND session_id IS NULL`,
-                [r.room_id])?.val || 0;
-
-            const commentCount = get(`SELECT COUNT(*) as c FROM event WHERE room_id = ? AND type = 'chat' AND session_id IS NULL`, [r.room_id])?.c || 0;
-
-            const likeCountRow = get(`
-                SELECT MAX(COALESCE(total_like_count, 0)) as m 
-                FROM event 
-                WHERE room_id = ? AND type = 'like' AND session_id IS NULL`, [r.room_id]);
-            const likeCount = likeCountRow ? likeCountRow.m : 0;
-
-            const lastSession = get(`SELECT * FROM session WHERE room_id = ? ORDER BY created_at DESC LIMIT 1`, [r.room_id]);
-
-            // Check if room is currently live (connected via AutoRecorder)
-            const isLive = liveRoomIds.includes(r.room_id);
-
-            stats.push({
-                ...r,
-                isLive,
-                totalVisits: visitCount,
-                totalComments: commentCount,
-                totalGiftValue: giftValue,
-                totalLikes: likeCount || 0,
-                lastSessionTime: lastSession ? lastSession.created_at : null
-            });
+        // 1. Apply Search Filter
+        if (search && search.trim()) {
+            const likePattern = `%${search.trim()}%`;
+            roomSql += ' WHERE (room_id LIKE ? OR name LIKE ?)';
+            countSql += ' WHERE (room_id LIKE ? OR name LIKE ?)';
+            params.push(likePattern, likePattern);
+            countParams.push(likePattern, likePattern);
         }
 
-        // Sort: live rooms first, then by updated_at
+        // 2. Apply Ordering (Live first, Enabled second, Disabled last, then by Updated)
+        // Priority: Live+Enabled=0, Live+Disabled=1, NotLive+Enabled=2, NotLive+Disabled=3
+        if (liveRoomIds.length > 0) {
+            const placeholders = liveRoomIds.map(() => '?').join(',');
+            roomSql += ` ORDER BY 
+                CASE WHEN room_id IN (${placeholders}) THEN 0 ELSE 2 END + 
+                CASE WHEN is_monitor_enabled = 0 THEN 1 ELSE 0 END,
+                updated_at DESC`;
+            params.push(...liveRoomIds);
+        } else {
+            // No live rooms - sort by enabled status, then by updated_at
+            roomSql += ' ORDER BY CASE WHEN is_monitor_enabled = 0 THEN 1 ELSE 0 END, updated_at DESC';
+        }
+
+        // 3. Get total count (for pagination)
+        const countResult = get(countSql, countParams);
+        const total = countResult?.total || 0;
+
+        // 4. Apply Pagination
+        const offset = (page - 1) * limit;
+        roomSql += ' LIMIT ? OFFSET ?';
+        params.push(limit, offset);
+
+        const rooms = query(roomSql, params);
+
+        if (rooms.length === 0) {
+            return {
+                data: [],
+                pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+            };
+        }
+
+        // 5. Batch fetch stats for these rooms
+        const roomIds = rooms.map(r => r.room_id);
+        const placeholders = roomIds.map(() => '?').join(',');
+
+        // Visit counts
+        const visitStats = query(`
+            SELECT room_id, COUNT(*) as c 
+            FROM event 
+            WHERE room_id IN (${placeholders}) AND type = 'member' AND session_id IS NULL
+            GROUP BY room_id
+        `, roomIds);
+        const visitMap = Object.fromEntries(visitStats.map(r => [r.room_id, r.c]));
+
+        // Comment counts
+        const commentStats = query(`
+            SELECT room_id, COUNT(*) as c 
+            FROM event 
+            WHERE room_id IN (${placeholders}) AND type = 'chat' AND session_id IS NULL
+            GROUP BY room_id
+        `, roomIds);
+        const commentMap = Object.fromEntries(commentStats.map(r => [r.room_id, r.c]));
+
+        // Gift values
+        const giftStats = query(`
+            SELECT room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val 
+            FROM event 
+            WHERE room_id IN (${placeholders}) AND type = 'gift' AND session_id IS NULL
+            GROUP BY room_id
+        `, roomIds);
+        const giftMap = Object.fromEntries(giftStats.map(r => [r.room_id, r.val || 0]));
+
+        // Max like counts
+        const likeStats = query(`
+            SELECT room_id, MAX(COALESCE(total_like_count, 0)) as m 
+            FROM event 
+            WHERE room_id IN (${placeholders}) AND type = 'like' AND session_id IS NULL
+            GROUP BY room_id
+        `, roomIds);
+        const likeMap = Object.fromEntries(likeStats.map(r => [r.room_id, r.m || 0]));
+
+        // Last session times
+        const lastSessions = query(`
+            SELECT s1.room_id, s1.created_at 
+            FROM session s1
+            INNER JOIN (
+                SELECT room_id, MAX(created_at) as max_created
+                FROM session
+                WHERE room_id IN (${placeholders})
+                GROUP BY room_id
+            ) s2 ON s1.room_id = s2.room_id AND s1.created_at = s2.max_created
+        `, roomIds);
+        const sessionMap = Object.fromEntries(lastSessions.map(r => [r.room_id, r.created_at]));
+
+        // 6. Build final stats objects
+        const stats = rooms.map(r => ({
+            ...r,
+            isLive: liveRoomIds.includes(r.room_id),
+            totalVisits: visitMap[r.room_id] || 0,
+            totalComments: commentMap[r.room_id] || 0,
+            totalGiftValue: giftMap[r.room_id] || 0,
+            totalLikes: likeMap[r.room_id] || 0,
+            lastSessionTime: sessionMap[r.room_id] || null
+        }));
+
+        // In-memory sort fallback (just in case, though SQL sort handles it)
+        // Actually SQL sort is sufficient, but this ensures consistency if IDs were missing in SQL params
         stats.sort((a, b) => {
             if (a.isLive && !b.isLive) return -1;
             if (!a.isLive && b.isLive) return 1;
-            return 0; // keep original order (by updated_at)
+            return 0;
         });
 
-        return stats;
+        return {
+            data: stats,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit)
+            }
+        };
     }
 
     async getUserAnalysis(userId) {
@@ -1051,7 +1239,7 @@ async getSessionEvents(sessionId) {
     // Splits "live" events (session_id IS NULL) if there's a large time gap
     async archiveStaleLiveEvents(roomId) {
         await this.ensureDb();
-        
+
         // Get all timestamps of current live events
         const events = query(`
             SELECT id, timestamp 
@@ -1083,7 +1271,7 @@ async getSessionEvents(sessionId) {
             const lastT = events[splitIndex - 1].timestamp;
 
             const sessionId = firstT.slice(0, 10).replace(/-/g, '') + '99'; // e.g. 2025121299
-            
+
             // Generate unique session ID if collision
             let finalSessionId = sessionId;
             let suffix = 99;
@@ -1099,7 +1287,7 @@ async getSessionEvents(sessionId) {
                 finalSessionId,
                 roomId,
                 JSON.stringify({
-                    auto_generated: true, 
+                    auto_generated: true,
                     note: `Archived stale events (Gap detected)`,
                     range: `${firstT} - ${lastT}`
                 }),

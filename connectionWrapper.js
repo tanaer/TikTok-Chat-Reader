@@ -7,7 +7,8 @@ const { TikTokLiveConnection, SignConfig } = require('tiktok-live-connector');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const { EventEmitter } = require('events');
 
-// Configure EulerStream API Key
+// KeyManager for API key rotation
+const keyManager = require('./utils/keyManager');
 if (process.env.EULER_API_KEY) {
     SignConfig.apiKey = process.env.EULER_API_KEY;
     console.log('[Sign] EulerStream API Key configured');
@@ -32,13 +33,20 @@ class TikTokConnectionWrapper extends EventEmitter {
         this.didEmitDisconnected = false; // Prevent duplicate disconnected events
         this.maxReconnectAttempts = 5;
 
-        // Setup proxy agent
-        const proxyUrl = options.proxyUrl || process.env.PROXY_URL;
+        // Setup proxy agent - use options if valid, otherwise fallback to env
+        // Important: ignore empty strings from database settings
+        const proxyUrl = (options.proxyUrl && options.proxyUrl.trim())
+            ? options.proxyUrl
+            : (process.env.PROXY_URL || null);
         const agent = proxyUrl ? new SocksProxyAgent(proxyUrl) : null;
         if (proxyUrl) console.log(`[Proxy] Using proxy: ${proxyUrl}`);
 
-        // Set API Key if provided
-        if (options.eulerApiKey) {
+        // Set API Key using KeyManager for rotation
+        const apiKey = keyManager.getActiveKey();
+        if (apiKey) {
+            SignConfig.apiKey = apiKey;
+            console.log(`[Wrapper] Using Euler Key: ${apiKey.slice(0, 10)}...`);
+        } else if (options.eulerApiKey) {
             SignConfig.apiKey = options.eulerApiKey;
         } else if (process.env.EULER_API_KEY) {
             SignConfig.apiKey = process.env.EULER_API_KEY;
@@ -47,17 +55,36 @@ class TikTokConnectionWrapper extends EventEmitter {
         // Merge options with proxy settings
         const connectionOptions = {
             ...options,
+            signApiKey: apiKey, // Pass to connection too
             webClientOptions: {
                 ...(options?.webClientOptions || {}),
-                ...(agent ? { httpsAgent: agent, timeout: 15000 } : { timeout: 15000 })
+                ...(agent ? { httpsAgent: agent, timeout: 30000 } : { timeout: 30000 })
             },
             wsClientOptions: {
                 ...(options?.wsClientOptions || {}),
-                ...(agent ? { agent: agent, timeout: 15000 } : { timeout: 15000 })
+                ...(agent ? { agent: agent, timeout: 30000 } : { timeout: 30000 })
             }
         };
 
         this.connection = new TikTokLiveConnection(uniqueId, connectionOptions);
+
+        // DEBUG: Log first few events to verify events are being received at all
+        let debugEventCount = 0;
+        this.connection.on('chat', (msg) => {
+            debugEventCount++;
+            if (debugEventCount <= 3) {
+                console.log(`[Wrapper DEBUG] @${uniqueId} received chat event #${debugEventCount}: ${msg.user?.uniqueId}`);
+            }
+        });
+
+        // DEBUG: Check if any raw WebSocket data is coming in
+        let rawDataCount = 0;
+        this.connection.on('rawData', (msgId, params) => {
+            rawDataCount++;
+            if (rawDataCount <= 5) {
+                console.log(`[Wrapper RAW] @${uniqueId} received data #${rawDataCount}, msgId: ${msgId}`);
+            }
+        });
 
         this.connection.on('streamEnd', () => {
             this.log(`streamEnd event received, giving up connection`);
@@ -76,13 +103,24 @@ class TikTokConnectionWrapper extends EventEmitter {
         });
 
         this.connection.on('error', (err) => {
-            this.log(`Error event triggered: ${err?.info || err?.message || err}`);
-            console.error(err);
+            const msg = err?.info || err?.message || err;
+            // Suppress verbose stack trace for expected errors (like fetchIsLive failures)
+            const isExpectedError = msg?.includes?.('falling back to API') ||
+                msg?.includes?.('Failed to extract') ||
+                msg?.includes?.('SIGI_STATE');
+            if (isExpectedError) {
+                // Just log a brief message for expected/handled errors
+                this.log(`[WARN] ${msg.split(',')[0]}`);
+            } else {
+                this.log(`Error: ${msg}`);
+                console.error(err);
+            }
         });
     }
 
-    connect(isReconnect) {
-        this.connection.connect().then((state) => {
+    connect(isReconnect, cachedRoomId = null) {
+        // Pass cached room ID to skip fetching from TikTok page
+        return this.connection.connect(cachedRoomId || undefined).then((state) => {
             this.log(`${isReconnect ? 'Reconnected' : 'Connected'} to roomId ${state.roomId}`);
 
             // Check if Room is actually Live (status 2 = LIVE, 4 = FINISH)
@@ -105,10 +143,11 @@ class TikTokConnectionWrapper extends EventEmitter {
                 return;
             }
 
-            // Notify client
-            if (!isReconnect) {
-                this.emit('connected', state);
-            }
+            // Notify client - emit connected on BOTH initial connect AND reconnect
+            // This ensures setupLogging is called after reconnect to register event handlers
+            this.emit('connected', state);
+
+            return state; // Return state for await callers
 
         }).catch((err) => {
             this.log(`${isReconnect ? 'Reconnect' : 'Connection'} failed, ${err}`);
@@ -120,6 +159,7 @@ class TikTokConnectionWrapper extends EventEmitter {
                 // Notify client
                 this.emit('disconnected', err.toString());
             }
+            throw err; // Re-throw for await callers
         });
     }
 
@@ -149,7 +189,13 @@ class TikTokConnectionWrapper extends EventEmitter {
 
             this.reconnectCount += 1;
             this.reconnectWaitMs *= 2;
-            this.connect(true);
+
+            // CRITICAL: Must catch reconnect errors to prevent UnhandledPromiseRejection crash
+            this.connect(true).catch(err => {
+                this.log(`Reconnect failed, ${err?.message || err}`);
+                // Schedule another reconnect attempt if we haven't exceeded max
+                this.scheduleReconnect(err?.message || 'Reconnect failed');
+            });
 
         }, this.reconnectWaitMs);
     }
@@ -176,5 +222,6 @@ module.exports = {
     TikTokConnectionWrapper,
     getGlobalConnectionCount: () => {
         return globalConnectionCount;
-    }
+    },
+    getKeyCount: () => keyManager.getKeyCount()
 };

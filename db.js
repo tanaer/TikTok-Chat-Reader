@@ -156,6 +156,11 @@ async function initDb() {
         db.run(`CREATE INDEX IF NOT EXISTS idx_event_user_id ON event(user_id)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_event_type ON event(type)`);
         db.run(`CREATE INDEX IF NOT EXISTS idx_event_type_user ON event(type, user_id)`);
+        // Additional indexes for performance
+        db.run(`CREATE INDEX IF NOT EXISTS idx_event_type_room ON event(type, room_id)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_event_user_type ON event(user_id, type)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_event_room_type_session ON event(room_id, type, session_id)`);
+        db.run(`CREATE INDEX IF NOT EXISTS idx_session_room ON session(room_id, created_at DESC)`);
 
         saveDb();
 
