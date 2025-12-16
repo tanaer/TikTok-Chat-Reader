@@ -1236,9 +1236,14 @@ class Manager {
     }
 
     // Archive stale live events (fix for "long session" bug)
-    // Splits "live" events (session_id IS NULL) if there's a large time gap
+    // Two strategies:
+    // 1. If there's a large time gap (1 hour), split the events at the gap
+    // 2. Force archive any events older than 2 hours (prevents 20+ hour "live" sessions)
     async archiveStaleLiveEvents(roomId) {
         await this.ensureDb();
+
+        const now = Date.now();
+        const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString();
 
         // Get all timestamps of current live events
         const events = query(`
@@ -1248,13 +1253,13 @@ class Manager {
             ORDER BY timestamp ASC
         `, [roomId]);
 
-        if (events.length < 2) return { archived: 0 };
+        if (events.length === 0) return { archived: 0 };
 
         const GAP_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour gap counts as new session
         let lastTime = new Date(events[0].timestamp).getTime();
         let splitIndex = -1;
 
-        // Find the first major gap
+        // Strategy 1: Find the first major time gap
         for (let i = 1; i < events.length; i++) {
             const currTime = new Date(events[i].timestamp).getTime();
             if (currTime - lastTime > GAP_THRESHOLD_MS) {
@@ -1264,8 +1269,33 @@ class Manager {
             lastTime = currTime;
         }
 
-        if (splitIndex !== -1) {
-            // Found a gap! events[0...splitIndex-1] should be archived
+        // Strategy 2: If no gap found, check if oldest events are > 2 hours old
+        // This handles the case where stream ended but disconnect event was missed
+        if (splitIndex === -1) {
+            const oldestEventTime = new Date(events[0].timestamp).getTime();
+            const newestEventTime = new Date(events[events.length - 1].timestamp).getTime();
+
+            // If oldest event is > 2 hours old AND there are recent events (within last 10 mins)
+            // this indicates a missed session boundary
+            const ageOfOldest = now - oldestEventTime;
+            const ageOfNewest = now - newestEventTime;
+
+            if (ageOfOldest > 2 * 60 * 60 * 1000 && ageOfNewest < 10 * 60 * 1000) {
+                // Archive events older than 2 hours as a separate session
+                for (let i = 0; i < events.length; i++) {
+                    if (events[i].timestamp > twoHoursAgo) {
+                        splitIndex = i;
+                        break;
+                    }
+                }
+                if (splitIndex > 0) {
+                    console.log(`[Manager] Forcing archive of ${splitIndex} old events for ${roomId} (Age-based split)`);
+                }
+            }
+        }
+
+        if (splitIndex > 0) {
+            // Archive events[0...splitIndex-1]
             const staleEvents = events.slice(0, splitIndex);
             const firstT = events[0].timestamp;
             const lastT = events[splitIndex - 1].timestamp;
@@ -1288,7 +1318,7 @@ class Manager {
                 roomId,
                 JSON.stringify({
                     auto_generated: true,
-                    note: `Archived stale events (Gap detected)`,
+                    note: `Archived stale events (Gap/Age detected)`,
                     range: `${firstT} - ${lastT}`
                 }),
                 firstT
