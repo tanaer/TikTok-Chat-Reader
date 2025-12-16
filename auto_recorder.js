@@ -16,6 +16,10 @@ class AutoRecorder {
         this.failureCount = new Map();       // roomId -> consecutive failure count
         this.pendingOffline = new Map();     // roomId -> timestamp (for heartbeat double-check)
 
+        // Session resume: track recent disconnects to allow 30-min resume
+        // roomId -> { startTime, lastEventTime, disconnectTime }
+        this.recentDisconnects = new Map();
+
         this.timer = null;
         this.heartbeatTimer = null;
 
@@ -343,16 +347,49 @@ class AutoRecorder {
                     existing.lastEventTime = Date.now();
                     console.log(`[AutoRecorder] ${uniqueId} reconnected, refreshing event listeners`);
                 } else {
-                    // Initial connection - CRITICAL: Archive any old orphan events first
-                    // This prevents cross-session pollution (old events mixed with new stream)
+                    // Initial connection - check if we should resume from recent disconnect
+                    const resumeWindowMs = 30 * 60 * 1000; // 30 minutes
+                    let shouldResume = false;
+
                     try {
-                        const orphanCount = await manager.getUntaggedEventCount(uniqueId, null);
-                        if (orphanCount > 0) {
-                            console.log(`[AutoRecorder] Found ${orphanCount} orphan events for ${uniqueId}, archiving before new stream...`);
-                            await manager.archiveStaleLiveEvents(uniqueId);
+                        // Check if there was a recent session (within 30 mins)
+                        const sessions = await manager.getSessions(uniqueId);
+                        if (sessions && sessions.length > 0) {
+                            const lastSession = sessions[0];
+                            const lastSessionTime = new Date(lastSession.created_at).getTime();
+                            const timeSinceLastSession = Date.now() - lastSessionTime;
+
+                            if (timeSinceLastSession < resumeWindowMs) {
+                                // Last session was within 30 mins - this is likely a resume
+                                console.log(`[AutoRecorder] ${uniqueId} reconnecting within 30 mins of last session (${Math.floor(timeSinceLastSession / 1000 / 60)}m ago). Resuming...`);
+                                shouldResume = true;
+                            }
+                        }
+
+                        // Also check recentDisconnects map for very recent disconnects (not yet archived)
+                        const recentDisconnect = this.recentDisconnects.get(uniqueId);
+                        if (recentDisconnect && (Date.now() - recentDisconnect.disconnectTime) < resumeWindowMs) {
+                            console.log(`[AutoRecorder] ${uniqueId} has recent disconnect data, resuming session...`);
+                            shouldResume = true;
+                            this.recentDisconnects.delete(uniqueId); // Clear after using
+                        }
+
+                        // If NOT resuming, archive orphan events first
+                        if (!shouldResume) {
+                            const orphanCount = await manager.getUntaggedEventCount(uniqueId, null);
+                            if (orphanCount > 0) {
+                                console.log(`[AutoRecorder] Found ${orphanCount} orphan events for ${uniqueId}, archiving before new stream...`);
+                                await manager.archiveStaleLiveEvents(uniqueId);
+                            }
+                        } else {
+                            // Resuming - keep orphan events as-is, they'll be part of this session
+                            const orphanCount = await manager.getUntaggedEventCount(uniqueId, null);
+                            if (orphanCount > 0) {
+                                console.log(`[AutoRecorder] ${uniqueId} resuming with ${orphanCount} existing events (no new archive created)`);
+                            }
                         }
                     } catch (e) {
-                        console.error(`[AutoRecorder] Failed to cleanup orphans for ${uniqueId}:`, e);
+                        console.error(`[AutoRecorder] Error checking resume status for ${uniqueId}:`, e);
                     }
 
                     this.activeConnections.set(uniqueId, {
@@ -853,7 +890,26 @@ class AutoRecorder {
                     return;
                 }
 
-                // Auto Save Session (only if we have events)
+                // SESSION RESUME: Save disconnect info in case room reconnects within 30 mins
+                // If reconnected within 30 mins, the connect logic will skip orphan archiving
+                // to allow seamless session continuation
+                const resumeWindow = 30 * 60 * 1000; // 30 minutes
+                this.recentDisconnects.set(uniqueId, {
+                    startTime: startTime,
+                    lastEventTime: conn.lastEventTime,
+                    disconnectTime: Date.now(),
+                    eventCount: eventCount
+                });
+
+                // Clean up old entries (older than 30 mins)
+                const now = Date.now();
+                for (const [roomId, info] of this.recentDisconnects.entries()) {
+                    if (now - info.disconnectTime > resumeWindow) {
+                        this.recentDisconnects.delete(roomId);
+                    }
+                }
+
+                // Archive session now (but reconnect within 30 mins can continue with new events)
                 console.log(`[AutoRecorder] Archiving session for ${uniqueId} with ${eventCount} events...`);
                 try {
                     // FORCE uniqueId (string) for session creation to match logging

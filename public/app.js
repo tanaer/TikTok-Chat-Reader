@@ -307,8 +307,10 @@ function connectToLive(roomId) {
 }
 
 function disconnectLive() {
-    socket.emit('requestDisconnect');
-    console.log('Switching to history, disconnected manual connection.');
+    // Only unsubscribe from UI events - DO NOT stop recording!
+    // Use 'unsubscribe' instead of 'requestDisconnect' to keep recording active
+    socket.emit('unsubscribe');
+    console.log('Switched to history view, unsubscribed from live events. Recording continues.');
 }
 
 async function loadHistoryData(sessionId) {
