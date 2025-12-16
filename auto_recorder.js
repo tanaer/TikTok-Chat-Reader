@@ -374,6 +374,24 @@ class AutoRecorder {
 
                 // Set up event logging - called on EVERY connect/reconnect
                 this.setupLogging(wrapper, uniqueId, state.roomId);
+
+                // POST-CONNECTION VALIDATION: TikTok API can return success for offline rooms
+                // If no events received within 60 seconds, room is likely not actually live
+                const validationDelayMs = 60 * 1000;
+                setTimeout(() => {
+                    const conn = this.activeConnections.get(uniqueId);
+                    if (!conn) return; // Already disconnected
+
+                    const now = Date.now();
+                    const timeSinceStart = now - (conn.startTime?.getTime() || now);
+                    const timeSinceEvent = now - (conn.lastEventTime || now);
+
+                    // If connected for 60s but no events received (lastEventTime is close to startTime)
+                    if (timeSinceStart >= validationDelayMs && timeSinceEvent >= validationDelayMs - 5000) {
+                        console.log(`[AutoRecorder] ${uniqueId} connected but NO EVENTS for ${Math.floor(timeSinceStart / 1000)}s. Likely offline (API false positive). Disconnecting...`);
+                        this.handleDisconnect(uniqueId, 'No events after connection - likely offline');
+                    }
+                }, validationDelayMs);
             });
 
             wrapper.once('disconnected', reason => {
