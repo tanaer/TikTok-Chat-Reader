@@ -110,6 +110,9 @@ async function loadRoom(id) {
             $.get(`/api/rooms/${id}/sessions`)
         ]);
 
+        // Load all-time leaderboards in background (don't block UI)
+        loadAlltimeLeaderboards(id);
+
         roomIsLive = statsRes.isLive === true;
 
         // Populate session dropdown
@@ -119,7 +122,10 @@ async function loadRoom(id) {
 
         if (sessions && sessions.length > 0) {
             sessions.forEach(s => {
-                select.append(`<option value="${s.session_id}">${new Date(s.created_at).toLocaleString()} (存档)</option>`);
+                // Use createdAt or endTime as display, fallback to session ID if both null
+                const displayTime = s.createdAt || s.endTime;
+                const dateStr = displayTime ? new Date(displayTime).toLocaleString() : `场次 ${s.sessionId}`;
+                select.append(`<option value="${s.sessionId}">${dateStr} (存档)</option>`);
             });
         }
 
@@ -140,7 +146,7 @@ async function loadRoom(id) {
 
         } else if (sessions && sessions.length > 0) {
             // Not live - auto-select last session
-            const lastSessionId = sessions[0].session_id;
+            const lastSessionId = sessions[0].sessionId;
             currentSessionId = lastSessionId;
             select.val(lastSessionId);
 
@@ -148,7 +154,10 @@ async function loadRoom(id) {
             const lastStats = await $.get(`/api/rooms/${id}/stats_detail?sessionId=${lastSessionId}`);
             hideLoadingState();
             updateRoomStatusUI(false);
-            addSystemMessage(`📼 房间未开播，已加载最近一场数据 (${new Date(sessions[0].created_at).toLocaleString()})`);
+            const lastSessionTime = sessions[0].createdAt || sessions[0].endTime;
+            const lastSessionStr = lastSessionTime ? new Date(lastSessionTime).toLocaleString() : `场次 ${lastSessionId}`;
+            addSystemMessage(`📼 房间未开播，已加载最近一场数据 (${lastSessionStr})`);
+
 
             updateRoomHeader(lastStats.summary);
             updateLeaderboards(lastStats.leaderboards);
@@ -431,6 +440,113 @@ function switchDetailTab(tabId, btnElement) {
     $(btnElement).addClass('tab-active');
     $('.detail-tab-content').addClass('hidden');
     $(`#tab-${tabId}`).removeClass('hidden');
+
+    if (tabId === 'timeStats') {
+        renderRoomTimeChart(currentDetailRoomId);
+    }
+}
+
+async function renderRoomTimeChart(roomId) {
+    const ctx = document.getElementById('roomTimeChart');
+    if (!ctx) return;
+
+    // Show loading in chart area maybe?
+
+    try {
+        const stats = await $.get(`/api/history?roomId=${roomId}`);
+
+        const labels = stats.map(s => s.time_range);
+        const incomeData = stats.map(s => s.income);
+        const chatData = stats.map(s => s.comments);
+
+        const existingChart = Chart.getChart(ctx);
+        if (existingChart) existingChart.destroy();
+
+        new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: labels,
+                datasets: [
+                    {
+                        label: '礼物流水 (💎)',
+                        data: incomeData,
+                        borderColor: '#fbbf24',
+                        backgroundColor: '#fbbf2433',
+                        fill: true,
+                        tension: 0.4
+                    },
+                    {
+                        label: '弹幕数量',
+                        data: chatData,
+                        borderColor: '#3abff8',
+                        backgroundColor: '#3abff833',
+                        fill: true,
+                        tension: 0.4,
+                        yAxisID: 'y1'
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: '礼物 💎', font: { size: 10 } }
+                    },
+                    y1: {
+                        beginAtZero: true,
+                        position: 'right',
+                        grid: { drawOnChartArea: false },
+                        title: { display: true, text: '弹幕', font: { size: 10 } }
+                    },
+                    x: {
+                        ticks: { font: { size: 8 }, maxRotation: 45, minRotation: 45 }
+                    }
+                },
+                plugins: {
+                    legend: { position: 'top', labels: { boxWidth: 10, font: { size: 10 } } }
+                }
+            }
+        });
+    } catch (e) {
+        console.error('Failed to load room time stats', e);
+    }
+}
+
+// All-Time Leaderboards Functions
+async function loadAlltimeLeaderboards(roomId) {
+    try {
+        const data = await $.get(`/api/rooms/${roomId}/alltime-leaderboards`);
+        renderAlltimeTable('#alltimeGiftersTable tbody', data.gifters, '💎', 'value');
+        renderAlltimeTable('#alltimeChattersTable tbody', data.chatters, '💬', 'count');
+        renderAlltimeTable('#alltimeLikersTable tbody', data.likers, '❤️', 'count');
+    } catch (err) {
+        console.error('Failed to load all-time leaderboards:', err);
+    }
+}
+
+function renderAlltimeTable(selector, data, icon, valueKey) {
+    const tbody = $(selector);
+    tbody.empty();
+    if (!data || data.length === 0) {
+        tbody.append('<tr><td colspan="2" class="text-center opacity-50 text-xs">暂无数据</td></tr>');
+        return;
+    }
+    data.forEach((row, i) => {
+        const val = row[valueKey] || row.value || row.count || 0;
+        const rank = i < 3 ? ['🥇', '🥈', '🥉'][i] : `${i + 1}.`;
+        tbody.append(`<tr><td class="truncate max-w-[80px]">${rank} ${row.nickname || '匿名'}</td><td class="text-right font-mono">${val.toLocaleString()}</td></tr>`);
+    });
+}
+
+function switchAlltimeTab(tabId, btnElement) {
+    // Toggle tabs
+    $('.alltime-tab').removeClass('tab-active');
+    $(btnElement).addClass('tab-active');
+    // Toggle content
+    $('.alltime-tab-content').addClass('hidden');
+    $(`#alltime-${tabId}`).removeClass('hidden');
 }
 
 // Assign to window for inline onclick handlers
@@ -440,3 +556,4 @@ window.exitRoom = exitRoom;
 window.connectToLive = connectToLive;
 window.saveCurrentSession = saveCurrentSession;
 window.stopCurrentRecord = stopCurrentRecord;
+window.switchAlltimeTab = switchAlltimeTab;

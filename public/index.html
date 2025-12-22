@@ -14,12 +14,14 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 
     <!-- App Scripts -->
     <script src="connection.js"></script>
     <script src="config.js"></script>
     <script src="room_list.js"></script>
     <script src="user_analysis.js"></script>
+    <script src="gift_config.js"></script>
     <script src="app.js"></script>
 
     <link rel="stylesheet" href="style.css"> <!-- Minimal overrides -->
@@ -42,12 +44,34 @@
     </div>
 
     <!-- Main Content -->
-    <main class="flex-grow container mx-auto p-4 overflow-y-auto">
+    <main class="flex-grow w-full px-4 xl:px-8 py-4 overflow-y-auto">
 
         <!-- SECTION: Room List -->
         <section id="section-roomList" class="content-section block">
-            <div class="flex justify-between items-center mb-6">
-                <h2 class="text-2xl font-bold">监控房间列表</h2>
+            <div class="flex justify-between items-center mb-6 flex-wrap gap-4">
+                <div class="flex items-center gap-4">
+                    <h2 class="text-2xl font-bold">监控房间列表</h2>
+                    <div class="join join-horizontal flex-wrap">
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn active"
+                            onclick="setRoomSort('default', this)">默认</button>
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                            onclick="setRoomSort('gift_desc', this)">本场💎</button>
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                            onclick="setRoomSort('total_gift_desc', this)">总💎</button>
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                            onclick="setRoomSort('gift_eff_desc', this)">赚钱效率</button>
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                            onclick="setRoomSort('interact_eff_desc', this)">话题度</button>
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                            onclick="setRoomSort('account_quality_desc', this)">账号质量</button>
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                            onclick="setRoomSort('top10_ratio_desc', this)">TOP10</button>
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                            onclick="setRoomSort('top30_ratio_desc', this)">TOP30</button>
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                            onclick="setRoomSort('daily_avg_desc', this)">💎日均</button>
+                    </div>
+                </div>
                 <button class="btn btn-primary btn-sm md:btn-md gap-2" onclick="openAddRoomModal()">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
                         stroke="currentColor">
@@ -203,10 +227,11 @@
                         </div>
                     </div>
 
-                    <!-- Right: Info Panel -->
-                    <div class="hidden lg:block bg-base-100 rounded-box p-4 shadow-sm">
-                        <h3 class="text-lg font-bold mb-4">主播信息</h3>
-                        <div class="space-y-2 text-sm opacity-80">
+                    <!-- Right: Info Panel with All-Time Leaderboards -->
+                    <div
+                        class="hidden lg:block bg-base-100 rounded-box p-4 shadow-sm overflow-y-auto max-h-[calc(100vh-200px)]">
+                        <h3 class="text-lg font-bold mb-2">主播信息</h3>
+                        <div class="space-y-2 text-sm opacity-80 mb-4">
                             <div class="flex justify-between">
                                 <span>开始时间:</span>
                                 <span id="info_startTime">-</span>
@@ -229,6 +254,49 @@
                                 <span id="info_totalGift" class="text-warning">0</span>
                             </div>
                         </div>
+
+                        <!-- All-Time TOP30 Leaderboards -->
+                        <div class="divider my-2">历史总榜 TOP30</div>
+                        <div role="tablist" class="tabs tabs-boxed tabs-xs mb-2">
+                            <a role="tab" class="tab tab-active alltime-tab"
+                                onclick="switchAlltimeTab('gifters', this)">💎送礼</a>
+                            <a role="tab" class="tab alltime-tab" onclick="switchAlltimeTab('chatters', this)">💬发言</a>
+                            <a role="tab" class="tab alltime-tab" onclick="switchAlltimeTab('likers', this)">❤️点赞</a>
+                        </div>
+
+                        <div id="alltime-gifters" class="alltime-tab-content">
+                            <table class="table table-xs table-compact w-full" id="alltimeGiftersTable">
+                                <thead>
+                                    <tr>
+                                        <th>昵称</th>
+                                        <th class="text-right">💎</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div id="alltime-chatters" class="alltime-tab-content hidden">
+                            <table class="table table-xs table-compact w-full" id="alltimeChattersTable">
+                                <thead>
+                                    <tr>
+                                        <th>昵称</th>
+                                        <th class="text-right">💬</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
+                        <div id="alltime-likers" class="alltime-tab-content hidden">
+                            <table class="table table-xs table-compact w-full" id="alltimeLikersTable">
+                                <thead>
+                                    <tr>
+                                        <th>昵称</th>
+                                        <th class="text-right">❤️</th>
+                                    </tr>
+                                </thead>
+                                <tbody></tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -242,11 +310,104 @@
             </div>
 
             <div id="userAnalysis-list" class="user-sub-content">
-                <div class="flex gap-2 mb-4">
-                    <input type="text" id="userLangFilter" placeholder="过滤语言 (如 English)"
-                        class="input input-bordered input-sm w-full max-w-xs">
-                    <button class="btn btn-sm btn-accent" onclick="renderUserList()">刷新</button>
+                <div class="flex flex-wrap gap-2 mb-4 items-end">
+                    <div class="form-control w-48">
+                        <label class="label p-1"><span class="label-text text-xs">搜索账号/昵称</span></label>
+                        <input type="text" id="userSearch" placeholder="输入账号或昵称..."
+                            class="input input-bordered input-sm w-full">
+                    </div>
+                    <div class="form-control w-40">
+                        <label class="label p-1"><span class="label-text text-xs">语言/常驻</span></label>
+                        <input type="text" id="userLangFilter" placeholder="过滤语言"
+                            class="input input-bordered input-sm w-full">
+                    </div>
+                    <div class="form-control w-20">
+                        <label class="label p-1"><span class="label-text text-xs">房间≥</span></label>
+                        <input type="number" id="userMinRooms" value="1" min="1"
+                            class="input input-bordered input-sm w-full">
+                    </div>
+                    <div class="form-control">
+                        <label class="label p-1"><span class="label-text text-xs">活跃时段</span></label>
+                        <div class="flex items-center gap-1">
+                            <select id="userActiveHour" class="select select-bordered select-xs w-20">
+                                <option value="">全部</option>
+                                <option value="0">00</option>
+                                <option value="1">01</option>
+                                <option value="2">02</option>
+                                <option value="3">03</option>
+                                <option value="4">04</option>
+                                <option value="5">05</option>
+                                <option value="6">06</option>
+                                <option value="7">07</option>
+                                <option value="8">08</option>
+                                <option value="9">09</option>
+                                <option value="10">10</option>
+                                <option value="11">11</option>
+                                <option value="12">12</option>
+                                <option value="13">13</option>
+                                <option value="14">14</option>
+                                <option value="15">15</option>
+                                <option value="16">16</option>
+                                <option value="17">17</option>
+                                <option value="18">18</option>
+                                <option value="19">19</option>
+                                <option value="20">20</option>
+                                <option value="21">21</option>
+                                <option value="22">22</option>
+                                <option value="23">23</option>
+                            </select>
+                            <span class="text-xs">~</span>
+                            <select id="userActiveHourEnd" class="select select-bordered select-xs w-20">
+                                <option value="">--</option>
+                                <option value="0">00</option>
+                                <option value="1">01</option>
+                                <option value="2">02</option>
+                                <option value="3">03</option>
+                                <option value="4">04</option>
+                                <option value="5">05</option>
+                                <option value="6">06</option>
+                                <option value="7">07</option>
+                                <option value="8">08</option>
+                                <option value="9">09</option>
+                                <option value="10">10</option>
+                                <option value="11">11</option>
+                                <option value="12">12</option>
+                                <option value="13">13</option>
+                                <option value="14">14</option>
+                                <option value="15">15</option>
+                                <option value="16">16</option>
+                                <option value="17">17</option>
+                                <option value="18">18</option>
+                                <option value="19">19</option>
+                                <option value="20">20</option>
+                                <option value="21">21</option>
+                                <option value="22">22</option>
+                                <option value="23">23</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="form-control w-24">
+                        <label class="label p-1"><span class="label-text text-xs">偏好</span></label>
+                        <select id="userGiftPreference" class="select select-bordered select-xs w-full">
+                            <option value="">全部</option>
+                            <option value="true_love">🌹真爱</option>
+                            <option value="knife">🔪刀门</option>
+                        </select>
+                    </div>
+                    <div class="form-control w-24">
+                        <label class="label p-1"><span class="label-text text-xs">语言</span></label>
+                        <select id="userLanguageFilter" class="select select-bordered select-xs w-full">
+                            <option value="">全部</option>
+                            <option value="中文">中文</option>
+                            <option value="English">English</option>
+                            <option value="其他语种">其他语种</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-sm btn-accent mb-[2px]" onclick="renderUserList()">筛选</button>
+                    <button class="btn btn-sm btn-success mb-[2px]" onclick="showExportModal()">📥 导出</button>
+                    <button class="btn btn-sm btn-info mb-[2px]" onclick="showBatchAIModal()">🤖 批量AI分析</button>
                 </div>
+
 
                 <div class="overflow-x-auto bg-base-100 rounded-box shadow">
                     <table class="table table-zebra table-sm w-full" id="userListTable">
@@ -256,6 +417,7 @@
                                 <th>账号</th>
                                 <th>昵称</th>
                                 <th>礼物价值</th>
+                                <th>常刷礼物</th>
                                 <th>语言</th>
                                 <th>贡献指数</th>
                                 <th>常驻房间</th>
@@ -322,59 +484,100 @@
 
         <!-- SECTION: System Config -->
         <section id="section-systemConfig" class="content-section hidden">
-            <div class="card bg-base-100 shadow-xl max-w-2xl mx-auto">
-                <div class="card-body">
-                    <h2 class="card-title mb-4">系统配置</h2>
+            <div class="flex gap-2 mb-4">
+                <button class="btn btn-sm btn-outline sub-nav-btn active" onclick="switchConfigTab('system')">⚙️
+                    系统配置</button>
+                <button class="btn btn-sm btn-outline sub-nav-btn" onclick="switchConfigTab('gifts')">🎁 礼物配置</button>
+            </div>
 
-                    <div class="form-control w-full">
-                        <label class="label"><span class="label-text">服务端口 (重启生效)</span></label>
-                        <input type="number" id="cfg_port" class="input input-bordered w-full" placeholder="8081">
-                    </div>
+            <!-- System Config Tab -->
+            <div id="configTab-system" class="config-tab-content">
+                <div class="card bg-base-100 shadow-xl max-w-2xl mx-auto">
+                    <div class="card-body">
+                        <h2 class="card-title mb-4">系统配置</h2>
 
-                    <div class="form-control w-full">
-                        <label class="label"><span class="label-text">监控间隔 (分钟)</span></label>
-                        <input type="number" id="cfg_interval" class="input input-bordered w-full" placeholder="5">
-                    </div>
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">服务端口 (重启生效)</span></label>
+                            <input type="number" id="cfg_port" class="input input-bordered w-full" placeholder="8081">
+                        </div>
 
-                    <div class="form-control w-52 mt-4">
-                        <label class="label cursor-pointer">
-                            <span class="label-text">启用自动监控</span>
-                            <input type="checkbox" id="cfg_autoMonitor" class="toggle toggle-primary" />
-                        </label>
-                    </div>
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">监控间隔 (分钟)</span></label>
+                            <input type="number" id="cfg_interval" class="input input-bordered w-full" placeholder="5">
+                        </div>
 
-                    <div class="form-control w-full">
-                        <label class="label"><span class="label-text">SOCKS 代理</span></label>
-                        <input type="text" id="cfg_proxy" class="input input-bordered w-full"
-                            placeholder="socks5://127.0.0.1:1080">
-                    </div>
+                        <div class="form-control w-52 mt-4">
+                            <label class="label cursor-pointer">
+                                <span class="label-text">启用自动监控</span>
+                                <input type="checkbox" id="cfg_autoMonitor" class="toggle toggle-primary" />
+                            </label>
+                        </div>
 
-                    <div class="form-control w-full">
-                        <label class="label"><span class="label-text">EulerStream API Key</span></label>
-                        <input type="text" id="cfg_eulerKey" class="input input-bordered w-full">
-                    </div>
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">SOCKS 代理</span></label>
+                            <input type="text" id="cfg_proxy" class="input input-bordered w-full"
+                                placeholder="socks5://127.0.0.1:1080">
+                        </div>
 
-                    <div class="form-control w-full">
-                        <label class="label"><span class="label-text">TikTok SessionID</span></label>
-                        <input type="text" id="cfg_sessionId" class="input input-bordered w-full">
-                    </div>
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">EulerStream API Key</span></label>
+                            <input type="text" id="cfg_eulerKey" class="input input-bordered w-full">
+                        </div>
 
-                    <div class="form-control w-full">
-                        <label class="label"><span class="label-text">AI API Key</span></label>
-                        <input type="text" id="cfg_aiKey" class="input input-bordered w-full">
-                    </div>
-                    <div class="form-control w-full">
-                        <label class="label"><span class="label-text">AI API URL</span></label>
-                        <input type="text" id="cfg_aiUrl" class="input input-bordered w-full">
-                    </div>
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">TikTok SessionID</span></label>
+                            <input type="text" id="cfg_sessionId" class="input input-bordered w-full">
+                        </div>
 
-                    <div class="card-actions justify-end mt-6">
-                        <button class="btn btn-error" onclick="restartServer()">重启服务</button>
-                        <button class="btn btn-primary" onclick="saveConfig()">保存更改</button>
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">AI API Key</span></label>
+                            <input type="text" id="cfg_aiKey" class="input input-bordered w-full">
+                        </div>
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">AI API URL</span></label>
+                            <input type="text" id="cfg_aiUrl" class="input input-bordered w-full">
+                        </div>
+
+                        <div class="card-actions justify-end mt-6">
+                            <button class="btn btn-error" onclick="restartServer()">重启服务</button>
+                            <button class="btn btn-primary" onclick="saveConfig()">保存更改</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gift Config Tab -->
+            <div id="configTab-gifts" class="config-tab-content hidden">
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <div class="flex justify-between items-center mb-4">
+                            <h2 class="card-title">🎁 礼物配置</h2>
+                            <span class="text-sm opacity-50">共 <span id="giftCount">0</span> 种礼物</span>
+                        </div>
+                        <p class="text-sm opacity-70 mb-4">礼物信息会自动从直播中采集。您可以编辑中文名称，系统将优先显示中文名。</p>
+
+                        <div class="overflow-x-auto">
+                            <table class="table table-zebra table-sm" id="giftConfigTable">
+                                <thead>
+                                    <tr>
+                                        <th class="w-16">图标</th>
+                                        <th>英文名</th>
+                                        <th>中文名 (可编辑)</th>
+                                        <th class="text-right">单价 💎</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr>
+                                        <td colspan="4" class="text-center opacity-50">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 </div>
             </div>
         </section>
+
     </main>
 
     <!-- Modal: Add Room -->
@@ -400,6 +603,20 @@
                 </label>
             </div>
 
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">房间语种</span></label>
+                <select id="roomLanguage" class="select select-bordered w-full">
+                    <option value="中文">中文</option>
+                    <option value="English">English</option>
+                    <option value="Tiếng Việt">Tiếng Việt</option>
+                    <option value="Bahasa Indonesia">Bahasa Indonesia</option>
+                    <option value="Bahasa Melayu">Bahasa Melayu</option>
+                    <option value="العربية">العربية</option>
+                    <option value="ไทย">ไทย</option>
+                    <option value="日本語">日本語</option>
+                </select>
+            </div>
+
             <div class="modal-action">
                 <form method="dialog">
                     <button class="btn" onclick="closeRoomModal()">取消</button>
@@ -409,6 +626,148 @@
         </div>
         <form method="dialog" class="modal-backdrop">
             <button onclick="closeRoomModal()">关闭</button>
+        </form>
+    </dialog>
+
+    <!-- Export Modal -->
+    <dialog id="exportModal" class="modal">
+        <div class="modal-box w-11/12 max-w-md">
+            <h3 class="font-bold text-lg mb-4">📥 导出用户数据</h3>
+
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">导出数量</span></label>
+                <select id="exportCount" class="select select-bordered w-full">
+                    <option value="100">100 条</option>
+                    <option value="500">500 条</option>
+                    <option value="1000" selected>1000 条</option>
+                    <option value="-1">全部</option>
+                </select>
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">选择列（取消勾选去掉）</span></label>
+                <div class="grid grid-cols-2 gap-2 p-3 bg-base-200 rounded-box max-h-64 overflow-y-auto">
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="uniqueId" checked />
+                        <span class="label-text text-xs">用户名</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="nickname" checked />
+                        <span class="label-text text-xs">昵称</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="commonLanguage"
+                            checked />
+                        <span class="label-text text-xs">主语种</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="masteredLanguages"
+                            checked />
+                        <span class="label-text text-xs">副语种</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="totalValue" checked />
+                        <span class="label-text text-xs">礼物总值</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="dailyAvg" checked />
+                        <span class="label-text text-xs">日均消费</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="topGiftsText"
+                            checked />
+                        <span class="label-text text-xs">常刷礼物</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="roseValue" checked />
+                        <span class="label-text text-xs">🌹玫瑰消费</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="tiktokValue" checked />
+                        <span class="label-text text-xs">🎁TikTok消费</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="roomCount" checked />
+                        <span class="label-text text-xs">房间数</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="giftRoomsText"
+                            checked />
+                        <span class="label-text text-xs">常去直播间(消费)</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="visitRoomsText"
+                            checked />
+                        <span class="label-text text-xs">常去直播间(进房)</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="peakHours" checked />
+                        <span class="label-text text-xs">活跃时间(小时)</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="peakDays" checked />
+                        <span class="label-text text-xs">活跃时间(周)</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="lastActive" checked />
+                        <span class="label-text text-xs">最近活跃</span>
+                    </label>
+                    <label class="label cursor-pointer justify-start gap-2 py-1">
+                        <input type="checkbox" class="checkbox checkbox-sm export-col" data-col="aiAnalysis" checked />
+                        <span class="label-text text-xs">AI性格分析</span>
+                    </label>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <form method="dialog">
+                    <button class="btn">取消</button>
+                </form>
+                <button class="btn btn-success" onclick="executeExport()" id="exportBtn">导出 Excel</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>关闭</button>
+        </form>
+    </dialog>
+
+    <!-- Batch AI Analysis Modal -->
+    <dialog id="batchAIModal" class="modal">
+        <div class="modal-box w-11/12 max-w-md">
+            <h3 class="font-bold text-lg mb-4">🤖 批量AI性格分析</h3>
+
+            <div id="batchAIOptions">
+                <p class="text-sm opacity-70 mb-4">选择分析模式：</p>
+                <div class="grid grid-cols-1 gap-3">
+                    <button class="btn btn-primary" onclick="startBatchAI(false)">
+                        📊 普通分析
+                        <span class="badge badge-sm">前100个未分析的</span>
+                    </button>
+                    <button class="btn btn-warning" onclick="startBatchAI(true)">
+                        🔄 强制分析
+                        <span class="badge badge-sm">重新分析全部</span>
+                    </button>
+                </div>
+            </div>
+
+            <div id="batchAIProgress" style="display:none;">
+                <div class="flex justify-between items-center mb-2">
+                    <span class="text-sm">分析进度</span>
+                    <span id="batchAICount" class="text-sm font-mono">0/0</span>
+                </div>
+                <progress id="batchAIBar" class="progress progress-primary w-full" value="0" max="100"></progress>
+                <div id="batchAIStatus" class="text-xs opacity-60 mt-2">准备中...</div>
+                <div id="batchAIErrors" class="text-xs text-error mt-2" style="display:none;"></div>
+            </div>
+
+            <div class="modal-action">
+                <form method="dialog">
+                    <button class="btn" id="batchAIClose">关闭</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>关闭</button>
         </form>
     </dialog>
 

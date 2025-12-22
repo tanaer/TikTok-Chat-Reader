@@ -1,248 +1,143 @@
 /**
- * Database module - SQLite using sql.js (pure JavaScript)
- * Improved with crash-safe saving and expanded event schema
+ * Database module - PostgreSQL
+ * Production-grade database with connection pooling
  */
-const initSqlJs = require('sql.js');
-const fs = require('fs');
+const { Pool } = require('pg');
 const path = require('path');
 
-const DB_PATH = path.join(__dirname, 'data.db');
-const BACKUP_PATH = path.join(__dirname, 'data.db.backup');
+// PostgreSQL connection configuration
+const pool = new Pool({
+    host: process.env.PG_HOST || 'localhost',
+    port: parseInt(process.env.PG_PORT || '5432'),
+    database: process.env.PG_DATABASE || 'tkmonitor',
+    user: process.env.PG_USER || 'postgres',
+    password: process.env.PG_PASSWORD || 'root',
+    max: 20, // Maximum connections in pool
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
+});
 
-let db = null;
-let initPromise = null;
-let isSaving = false;
-let saveTimer = null; // Debounce timer for batched saves
-let isDirty = false;  // Track if there are unsaved changes
+let isInitialized = false;
 
 /**
- * Initialize the database
+ * Initialize the database - create tables if needed
  */
 async function initDb() {
-    if (db) return db;
-    if (initPromise) return initPromise;
+    if (isInitialized) return;
 
-    initPromise = (async () => {
-        const SQL = await initSqlJs();
-
-        // Load existing database or create new
-        try {
-            if (fs.existsSync(DB_PATH)) {
-                const fileBuffer = fs.readFileSync(DB_PATH);
-                db = new SQL.Database(fileBuffer);
-                console.log('[DB] Loaded existing database.');
-            } else {
-                db = new SQL.Database();
-                console.log('[DB] Created new database.');
-            }
-        } catch (e) {
-            console.error('[DB] Error loading database, creating new:', e);
-            db = new SQL.Database();
-        }
+    try {
+        // Test connection
+        const client = await pool.connect();
+        console.log('[DB] Connected to PostgreSQL.');
+        client.release();
 
         // Create tables
-        db.run(`
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS room (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 room_id TEXT UNIQUE NOT NULL,
                 numeric_room_id TEXT,
                 name TEXT,
                 address TEXT,
-                updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+                language TEXT DEFAULT '中文',
+                updated_at TIMESTAMP DEFAULT NOW(),
                 is_monitor_enabled INTEGER DEFAULT 1
             )
         `);
 
-        db.run(`
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS session (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 session_id TEXT UNIQUE NOT NULL,
                 room_id TEXT NOT NULL,
                 snapshot_json TEXT,
-                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+                created_at TIMESTAMP DEFAULT NOW()
             )
         `);
 
-        // Event table with expanded fields for direct querying
-        db.run(`
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS event (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 room_id TEXT NOT NULL,
                 session_id TEXT,
                 type TEXT NOT NULL,
-                timestamp TEXT DEFAULT (datetime('now', 'localtime')),
-                -- Expanded fields
+                timestamp TIMESTAMP DEFAULT NOW(),
                 user_id TEXT,
                 unique_id TEXT,
                 nickname TEXT,
-                -- Gift fields
                 gift_id INTEGER,
                 diamond_count INTEGER DEFAULT 0,
                 repeat_count INTEGER DEFAULT 1,
-                -- Like fields
                 like_count INTEGER DEFAULT 0,
                 total_like_count INTEGER DEFAULT 0,
-                -- Chat fields
                 comment TEXT,
-                -- roomUser fields
                 viewer_count INTEGER,
-                -- Keep original JSON for any extra fields
                 data_json TEXT
             )
         `);
 
-        db.run(`
-            CREATE TABLE IF NOT EXISTS user (
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS "user" (
                 user_id TEXT PRIMARY KEY,
                 unique_id TEXT,
                 nickname TEXT,
                 avatar TEXT,
-                updated_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TIMESTAMP DEFAULT NOW(),
                 common_language TEXT,
-                mastered_languages TEXT
+                mastered_languages TEXT,
+                ai_analysis TEXT,
+                is_moderator INTEGER DEFAULT 0
             )
         `);
 
-        db.run(`
+        // Settings table for application configuration
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
-                value TEXT,
-                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+                value TEXT
             )
         `);
 
-        // Migrations for existing tables
-        migrateTable('user', 'common_language', 'TEXT');
-        migrateTable('user', 'mastered_languages', 'TEXT');
-        migrateTable('room', 'is_monitor_enabled', 'INTEGER DEFAULT 1');
-        migrateTable('room', 'numeric_room_id', 'TEXT');
+        // Gift table for storing gift info with Chinese names
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS gift (
+                gift_id TEXT PRIMARY KEY,
+                name_en TEXT,
+                name_cn TEXT,
+                icon_url TEXT,
+                diamond_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
 
-        // Migrate event table - add new columns
-        migrateTable('event', 'user_id', 'TEXT');
-        migrateTable('event', 'unique_id', 'TEXT');
-        migrateTable('event', 'nickname', 'TEXT');
-        migrateTable('event', 'gift_id', 'INTEGER');
-        migrateTable('event', 'diamond_count', 'INTEGER DEFAULT 0');
-        migrateTable('event', 'repeat_count', 'INTEGER DEFAULT 1');
-        migrateTable('event', 'like_count', 'INTEGER DEFAULT 0');
-        migrateTable('event', 'total_like_count', 'INTEGER DEFAULT 0');
-        migrateTable('event', 'comment', 'TEXT');
-        migrateTable('event', 'viewer_count', 'INTEGER');
+        // Create indexes for better performance
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_room ON event(room_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_session ON event(session_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_type ON event(type)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_timestamp ON event(timestamp)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_user ON event(user_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_room ON session(room_id)`);
 
-        // Backfill existing data from data_json to new columns
-        try {
-            db.run(`
-                UPDATE event SET 
-                    user_id = json_extract(data_json, '$.userId'),
-                    unique_id = json_extract(data_json, '$.uniqueId'),
-                    nickname = json_extract(data_json, '$.nickname'),
-                    gift_id = json_extract(data_json, '$.giftId'),
-                    diamond_count = COALESCE(json_extract(data_json, '$.diamondCount'), 0),
-                    repeat_count = COALESCE(json_extract(data_json, '$.repeatCount'), 1),
-                    like_count = COALESCE(json_extract(data_json, '$.likeCount'), 0),
-                    total_like_count = COALESCE(json_extract(data_json, '$.totalLikeCount'), 0),
-                    comment = json_extract(data_json, '$.comment'),
-                    viewer_count = json_extract(data_json, '$.viewerCount')
-                WHERE user_id IS NULL AND data_json IS NOT NULL
-            `);
-            console.log('[DB] Backfilled event columns from data_json.');
-        } catch (e) {
-            console.log('[DB] Backfill skipped or already done.');
-        }
+        // Composite indexes for common query patterns (major performance boost)
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_room_session ON event(room_id, session_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_room_session_type ON event(room_id, session_id, type)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_session_timestamp ON event(session_id, timestamp)`);
 
-        // Indexes for fast queries
-        db.run(`CREATE INDEX IF NOT EXISTS idx_event_room_session ON event(room_id, session_id)`);
-        db.run(`CREATE INDEX IF NOT EXISTS idx_event_timestamp ON event(timestamp)`);
-        db.run(`CREATE INDEX IF NOT EXISTS idx_event_user_id ON event(user_id)`);
-        db.run(`CREATE INDEX IF NOT EXISTS idx_event_type ON event(type)`);
-        db.run(`CREATE INDEX IF NOT EXISTS idx_event_type_user ON event(type, user_id)`);
-        // Additional indexes for performance
-        db.run(`CREATE INDEX IF NOT EXISTS idx_event_type_room ON event(type, room_id)`);
-        db.run(`CREATE INDEX IF NOT EXISTS idx_event_user_type ON event(user_id, type)`);
-        db.run(`CREATE INDEX IF NOT EXISTS idx_event_room_type_session ON event(room_id, type, session_id)`);
-        db.run(`CREATE INDEX IF NOT EXISTS idx_session_room ON session(room_id, created_at DESC)`);
+        // Migrations for new columns
+        await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS language TEXT DEFAULT '中文'`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS language_analyzed INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis TEXT`);
 
-        saveDb();
+        console.log('[DB] Tables and indexes created.');
+        isInitialized = true;
 
         // Setup graceful shutdown
         setupShutdownHandlers();
 
-        // Periodic forced save (crash safety) - every 10 seconds
-        setInterval(() => {
-            if (isDirty) {
-                saveDb();
-                console.log('[DB] Periodic save completed.');
-            }
-        }, 10000); // Every 10 seconds
-
-        return db;
-    })();
-
-    return initPromise;
-}
-
-/**
- * Add column if it doesn't exist
- */
-function migrateTable(table, column, type) {
-    try {
-        db.run(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
-        console.log(`[DB] Added column ${table}.${column}`);
     } catch (e) {
-        // Column already exists
-    }
-}
-
-/**
- * Save database to file (immediate, no debounce)
- */
-function saveDb() {
-    if (!db || isSaving) return;
-    isSaving = true;
-    try {
-        const data = db.export();
-        const buffer = Buffer.from(data);
-
-        // Try atomic write (temp + rename), fallback to direct write on Windows lock issues
-        try {
-            const tempPath = DB_PATH + '.tmp';
-            fs.writeFileSync(tempPath, buffer);
-            fs.renameSync(tempPath, DB_PATH);
-        } catch (renameErr) {
-            // Fallback: direct write (less safe but works when file is locked)
-            fs.writeFileSync(DB_PATH, buffer);
-        }
-
-        // Suppress frequent log messages - only log every 10th save
-        if (!saveDb.counter) saveDb.counter = 0;
-        saveDb.counter++;
-        if (saveDb.counter % 10 === 0) {
-            console.log('[DB] Saved.');
-        }
-        isDirty = false; // Reset dirty flag after successful save
-    } catch (e) {
-        // Show simplified error message - suppress stack trace for common issues
-        const errMsg = e.code === 'UNKNOWN' || e.code === 'EBUSY' || e.code === 'EPERM'
-            ? `[DB] Save temporarily blocked (file busy), will retry...`
-            : `[DB] Save error: ${e.message || e}`;
-        console.log(errMsg);
-    } finally {
-        isSaving = false;
-    }
-}
-
-/**
- * Create backup of database
- */
-function backupDb() {
-    if (!db) return;
-    try {
-        const data = db.export();
-        const buffer = Buffer.from(data);
-        fs.writeFileSync(BACKUP_PATH, buffer);
-        console.log('[DB] Backup created.');
-    } catch (e) {
-        console.error('[DB] Backup error:', e);
+        console.error('[DB] Initialization error:', e);
+        throw e;
     }
 }
 
@@ -250,92 +145,170 @@ function backupDb() {
  * Setup graceful shutdown handlers
  */
 function setupShutdownHandlers() {
-    let isShuttingDown = false;
-
-    const shutdown = (signal) => {
-        if (isShuttingDown) return; // Prevent duplicate shutdown
-        isShuttingDown = true;
-
-        console.log(`[DB] Received ${signal}, saving database...`);
-        // Clear any pending debounced save and save immediately
-        if (saveTimer) {
-            clearTimeout(saveTimer);
-            saveTimer = null;
+    const shutdown = async (signal) => {
+        console.log(`[DB] Received ${signal}, closing connection pool...`);
+        try {
+            await pool.end();
+            console.log('[DB] Connection pool closed.');
+        } catch (e) {
+            console.error('[DB] Error closing pool:', e);
         }
-        saveDb();
-        backupDb();
-        console.log('[DB] Shutdown complete, exiting...');
-
-        // Force exit after a short delay to ensure clean shutdown
-        setTimeout(() => {
-            process.exit(0);
-        }, 100);
+        process.exit(0);
     };
 
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
 
-    // Don't save again in exit event since shutdown already saved
-    process.on('exit', () => {
-        if (!isShuttingDown) {
-            console.log('[DB] Unexpected exit, final save...');
-            saveDb();
+/**
+ * Convert snake_case or lowercase column names to camelCase
+ * PostgreSQL returns lowercase column names, but frontend expects camelCase
+ */
+function toCamelCase(obj) {
+    if (obj === null || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(toCamelCase);
+
+    const result = {};
+    for (const key of Object.keys(obj)) {
+        // Convert snake_case to camelCase: user_id -> userId
+        // Also handle already lowercase: userid -> userId for common patterns
+        let camelKey = key.replace(/_([a-z])/g, (_, letter) => letter.toUpperCase());
+
+        // Handle specific PostgreSQL lowercase patterns
+        const knownMappings = {
+            'userid': 'userId',
+            'uniqueid': 'uniqueId',
+            'giftname': 'giftName',
+            'giftid': 'giftId',
+            'totalvalue': 'totalValue',
+            'unitprice': 'unitPrice',
+            'roomcount': 'roomCount',
+            'chatcount': 'chatCount',
+            'likecount': 'likeCount',
+            'lastactive': 'lastActive',
+            'repeatcount': 'repeatCount',
+            'diamondcount': 'diamondCount',
+            'commonlanguage': 'commonLanguage',
+            'masteredlanguages': 'masteredLanguages',
+            'aianalysis': 'aiAnalysis',
+            'viewercount': 'viewerCount',
+            'roomid': 'roomId',
+            'sessionid': 'sessionId',
+            'toproom': 'topRoom',
+            'fanlevel': 'fanLevel',
+            'fanclubname': 'fanClubName',
+            'isadmin': 'isAdmin',
+            'issuperadmin': 'isSuperAdmin',
+            'ismoderator': 'isModerator',
+            'istooproommoderator': 'isTopRoomModerator',
+            // Room detail stats mappings
+            'totalcomments': 'totalComments',
+            'totalvisits': 'totalVisits',
+            'totalgiftvalue': 'totalGiftValue',
+            'totallikes': 'totalLikes',
+            'maxlikes': 'maxLikes',
+            'starttime': 'startTime',
+            'lastsessiontime': 'lastSessionTime',
+            'numericroomid': 'numericRoomId',
+            'ismonitorenabled': 'isMonitorEnabled',
+            'updatedat': 'updatedAt',
+            'createdat': 'createdAt',
+            'totallikecount': 'totalLikeCount',
+            'alltimegiftvalue': 'allTimeGiftValue',
+            'currentgiftvalue': 'currentGiftValue',
+            'durationsecs': 'durationSecs',
+            'broadcastduration': 'broadcastDuration',
+            'accountquality': 'accountQuality',
+            'endtime': 'endTime'
+        };
+
+        if (knownMappings[camelKey.toLowerCase()]) {
+            camelKey = knownMappings[camelKey.toLowerCase()];
         }
-    });
+
+        result[camelKey] = obj[key];
+    }
+    return result;
 }
 
 /**
  * Run a query and return results
+ * Converts SQLite-style ? placeholders to PostgreSQL $1, $2, etc.
  */
-function query(sql, params = []) {
-    if (!db) throw new Error('Database not initialized');
+async function query(sql, params = []) {
     try {
-        const stmt = db.prepare(sql);
-        stmt.bind(params);
-        const results = [];
-        while (stmt.step()) {
-            results.push(stmt.getAsObject());
-        }
-        stmt.free();
-        return results;
+        // Convert ? placeholders to $1, $2, etc.
+        let paramIndex = 0;
+        const pgSql = sql.replace(/\?/g, () => `$${++paramIndex}`);
+
+        const result = await pool.query(pgSql, params);
+        // Convert column names to camelCase for frontend compatibility
+        return result.rows.map(toCamelCase);
     } catch (e) {
-        console.error('[DB] Query error:', sql, e);
+        console.error('[DB] Query error:', sql, e.message);
         return [];
     }
 }
 
 /**
- * Execute a statement and save immediately
+ * Execute a statement (INSERT, UPDATE, DELETE)
  */
-function run(sql, params = []) {
-    if (!db) throw new Error('Database not initialized');
+async function run(sql, params = []) {
     try {
-        db.run(sql, params);
-        debouncedSave(); // Debounced save - batches multiple writes to reduce disk I/O
-    } catch (e) {
-        console.error('[DB] Run error:', sql, e);
-    }
-}
+        // Convert ? placeholders to $1, $2, etc.
+        let paramIndex = 0;
+        const pgSql = sql.replace(/\?/g, () => `$${++paramIndex}`);
 
-/**
- * Debounced save - waits 200ms after last write before saving to disk
- * This batches rapid writes while keeping data loss window very small
- */
-function debouncedSave() {
-    isDirty = true; // Mark as having unsaved changes
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => {
-        saveDb();
-    }, 200); // Save 200ms after last write (reduced from 1000ms for safety)
+        await pool.query(pgSql, params);
+    } catch (e) {
+        console.error('[DB] Run error:', sql, e.message);
+    }
 }
 
 /**
  * Get a single row
  */
-function get(sql, params = []) {
-    const results = query(sql, params);
+async function get(sql, params = []) {
+    const results = await query(sql, params);
     return results.length > 0 ? results[0] : null;
 }
 
-module.exports = { initDb, query, run, get, saveDb, backupDb };
+/**
+ * Backup database (PostgreSQL uses pg_dump externally)
+ */
+function backupDb() {
+    console.log('[DB] PostgreSQL backup should be done via pg_dump command.');
+}
 
+/**
+ * Save database (PostgreSQL auto-commits, no-op)
+ */
+function saveDb() {
+    // PostgreSQL auto-commits transactions, no manual save needed
+}
+
+// Synchronous versions for compatibility (use carefully)
+function querySync(sql, params = []) {
+    console.warn('[DB] querySync called - PostgreSQL is async, returning empty array');
+    return [];
+}
+
+function runSync(sql, params = []) {
+    console.warn('[DB] runSync called - PostgreSQL is async, operation may not complete');
+}
+
+function getSync(sql, params = []) {
+    console.warn('[DB] getSync called - PostgreSQL is async, returning null');
+    return null;
+}
+
+module.exports = {
+    initDb,
+    query,
+    run,
+    get,
+    saveDb,
+    backupDb,
+    // Expose pool for direct access if needed
+    pool
+};

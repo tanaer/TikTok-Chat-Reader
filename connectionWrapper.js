@@ -87,31 +87,58 @@ class TikTokConnectionWrapper extends EventEmitter {
 
         this.connection.on('error', (err) => {
             const msg = err?.info || err?.message || String(err);
-            // Suppress verbose stack trace for expected/handled errors
-            const isExpectedError = msg?.includes?.('falling back to API') ||
-                msg?.includes?.('Failed to extract') ||
-                msg?.includes?.('SIGI_STATE') ||
-                msg?.includes?.("isn't online") ||
-                msg?.includes?.('UserOfflineError') ||
-                msg?.includes?.('Error while connecting') ||
-                msg?.includes?.('SignAPIError') ||
-                msg?.includes?.('Sign Error') ||
-                msg?.includes?.('sign server') ||
-                msg?.includes?.('504') ||
-                msg?.includes?.('500');
-            if (isExpectedError) {
-                // Brief message only - extract key info
-                let briefMsg = 'Connection issue';
-                if (msg?.includes?.('504') || msg?.includes?.('500') || msg?.includes?.('sign server')) {
-                    briefMsg = 'Sign server temporarily unavailable';
-                } else if (msg?.includes?.("isn't online")) {
-                    briefMsg = 'User offline';
-                } else if (msg?.includes?.('Failed to extract') || msg?.includes?.('SIGI_STATE')) {
-                    briefMsg = 'Failed to parse room info';
+            const errorName = err?.constructor?.name || err?.name || '';
+
+            // Parse nested errors for FetchIsLiveError
+            let humanMessage = '';
+            let shouldShowStack = false;
+
+            if (errorName === 'FetchIsLiveError' || msg?.includes?.('Failed to retrieve Room ID')) {
+                // Parse the nested errors array
+                const errors = err?.errors || [];
+                const errorReasons = [];
+
+                for (const e of errors) {
+                    const eMsg = e?.message || String(e);
+                    if (eMsg?.includes?.('SIGI_STATE')) {
+                        errorReasons.push('🔒 TikTok 页面解析失败（可能被封锁或页面结构变化）');
+                    } else if (eMsg?.includes?.('InvalidResponseError') || e?.name === 'InvalidResponseError') {
+                        errorReasons.push('❌ API 返回无效响应');
+                    } else if (eMsg?.includes?.('lack of permission') || eMsg?.includes?.('Euler Stream')) {
+                        errorReasons.push('🔑 Euler API Key 权限不足，无法使用备用方法');
+                    } else if (eMsg?.includes?.('timeout') || eMsg?.includes?.('Timeout')) {
+                        errorReasons.push('⏱️ 连接超时');
+                    } else if (eMsg) {
+                        errorReasons.push(`⚠️ ${eMsg.slice(0, 80)}`);
+                    }
                 }
-                this.log(`[WARN] ${briefMsg}`);
+
+                if (errorReasons.length > 0) {
+                    humanMessage = `无法获取房间信息:\n  ${errorReasons.join('\n  ')}`;
+                } else {
+                    humanMessage = '无法获取房间信息（未知原因）';
+                }
+
+            } else if (msg?.includes?.('504') || msg?.includes?.('500') || msg?.includes?.('sign server')) {
+                humanMessage = '🔄 签名服务器暂时不可用，稍后自动重试';
+            } else if (msg?.includes?.("isn't online") || msg?.includes?.('UserOfflineError')) {
+                humanMessage = '📴 主播当前不在直播';
+            } else if (msg?.includes?.('Failed to extract') || msg?.includes?.('SIGI_STATE')) {
+                humanMessage = '🔒 无法解析 TikTok 页面（可能被封锁）';
+            } else if (msg?.includes?.('SignAPIError') || msg?.includes?.('Sign Error')) {
+                humanMessage = '🔑 签名服务错误，请检查 API Key';
+            } else if (msg?.includes?.('falling back to API')) {
+                humanMessage = '🔄 正在尝试备用连接方式...';
+            } else if (msg?.includes?.('Error while connecting')) {
+                humanMessage = '⚠️ 连接建立失败';
             } else {
-                this.log(`Error: ${msg}`);
+                // Unknown error - show full message and stack
+                humanMessage = msg;
+                shouldShowStack = true;
+            }
+
+            this.log(`[ERROR] ${humanMessage}`);
+            if (shouldShowStack && err?.stack) {
                 console.error(err);
             }
         });
