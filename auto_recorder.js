@@ -17,8 +17,14 @@ class AutoRecorder {
         this.pendingOffline = new Map();     // roomId -> timestamp (for heartbeat double-check)
 
         // Session resume: track recent disconnects to allow 30-min resume
-        // roomId -> { startTime, lastEventTime, disconnectTime }
-        this.recentDisconnects = new Map();
+        // roomId -> { startTime, startIso, disconnectTime, timerId }
+        // Delayed archiving: sessions are archived 30 min after disconnect unless reconnection happens
+        this.pendingArchives = new Map();
+        this.ARCHIVE_DELAY_MS = 30 * 60 * 1000; // 30 minutes
+
+        // False positive cooldown: prevent repeated connection attempts for rooms that fail validation
+        // roomId -> cooldownUntil timestamp
+        this.falsePositiveCooldown = new Map();
 
         this.timer = null;
         this.heartbeatTimer = null;
@@ -30,6 +36,34 @@ class AutoRecorder {
         this.startHeartbeat();
 
         console.log(`[AutoRecorder] Service started.`);
+    }
+
+    // Get list of VALIDATED live room IDs (only rooms with actual events or passed 65s validation)
+    getLiveRoomIds() {
+        const validatedLive = [];
+        const now = Date.now();
+
+        for (const [roomId, conn] of this.activeConnections.entries()) {
+            // Check if connection has received actual events (lastEventTime updated beyond initial value)
+            const startTimeMs = conn.startTime?.getTime() || now;
+            const hasReceivedEvents = conn.lastEventTime && (conn.lastEventTime > startTimeMs + 1000);
+
+            // Or connection has been alive past the 60s validation period
+            const connectionAge = now - startTimeMs;
+            const passedValidation = connectionAge > 65000; // 65s, past 60s validation
+
+            if (hasReceivedEvents || passedValidation) {
+                validatedLive.push(roomId);
+            }
+        }
+
+        return validatedLive;
+    }
+
+    // Get connection wrapper for a room
+    getConnection(roomId) {
+        const conn = this.activeConnections.get(roomId);
+        return conn ? conn.wrapper : null;
     }
 
     // Heartbeat check - actively verify connections are still live
@@ -149,10 +183,7 @@ class AutoRecorder {
         }
     }
 
-    // Returns array of room IDs that are currently connected
-    getLiveRoomIds() {
-        return Array.from(this.activeConnections.keys());
-    }
+
 
     // Returns detailed stats for debugging connection state
     getConnectionStats() {
@@ -242,22 +273,22 @@ class AutoRecorder {
         // Build list of rooms to check (excluding already connected and disabled)
         const roomsToCheck = [];
         for (const room of targetRooms) {
-            const roomEnabled = (room.is_monitor_enabled !== 0);
+            const roomEnabled = (room.isMonitorEnabled !== 0);
             if (!roomEnabled) {
-                if (this.activeConnections.has(room.room_id)) {
-                    console.log(`[AutoRecorder] Room ${room.room_id} monitor disabled. Disconnecting...`);
-                    this.handleDisconnect(room.room_id, 'Monitor disabled');
+                if (this.activeConnections.has(room.roomId)) {
+                    console.log(`[AutoRecorder] Room ${room.roomId} monitor disabled. Disconnecting...`);
+                    this.handleDisconnect(room.roomId, 'Monitor disabled');
                 }
                 continue;
             }
-            if (this.activeConnections.has(room.room_id)) {
+            if (this.activeConnections.has(room.roomId)) {
                 continue;
             }
-            if (this.disconnectingRooms.has(room.room_id)) {
+            if (this.disconnectingRooms.has(room.roomId)) {
                 // Avoid reconnecting while we are archiving a session for this room
                 continue;
             }
-            if (this.connectingRooms.has(room.room_id)) {
+            if (this.connectingRooms.has(room.roomId)) {
                 // Connection attempt already in progress
                 continue;
             }
@@ -283,7 +314,7 @@ class AutoRecorder {
     }
 
     async checkAndConnect(room) {
-        const uniqueId = room.room_id; // Using room_id as uniqueId/username to connect
+        const uniqueId = room.roomId; // Using roomId as uniqueId/username to connect
 
         if (this.disconnectingRooms.has(uniqueId)) {
             // Avoid starting a new connection while we are archiving a session for this room
@@ -293,6 +324,17 @@ class AutoRecorder {
         if (this.connectingRooms.has(uniqueId)) {
             // A connection attempt is already in progress
             return;
+        }
+
+        // Check false positive cooldown (rooms that repeatedly fail validation)
+        const cooldownUntil = this.falsePositiveCooldown.get(uniqueId);
+        if (cooldownUntil && Date.now() < cooldownUntil) {
+            // Still in cooldown, skip this room silently
+            return;
+        }
+        // Clear expired cooldown
+        if (cooldownUntil) {
+            this.falsePositiveCooldown.delete(uniqueId);
         }
 
         console.log(`[AutoRecorder] Checking ${uniqueId} (${room.name})...`);
@@ -352,26 +394,35 @@ class AutoRecorder {
                     let shouldResume = false;
 
                     try {
-                        // Check if there was a recent session (within 30 mins)
+                        // Check if there was a recent session (within 30 mins of its END time)
                         const sessions = await manager.getSessions(uniqueId);
                         if (sessions && sessions.length > 0) {
                             const lastSession = sessions[0];
-                            const lastSessionTime = new Date(lastSession.created_at).getTime();
-                            const timeSinceLastSession = Date.now() - lastSessionTime;
+                            // Use endTime if available (from most recent event), fallback to created_at
+                            const sessionEndTime = lastSession.endTime
+                                ? new Date(lastSession.endTime).getTime()
+                                : new Date(lastSession.created_at).getTime();
+                            const timeSinceSessionEnd = Date.now() - sessionEndTime;
 
-                            if (timeSinceLastSession < resumeWindowMs) {
-                                // Last session was within 30 mins - this is likely a resume
-                                console.log(`[AutoRecorder] ${uniqueId} reconnecting within 30 mins of last session (${Math.floor(timeSinceLastSession / 1000 / 60)}m ago). Resuming...`);
+                            if (timeSinceSessionEnd < resumeWindowMs) {
+                                // Session ended within 30 mins - this is likely a resume
+                                console.log(`[AutoRecorder] ${uniqueId} reconnecting within 30 mins of last session END (${Math.floor(timeSinceSessionEnd / 1000 / 60)}m ago). Resuming...`);
                                 shouldResume = true;
                             }
                         }
 
-                        // Also check recentDisconnects map for very recent disconnects (not yet archived)
-                        const recentDisconnect = this.recentDisconnects.get(uniqueId);
-                        if (recentDisconnect && (Date.now() - recentDisconnect.disconnectTime) < resumeWindowMs) {
-                            console.log(`[AutoRecorder] ${uniqueId} has recent disconnect data, resuming session...`);
+                        // Also check pendingArchives for recent disconnects with pending timer
+                        const pendingArchive = this.pendingArchives.get(uniqueId);
+                        let resumedStartTime = null;
+                        if (pendingArchive && (Date.now() - pendingArchive.disconnectTime) < resumeWindowMs) {
+                            // Cancel the pending archive timer
+                            if (pendingArchive.timerId) {
+                                clearTimeout(pendingArchive.timerId);
+                            }
+                            console.log(`[AutoRecorder] 🔄 ${uniqueId} reconnected within 30 min, cancelling archive timer and resuming session...`);
                             shouldResume = true;
-                            this.recentDisconnects.delete(uniqueId); // Clear after using
+                            resumedStartTime = pendingArchive.startTime; // Restore original startTime
+                            this.pendingArchives.delete(uniqueId);
                         }
 
                         // If NOT resuming, archive orphan events first
@@ -385,20 +436,31 @@ class AutoRecorder {
                             // Resuming - keep orphan events as-is, they'll be part of this session
                             const orphanCount = await manager.getUntaggedEventCount(uniqueId, null);
                             if (orphanCount > 0) {
-                                console.log(`[AutoRecorder] ${uniqueId} resuming with ${orphanCount} existing events (no new archive created)`);
+                                console.log(`[AutoRecorder] ${uniqueId} resuming with ${orphanCount} existing events (no new archive created)`)
                             }
                         }
+
+                        // Use resumed startTime if available, otherwise new Date()
+                        const sessionStartTime = resumedStartTime || new Date();
+                        this.activeConnections.set(uniqueId, {
+                            wrapper: wrapper,
+                            startTime: sessionStartTime,
+                            lastEventTime: Date.now(),
+                            pendingWrites: new Set(),
+                            roomId: state.roomId // Actual numeric room ID
+                        });
                     } catch (e) {
                         console.error(`[AutoRecorder] Error checking resume status for ${uniqueId}:`, e);
-                    }
 
-                    this.activeConnections.set(uniqueId, {
-                        wrapper: wrapper,
-                        startTime: new Date(),
-                        lastEventTime: Date.now(),
-                        pendingWrites: new Set(),
-                        roomId: state.roomId // Actual numeric room ID
-                    });
+                        // Fallback: still set connection, just use new Date()
+                        this.activeConnections.set(uniqueId, {
+                            wrapper: wrapper,
+                            startTime: new Date(),
+                            lastEventTime: Date.now(),
+                            pendingWrites: new Set(),
+                            roomId: state.roomId
+                        });
+                    }
                 }
 
                 // Reset failure count on success
@@ -426,6 +488,12 @@ class AutoRecorder {
                     // If connected for 60s but no events received (lastEventTime is close to startTime)
                     if (timeSinceStart >= validationDelayMs && timeSinceEvent >= validationDelayMs - 5000) {
                         console.log(`[AutoRecorder] ${uniqueId} connected but NO EVENTS for ${Math.floor(timeSinceStart / 1000)}s. Likely offline (API false positive). Disconnecting...`);
+
+                        // Set 30-min cooldown to prevent repeated connection attempts
+                        const cooldownMs = 30 * 60 * 1000;
+                        this.falsePositiveCooldown.set(uniqueId, Date.now() + cooldownMs);
+                        console.log(`[AutoRecorder] ${uniqueId} placed in 30-min cooldown to prevent repeated false positives`);
+
                         this.handleDisconnect(uniqueId, 'No events after connection - likely offline');
                     }
                 }, validationDelayMs);
@@ -602,12 +670,21 @@ class AutoRecorder {
             logEvent('chat', data);
         });
 
+        // Gift deduplication using groupId (unique combo sequence ID)
+        // groupId is a TikTok-assigned unique identifier for each combo gift sequence
+        // Same combo: same groupId, increasing repeatCount until repeatEnd=true
+        const activeGiftCombos = new Map(); // key = groupId, value = { data, timestamp }
+        const GIFT_COMBO_TIMEOUT_MS = 60000; // 60 seconds - max combo duration
+
         wrapper.connection.on('gift', msg => {
             updateLastEventTime();
             const gift = msg.gift || {};
             const extendedGift = msg.extendedGiftInfo || {};
             let giftImage = gift.icon?.url_list?.[0] || '';
             const roleInfo = extractRoleInfo(msg);
+
+            // Extract groupId - this is the unique combo sequence identifier
+            const groupId = msg.groupId?.toString() || null;
 
             const data = {
                 uniqueId: msg.user?.uniqueId || msg.uniqueId,
@@ -621,12 +698,75 @@ class AutoRecorder {
                 giftType: msg.giftType || gift.giftType,
                 diamondCount: gift.diamondCount || extendedGift.diamond_count || msg.diamondCount || 0,
                 repeatEnd: msg.repeatEnd,
+                groupId: groupId, // Store for debugging/analysis
                 ...roleInfo
             };
 
-            if (data.giftType !== 1 || msg.repeatEnd) {
-                logEvent('gift', data);
+            // Debug: Log first few gifts to verify groupId availability
+            if (!this._giftDebugLogged) {
+                this._giftDebugLogged = 0;
             }
+            if (this._giftDebugLogged < 5) {
+                console.log(`[Gift Debug] groupId=${groupId} repeatCount=${data.repeatCount} repeatEnd=${msg.repeatEnd} giftType=${data.giftType} gift=${data.giftName}`);
+                this._giftDebugLogged++;
+            }
+
+            // Auto-collect gift info to database (icon, name, price)
+            manager.upsertGift(data.giftId, data.giftName, data.giftImage, data.diamondCount).catch(err => {
+                console.error('[Gift] Failed to upsert gift:', err.message);
+            });
+
+            // Strategy: Use groupId for precise deduplication if available
+            if (groupId) {
+                const existing = activeGiftCombos.get(groupId);
+
+                if (existing) {
+                    // Update with higher repeatCount
+                    if (data.repeatCount >= existing.data.repeatCount) {
+                        existing.data = data;
+                        existing.timestamp = Date.now();
+                    }
+
+                    // If repeatEnd is true, this is the final event - log it and cleanup
+                    if (msg.repeatEnd) {
+                        logEvent('gift', existing.data);
+                        activeGiftCombos.delete(groupId);
+                    }
+                } else {
+                    // First event of this combo
+                    activeGiftCombos.set(groupId, { data: data, timestamp: Date.now() });
+
+                    // If repeatEnd is true immediately (single gift or instant combo end), log it
+                    if (msg.repeatEnd) {
+                        logEvent('gift', data);
+                        activeGiftCombos.delete(groupId);
+                    }
+                }
+
+                // Cleanup stale combos (combos that didn't receive repeatEnd)
+                // Run cleanup EVERY TIME to ensure high-value gifts aren't lost
+                const now = Date.now();
+                for (const [gid, combo] of activeGiftCombos) {
+                    if (now - combo.timestamp > GIFT_COMBO_TIMEOUT_MS) {
+                        // Log stale combo with last known repeatCount
+                        console.log(`[Gift] Logging stale combo ${gid} (${combo.data.giftName}) with repeatCount=${combo.data.repeatCount} 💎${combo.data.diamondCount * combo.data.repeatCount}`);
+                        logEvent('gift', combo.data);
+                        activeGiftCombos.delete(gid);
+                    }
+                }
+
+                return; // Don't fall through to fallback logic
+            }
+
+            // Fallback: No groupId available (shouldn't happen with proper TikTok connection)
+            // Use simple strategy: only log if repeatEnd is true OR if giftType is not 1 (non-combo)
+            const isComboGift = data.giftType === 1;
+            if (isComboGift && !msg.repeatEnd) {
+                return; // Skip intermediate combo updates for combo gifts without groupId
+            }
+
+            // Log non-combo gifts immediately, or combo gifts when repeatEnd=true
+            logEvent('gift', data);
         });
 
         wrapper.connection.on('like', msg => {
@@ -835,19 +975,14 @@ class AutoRecorder {
 
         if (this.activeConnections.has(uniqueId)) {
             console.log(`[AutoRecorder] Manual stop requested for ${uniqueId}`);
-            // Logic to prevent immediate reconnect? 
-            // For now, just disconnect. If the monitor loop runs, it might reconnect if logic allows.
-            // But usually 'monitor' loops every 5 mins.
-            // If user stops, they probably want it stopped. 
-            // We should probably set a "cooldown" or just hope 5 mins is enough.
-
-            await this.handleDisconnect(uniqueId, 'Manual stop');
+            // Manual stop: archive immediately (don't wait 30 min)
+            await this.handleDisconnect(uniqueId, 'Manual stop', true);
             return true;
         }
         return false;
     }
 
-    async handleDisconnect(uniqueId, reason = '') {
+    async handleDisconnect(uniqueId, reason = '', immediate = false) {
         // Idempotent: only one disconnect/archive task per room at a time.
         if (this.disconnectingRooms.has(uniqueId)) {
             return this.disconnectingRooms.get(uniqueId);
@@ -874,7 +1009,7 @@ class AutoRecorder {
                 try {
                     if (pendingWrites && pendingWrites.size > 0) {
                         const flushTimeoutMs = 1500;
-                        console.log(`[AutoRecorder] Waiting for ${pendingWrites.size} pending DB writes before archiving ${uniqueId}...`);
+                        console.log(`[AutoRecorder] Waiting for ${pendingWrites.size} pending DB writes for ${uniqueId}...`);
                         await Promise.race([
                             Promise.allSettled(Array.from(pendingWrites)),
                             new Promise(resolve => setTimeout(resolve, flushTimeoutMs))
@@ -883,48 +1018,57 @@ class AutoRecorder {
                 } catch (e) { }
 
                 // Check if there are any events to save before creating session
-                const eventCount = await manager.getUntaggedEventCount(uniqueId, startIso);
+                const rawEventCount = await manager.getUntaggedEventCount(uniqueId, startIso);
+                const eventCount = parseInt(rawEventCount) || 0;
 
                 if (eventCount === 0) {
-                    console.log(`[AutoRecorder] No events recorded for ${uniqueId}, skipping session save.`);
+                    console.log(`[AutoRecorder] No events recorded for ${uniqueId}, skipping session.`);
                     return;
                 }
 
-                // SESSION RESUME: Save disconnect info in case room reconnects within 30 mins
-                // If reconnected within 30 mins, the connect logic will skip orphan archiving
-                // to allow seamless session continuation
-                const resumeWindow = 30 * 60 * 1000; // 30 minutes
-                this.recentDisconnects.set(uniqueId, {
-                    startTime: startTime,
-                    lastEventTime: conn.lastEventTime,
-                    disconnectTime: Date.now(),
-                    eventCount: eventCount
-                });
-
-                // Clean up old entries (older than 30 mins)
-                const now = Date.now();
-                for (const [roomId, info] of this.recentDisconnects.entries()) {
-                    if (now - info.disconnectTime > resumeWindow) {
-                        this.recentDisconnects.delete(roomId);
-                    }
+                // STRICTER: Only create session if there are GIFT events (not just member/chat)
+                const giftCount = await manager.getUntaggedGiftCount(uniqueId, startIso);
+                if (giftCount === 0) {
+                    console.log(`[AutoRecorder] No gift events for ${uniqueId} (${eventCount} other events), skipping session.`);
+                    return;
                 }
 
-                // Archive session now (but reconnect within 30 mins can continue with new events)
-                console.log(`[AutoRecorder] Archiving session for ${uniqueId} with ${eventCount} events...`);
-                try {
-                    // FORCE uniqueId (string) for session creation to match logging
-                    const sessionId = await manager.createSession(uniqueId, {
-                        auto_generated: true,
-                        reason: reason || undefined,
-                        note: `Auto recorded session (${eventCount} events)`
+                // === DELAYED ARCHIVING LOGIC ===
+                // If immediate=true (manual stop), archive now
+                // Otherwise, set a timer to archive after 30 minutes
+
+                if (immediate) {
+                    console.log(`[AutoRecorder] 🔒 Immediate archive for ${uniqueId} (${reason})...`);
+                    await this.executeArchive(uniqueId, startIso, reason, eventCount);
+                } else {
+                    // Check if there's already a pending archive for this room
+                    const existing = this.pendingArchives.get(uniqueId);
+                    if (existing && existing.timerId) {
+                        // Clear old timer and update with new disconnect time
+                        clearTimeout(existing.timerId);
+                        console.log(`[AutoRecorder] ⏰ Resetting archive timer for ${uniqueId}`);
+                    }
+
+                    // Set delayed archive timer
+                    const timerId = setTimeout(() => {
+                        this.executeArchive(uniqueId, startIso, reason, eventCount).catch(err => {
+                            console.error(`[AutoRecorder] Delayed archive failed for ${uniqueId}:`, err?.message);
+                        });
+                    }, this.ARCHIVE_DELAY_MS);
+
+                    // Store pending archive info
+                    this.pendingArchives.set(uniqueId, {
+                        startTime: startTime,
+                        startIso: startIso,
+                        disconnectTime: Date.now(),
+                        timerId: timerId,
+                        eventCount: eventCount,
+                        reason: reason
                     });
 
-                    await manager.tagEventsWithSession(uniqueId, sessionId, startIso);
-                    console.log(`[AutoRecorder] Session saved: ${sessionId}`);
-
-                } catch (err) {
-                    console.error(`[AutoRecorder] Error saving session: ${err?.message || err}`);
+                    console.log(`[AutoRecorder] ⏰ Session for ${uniqueId} will be archived in 30 min (${eventCount} events). Reconnection will resume.`);
                 }
+
             } catch (err) {
                 console.error(`[AutoRecorder] handleDisconnect failed for ${uniqueId}: ${err?.message || err}`);
             }
@@ -941,6 +1085,43 @@ class AutoRecorder {
         }
 
         return task;
+    }
+
+    // Execute the actual session archiving
+    async executeArchive(uniqueId, startIso, reason, eventCount) {
+        // Check if this archive was cancelled (room reconnected)
+        const pending = this.pendingArchives.get(uniqueId);
+        if (pending && pending.startIso !== startIso) {
+            console.log(`[AutoRecorder] Archive cancelled for ${uniqueId} (session resumed with new startIso)`);
+            return;
+        }
+
+        // Clean up pending archive entry
+        this.pendingArchives.delete(uniqueId);
+
+        // Re-check event counts in case more events arrived during the delay
+        const finalEventCount = await manager.getUntaggedEventCount(uniqueId, startIso);
+        const finalGiftCount = await manager.getUntaggedGiftCount(uniqueId, startIso);
+
+        if (finalGiftCount === 0) {
+            console.log(`[AutoRecorder] No gift events for ${uniqueId} at archive time, skipping.`);
+            return;
+        }
+
+        console.log(`[AutoRecorder] 📦 Archiving session for ${uniqueId} (${finalEventCount} events, ${finalGiftCount} gifts)...`);
+        try {
+            const sessionId = await manager.createSession(uniqueId, {
+                auto_generated: true,
+                reason: reason || undefined,
+                note: `Auto recorded session (${finalEventCount} events)`
+            });
+
+            await manager.tagEventsWithSession(uniqueId, sessionId, startIso);
+            console.log(`[AutoRecorder] ✅ Session saved: ${sessionId}`);
+
+        } catch (err) {
+            console.error(`[AutoRecorder] Error saving session: ${err?.message || err}`);
+        }
     }
 }
 

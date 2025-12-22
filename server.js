@@ -249,6 +249,36 @@ app.post('/api/config', async (req, res) => {
     }
 });
 
+// Gift Management API
+app.get('/api/gifts', async (req, res) => {
+    try {
+        const gifts = await manager.getGifts();
+        res.json(gifts);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/gifts/:id', async (req, res) => {
+    try {
+        const { nameCn } = req.body;
+        await manager.updateGiftChineseName(req.params.id, nameCn);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Gift display names API (for frontend batch lookup)
+app.get('/api/gifts/display-names', async (req, res) => {
+    try {
+        const names = await manager.getGiftDisplayNames();
+        res.json(names);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Room Sessions API
 app.get('/api/rooms/:id/sessions', async (req, res) => {
     try {
@@ -309,7 +339,8 @@ app.get('/api/rooms/stats', async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const search = req.query.search || '';
-        const result = await manager.getRoomStats(liveRoomIds, { page, limit, search });
+        const sort = req.query.sort || 'default';
+        const result = await manager.getRoomStats(liveRoomIds, { page, limit, search, sort });
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -335,21 +366,57 @@ app.get('/api/rooms', async (req, res) => {
         const limit = parseInt(req.query.limit) || 50;
         const search = req.query.search || '';
         const result = await manager.getRooms({ page, limit, search });
+
+        // Merge isLive status from autoRecorder activeConnections
+        const liveRoomIds = autoRecorder.getLiveRoomIds();
+        result.data = result.data.map(room => ({
+            ...room,
+            isLive: liveRoomIds.includes(room.roomId)
+        }));
+
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
+// Room Management API
+app.post('/api/rooms', async (req, res) => {
+    try {
+        const { roomId, name, isMonitorEnabled, language } = req.body;
+        if (!roomId) return res.status(400).json({ error: 'roomId required' });
 
+        const result = await manager.updateRoom(roomId, name, null, isMonitorEnabled, language);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/rooms/:id', async (req, res) => {
+    try {
+        const roomId = req.params.id;
+        await manager.deleteRoom(roomId);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
 
 app.get('/api/rooms/:id/stats_detail', async (req, res) => {
     try {
         const roomId = req.params.id;
         const sessionId = req.query.sessionId || null;
 
+        console.log(`[API] stats_detail request: room=${roomId}, session=${sessionId}`);
+
         // Get stats
         const data = await manager.getRoomDetailStats(roomId, sessionId);
+
+        console.log(`[API] stats_detail data keys:`, data ? Object.keys(data) : 'null');
+        if (data && data.leaderboards) {
+            console.log(`[API] leaderboards.gifters count:`, data.leaderboards.gifters?.length || 0);
+        }
 
         // Get isLive status
         const liveRoomIds = autoRecorder.getLiveRoomIds();
@@ -366,6 +433,19 @@ app.get('/api/rooms/:id/stats_detail', async (req, res) => {
             currentSessionId: sessionId
         });
     } catch (err) {
+        console.error('[API] stats_detail error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// All-Time TOP30 Leaderboards API (for room detail sidebar)
+app.get('/api/rooms/:id/alltime-leaderboards', async (req, res) => {
+    try {
+        const roomId = req.params.id;
+        const data = await manager.getAllTimeLeaderboards(roomId);
+        res.json(data);
+    } catch (err) {
+        console.error('[API] alltime-leaderboards error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -425,10 +505,18 @@ app.get('/api/history', async (req, res) => {
 // User Analysis API
 app.get('/api/analysis/users', async (req, res) => {
     try {
-        const lang = req.query.lang || '';
+        const filters = {
+            lang: req.query.lang || '',
+            languageFilter: req.query.languageFilter || '',
+            minRooms: parseInt(req.query.minRooms) || 1,
+            activeHour: req.query.activeHour !== undefined ? req.query.activeHour : null,
+            activeHourEnd: req.query.activeHourEnd !== undefined ? req.query.activeHourEnd : null,
+            search: req.query.search || '',
+            giftPreference: req.query.giftPreference || ''
+        };
         const page = parseInt(req.query.page) || 1;
         const pageSize = parseInt(req.query.pageSize) || 50;
-        const result = await manager.getTopGifters(page, pageSize, lang);
+        const result = await manager.getTopGifters(page, pageSize, filters);
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -444,6 +532,64 @@ app.get('/api/analysis/user/:userId', async (req, res) => {
     }
 });
 
+// Export API - fetch user list with full details for export
+app.get('/api/analysis/users/export', async (req, res) => {
+    try {
+        const filters = {
+            lang: req.query.lang || '',
+            languageFilter: req.query.languageFilter || '',
+            minRooms: parseInt(req.query.minRooms) || 1,
+            activeHour: req.query.activeHour !== undefined ? req.query.activeHour : null,
+            activeHourEnd: req.query.activeHourEnd !== undefined ? req.query.activeHourEnd : null,
+            search: req.query.search || '',
+            giftPreference: req.query.giftPreference || ''
+        };
+        const limit = parseInt(req.query.limit) || 1000;
+
+        // Get user list first
+        const result = await manager.getTopGifters(1, limit, filters);
+
+        // Fetch details for each user
+        const usersWithDetails = [];
+        for (const user of result.users) {
+            const details = await manager.getUserAnalysis(user.userId);
+            usersWithDetails.push({
+                ...user,
+                ...details,
+                // Format top gifts
+                topGiftsText: (user.topGifts || []).map(g => `${g.giftName || g.giftId}(${g.totalValue})`).join(', '),
+                roseValue: user.roseValue || 0,
+                tiktokValue: user.tiktokValue || 0,
+                // Format rooms
+                giftRoomsText: (details.giftRooms || []).slice(0, 5).map(r => `${r.name || r.roomId}(${r.val})`).join(', '),
+                visitRoomsText: (details.visitRooms || []).slice(0, 5).map(r => `${r.name || r.roomId}(${r.cnt}次)`).join(', '),
+                // Format time distribution
+                peakHours: formatPeakHours(details.hourStats),
+                peakDays: formatPeakDays(details.dayStats)
+            });
+        }
+
+        res.json({ users: usersWithDetails, total: result.total });
+    } catch (err) {
+        console.error('[Export API Error]', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Helper functions for export
+function formatPeakHours(hourStats) {
+    if (!hourStats || hourStats.length === 0) return '';
+    const sorted = [...hourStats].sort((a, b) => (b.cnt || 0) - (a.cnt || 0));
+    return sorted.slice(0, 3).map(h => `${h.hour}时`).join(', ');
+}
+
+function formatPeakDays(dayStats) {
+    if (!dayStats || dayStats.length === 0) return '';
+    const dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
+    const sorted = [...dayStats].sort((a, b) => (b.cnt || 0) - (a.cnt || 0));
+    return sorted.slice(0, 3).map(d => dayNames[parseInt(d.day)] || '').join(', ');
+}
+
 
 
 app.get('/api/analysis/stats', async (req, res) => {
@@ -457,11 +603,22 @@ app.get('/api/analysis/stats', async (req, res) => {
 
 app.post('/api/analysis/ai', async (req, res) => {
     try {
-        const { userId } = req.body;
+        const { userId, force = false } = req.body;
+
+        // Check if analysis already exists
+        if (!force) {
+            const userAnalysis = await manager.getUserAnalysis(userId);
+            if (userAnalysis && userAnalysis.aiAnalysis) {
+                console.log(`[AI] Returning cached analysis for ${userId}`);
+                return res.json({ result: userAnalysis.aiAnalysis, cached: true });
+            }
+        }
+
         // Get user chat history
-        const history = await manager.getUserChatHistory(userId, 50);
+        const history = await manager.getUserChatHistory(userId, 100);
 
         if (!history || history.length === 0) {
+            console.log(`[AI] User ${userId} has no chat history, skipping analysis`);
             return res.json({ result: "该用户没有足够的弹幕记录进行分析。" });
         }
 
@@ -470,6 +627,7 @@ app.post('/api/analysis/ai', async (req, res) => {
         // Call AI API
         const dbSettings = await manager.getAllSettings();
         const apiKey = dbSettings.ai_api_key || process.env.AI_API_KEY;
+        const modelName = dbSettings.ai_model_name || process.env.AI_MODEL_NAME || 'deepseek-ai/DeepSeek-V3.2';
         const apiUrl = dbSettings.ai_api_url || process.env.AI_API_URL || 'https://api-inference.modelscope.cn/v1/';
 
         if (!apiKey) {
@@ -478,6 +636,7 @@ app.post('/api/analysis/ai', async (req, res) => {
 
         const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
+        console.log(`[AI] Requesting analysis for ${userId}...`);
         const response = await fetch(`${apiUrl}chat/completions`, {
             method: 'POST',
             headers: {
@@ -485,9 +644,9 @@ app.post('/api/analysis/ai', async (req, res) => {
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: 'deepseek-ai/DeepSeek-V3.2',
+                model: modelName,
                 messages: [
-                    { role: 'system', content: '你是一个专业的主播运营助手。请根据用户的弹幕历史，简要分析该用户的：1、常用语种 2、掌握语种 3、感兴趣的话题 4、 聊天风格。请用简洁的中文回答。' },
+                    { role: 'system', content: '你是一个数十年经验的专业娱乐主播运营总监，并且你的情商非常高。请根据用户的弹幕历史，简要分析该用户的：1、常用语种 2、掌握语种 3、感兴趣的话题 4、 聊天风格。请用简洁的中文回答。5、建议破冰方式。请用简洁的中文回答。' },
                     { role: 'user', content: `用户弹幕记录：\n${chatText}` }
                 ],
                 stream: false
@@ -502,21 +661,24 @@ app.post('/api/analysis/ai', async (req, res) => {
         const completion = await response.json();
         const result = completion.choices?.[0]?.message?.content || "无法获取分析结果";
 
-        // Parse result for languages
-        let commonLang = '';
-        let masteredLang = '';
+        // Save full analysis
+        await manager.updateAIAnalysis(userId, result);
 
-        const commonMatch = result.match(/1、常用语种[：:]?\s*([^\n\r]+)/);
-        if (commonMatch) commonLang = commonMatch[1].replace(/[,，、]/g, ',');
+        // Parse result for languages to update searchable fields
+        // let commonLang = '';
+        // let masteredLang = '';
 
-        const masteredMatch = result.match(/2、掌握语种[：:]?\s*([^\n\r]+)/);
-        if (masteredMatch) masteredLang = masteredMatch[1].replace(/[,，、]/g, ',');
+        // const commonMatch = result.match(/1、常用语种[：:]?\s*([^\n\r]+)/);
+        // if (commonMatch) commonLang = commonMatch[1].replace(/[,，、]/g, ',');
 
-        if (commonLang || masteredLang) {
-            await manager.updateUserLanguages(userId, commonLang, masteredLang);
-        }
+        // const masteredMatch = result.match(/2、掌握语种[：:]?\s*([^\n\r]+)/);
+        // if (masteredMatch) masteredLang = masteredMatch[1].replace(/[,，、]/g, ',');
 
-        res.json({ result: result });
+        // if (commonLang || masteredLang) {
+        //     await manager.updateUserLanguages(userId, commonLang, masteredLang);
+        // }
+
+        res.json({ result: result, cached: false });
 
     } catch (err) {
         console.error(err);
@@ -528,7 +690,14 @@ app.post('/api/analysis/ai', async (req, res) => {
 
 app.post('/api/rooms', async (req, res) => {
     try {
-        const { roomId, name, address, isMonitorEnabled } = req.body;
+        let { roomId, name, address, isMonitorEnabled } = req.body;
+
+        // Normalize roomId: remove @ prefix to prevent duplicates (e.g. @blooming1881 vs blooming1881)
+        if (roomId && roomId.startsWith('@')) {
+            roomId = roomId.substring(1);
+            console.log(`[API] Normalized roomId by removing @ prefix: ${roomId}`);
+        }
+
         console.log(`[API] POST /api/rooms - roomId: ${roomId}, isMonitorEnabled: ${isMonitorEnabled} (type: ${typeof isMonitorEnabled})`);
 
         // If isMonitorEnabled is undefined, default to 1 (true) for new rooms, or preserve existing?
@@ -661,156 +830,39 @@ app.get('/api/sessions', async (req, res) => {
     }
 });
 
-app.get('/api/sessions/:id', async (req, res) => {
-    try {
-        const data = await manager.getSession(req.params.id);
-        if (data) {
-            res.json(data);
-        } else {
-            res.status(404).json({ error: 'Not found' });
-        }
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// History API
-app.get('/api/history', async (req, res) => {
-    try {
-        const roomId = req.query.roomId;
-        const stats = await manager.getTimeStats(roomId);
-        res.json(stats);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// User Analysis API
-app.get('/api/analysis/users', async (req, res) => {
-    try {
-        const lang = req.query.lang || '';
-        const page = parseInt(req.query.page) || 1;
-        const pageSize = parseInt(req.query.pageSize) || 50;
-        const result = await manager.getTopGifters(page, pageSize, lang);
-        res.json(result);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.get('/api/analysis/user/:userId', async (req, res) => {
-    try {
-        const data = await manager.getUserAnalysis(req.params.userId);
-        res.json(data);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-
-
-app.get('/api/analysis/stats', async (req, res) => {
-    try {
-        const stats = await manager.getGlobalStats();
-        res.json(stats);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.post('/api/analysis/ai', async (req, res) => {
-    try {
-        const { userId } = req.body;
-        // Get user chat history
-        const history = await manager.getUserChatHistory(userId, 50);
-
-        if (!history || history.length === 0) {
-            return res.json({ result: "该用户没有足够的弹幕记录进行分析。" });
-        }
-
-        const chatText = history.map(h => h.comment).join('\n');
-
-        // Call AI API
-        const dbSettings = await manager.getAllSettings();
-        const apiKey = dbSettings.ai_api_key || process.env.AI_API_KEY;
-        const apiUrl = dbSettings.ai_api_url || process.env.AI_API_URL || 'https://api-inference.modelscope.cn/v1/';
-
-        if (!apiKey) {
-            return res.status(500).json({ error: "AI API Key not configured" });
-        }
-
-        const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
-        const response = await fetch(`${apiUrl}chat/completions`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model: 'deepseek-ai/DeepSeek-V3.2',
-                messages: [
-                    { role: 'system', content: '你是一个专业的主播运营助手。请根据用户的弹幕历史，简要分析该用户的：1、常用语种 2、掌握语种 3、感兴趣的话题 4、 聊天风格。请用简洁的中文回答。' },
-                    { role: 'user', content: `用户弹幕记录：\n${chatText}` }
-                ],
-                stream: false
-            })
-        });
-
-        if (!response.ok) {
-            const err = await response.text();
-            throw new Error(`AI API Error: ${err}`);
-        }
-
-        const completion = await response.json();
-        const result = completion.choices?.[0]?.message?.content || "无法获取分析结果";
-
-        // Parse result for languages
-        let commonLang = '';
-        let masteredLang = '';
-
-        const commonMatch = result.match(/1、常用语种[：:]?\s*([^\n\r]+)/);
-        if (commonMatch) commonLang = commonMatch[1].replace(/[,，、]/g, ',');
-
-        const masteredMatch = result.match(/2、掌握语种[：:]?\s*([^\n\r]+)/);
-        if (masteredMatch) masteredLang = masteredMatch[1].replace(/[,，、]/g, ',');
-
-        if (commonLang || masteredLang) {
-            await manager.updateUserLanguages(userId, commonLang, masteredLang);
-        }
-
-        res.json({ result: result });
-
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Static Files (Moved to top)
-
-// ========================
 // Start Server
-// ========================
-(async () => {
-    await manager.ensureDb();
+const PORT = process.env.PORT || 8081;
+httpServer.listen(PORT, () => {
+    console.log(`Server started on http://localhost:${PORT}`);
 
-    // Load Port from Settings or Default
-    let port = 8081;
-    try {
-        const p = await manager.getSetting('port');
-        if (p) port = parseInt(p);
-    } catch (e) {
-        console.error('Failed to load port setting:', e);
-    }
-
-    // Override with Env if present (optional, but good practice)
-    if (process.env.PORT) port = parseInt(process.env.PORT);
-
-    const server = httpServer.listen(port, '0.0.0.0', () => {
-        console.log(`Server running on http://localhost:${port}`);
-        if (process.env.PROXY_URL) {
-            console.info(`Using SOCKS proxy: ${process.env.PROXY_URL}`);
+    // Scheduled jobs
+    // Run user language analysis every hour
+    setInterval(async () => {
+        try {
+            console.log('[CRON] Running hourly user language analysis...');
+            await manager.analyzeUserLanguages(2000);
+        } catch (err) {
+            console.error('[CRON] Language analysis error:', err.message);
         }
-    });
-})();
+    }, 60 * 60 * 1000); // Every hour
+
+    // Run session consolidation every hour
+    setInterval(async () => {
+        try {
+            console.log('[CRON] Running hourly session consolidation...');
+            await manager.consolidateRecentSessions(48, 60);
+        } catch (err) {
+            console.error('[CRON] Session consolidation error:', err.message);
+        }
+    }, 60 * 60 * 1000); // Every hour
+
+    // Run initial language analysis after startup
+    setTimeout(async () => {
+        try {
+            console.log('[CRON] Running initial user language analysis...');
+            await manager.analyzeUserLanguages(2000);
+        } catch (err) {
+            console.error('[CRON] Initial language analysis error:', err.message);
+        }
+    }, 30000); // 30 seconds after startup
+});

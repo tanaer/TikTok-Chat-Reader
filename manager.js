@@ -64,13 +64,71 @@ class Manager {
         return parseFloat(this.prices[String(giftId)] || 0);
     }
 
+    // Gift Management - Auto-collect gift info from events
+    async upsertGift(giftId, nameEn, iconUrl, diamondCount) {
+        if (!giftId) return;
+        await this.ensureDb();
+
+        // Upsert: insert or update if exists (preserve Chinese name if already set)
+        await run(`
+            INSERT INTO gift (gift_id, name_en, icon_url, diamond_count, updated_at)
+            VALUES (?, ?, ?, ?, NOW())
+            ON CONFLICT (gift_id) DO UPDATE SET
+                name_en = COALESCE(EXCLUDED.name_en, gift.name_en),
+                icon_url = COALESCE(EXCLUDED.icon_url, gift.icon_url),
+                diamond_count = COALESCE(EXCLUDED.diamond_count, gift.diamond_count),
+                updated_at = NOW()
+        `, [String(giftId), nameEn, iconUrl, diamondCount || 0]);
+    }
+
+    async getGifts() {
+        await this.ensureDb();
+        return await query(`
+            SELECT gift_id, name_en, name_cn, icon_url, diamond_count, created_at, updated_at
+            FROM gift
+            ORDER BY diamond_count DESC, name_en ASC
+        `);
+    }
+
+    async updateGiftChineseName(giftId, nameCn) {
+        await this.ensureDb();
+        await run(`
+            UPDATE gift SET name_cn = ?, updated_at = NOW()
+            WHERE gift_id = ?
+        `, [nameCn, String(giftId)]);
+    }
+
+    // Get display name: prefer Chinese, fallback to English
+    async getGiftDisplayName(giftId) {
+        await this.ensureDb();
+        const gift = await get(`SELECT name_cn, name_en FROM gift WHERE gift_id = ?`, [String(giftId)]);
+        if (gift) {
+            return gift.nameCn || gift.nameEn || giftId;
+        }
+        return giftId;
+    }
+
+    // Get all gift display names at once (for batch display)
+    async getGiftDisplayNames() {
+        await this.ensureDb();
+        const gifts = await query(`SELECT gift_id, name_cn, name_en, icon_url FROM gift`);
+        const map = {};
+        for (const g of gifts) {
+            map[g.giftId] = {
+                displayName: g.nameCn || g.nameEn || g.giftId,
+                icon: g.iconUrl || ''
+            };
+        }
+        return map;
+    }
+
     // Room Management
-    async updateRoom(roomId, name, address, isMonitorEnabled) {
+    async updateRoom(roomId, name, address, isMonitorEnabled, language = null) {
         await this.ensureDb();
         const now = getNowBeijing();
 
         // Check if room exists to preserve existing values when null is passed
-        const existing = get('SELECT name, address, is_monitor_enabled FROM room WHERE room_id = ?', [roomId]);
+        const existing = await get('SELECT name, address, is_monitor_enabled, language FROM room WHERE room_id = ?', [roomId]);
 
         // Preserve name if null/undefined passed
         let finalName = name;
@@ -82,6 +140,12 @@ class Manager {
         let finalAddress = address;
         if (address === null || address === undefined) {
             finalAddress = existing ? existing.address : null;
+        }
+
+        // Preserve language if null/undefined passed
+        let finalLanguage = language;
+        if (language === null || language === undefined) {
+            finalLanguage = existing ? existing.language : '中文';
         }
 
         // Handle monitor enabled - preserve existing value if undefined
@@ -101,18 +165,19 @@ class Manager {
             monitorVal = 1;
         }
 
-        console.log(`[Manager] updateRoom - monitorVal: ${monitorVal}`);
+        console.log(`[Manager] updateRoom - monitorVal: ${monitorVal}, language: ${finalLanguage}`);
 
-        run(`
-            INSERT INTO room (room_id, name, address, updated_at, is_monitor_enabled) 
-            VALUES (?, ?, ?, ?, ?)
+        await run(`
+            INSERT INTO room (room_id, name, address, language, updated_at, is_monitor_enabled) 
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(room_id) DO UPDATE SET 
                 name = excluded.name, 
-                address = excluded.address, 
+                address = excluded.address,
+                language = excluded.language,
                 updated_at = excluded.updated_at,
                 is_monitor_enabled = excluded.is_monitor_enabled
-        `, [roomId, finalName, finalAddress, now, monitorVal]);
-        return { room_id: roomId, name: finalName, address: finalAddress, is_monitor_enabled: monitorVal };
+        `, [roomId, finalName, finalAddress, finalLanguage, now, monitorVal]);
+        return { room_id: roomId, name: finalName, address: finalAddress, language: finalLanguage, is_monitor_enabled: monitorVal };
     }
 
     async getRooms(options = {}) {
@@ -137,8 +202,8 @@ class Manager {
         sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
         params.push(limit, offset);
 
-        const rooms = query(sql, params);
-        const countResult = get(countSql, countParams);
+        const rooms = await query(sql, params);
+        const countResult = await get(countSql, countParams);
 
         return {
             data: rooms,
@@ -151,19 +216,24 @@ class Manager {
         };
     }
 
+    async deleteRoom(roomId) {
+        await this.ensureDb();
+        await run('DELETE FROM room WHERE room_id = ?', [roomId]);
+    }
+
     // Save numeric room ID when connecting to a room
     async setNumericRoomId(uniqueId, numericRoomId) {
         await this.ensureDb();
         if (!numericRoomId) return;
 
-        run(`UPDATE room SET numeric_room_id = ? WHERE room_id = ?`, [String(numericRoomId), uniqueId]);
+        await run(`UPDATE room SET numeric_room_id = ? WHERE room_id = ?`, [String(numericRoomId), uniqueId]);
         console.log(`[Manager] Saved numeric_room_id ${numericRoomId} for room ${uniqueId}`);
     }
 
     // Get cached numeric room ID from database (avoids fetching from TikTok)
     async getCachedRoomId(uniqueId) {
         await this.ensureDb();
-        const row = get(`SELECT numeric_room_id FROM room WHERE room_id = ?`, [uniqueId]);
+        const row = await get(`SELECT numeric_room_id FROM room WHERE room_id = ?`, [uniqueId]);
         return row?.numeric_room_id || null;
     }
 
@@ -172,10 +242,10 @@ class Manager {
         await this.ensureDb();
 
         // Get all rooms with numeric_room_id
-        const rooms = query('SELECT room_id, numeric_room_id FROM room WHERE numeric_room_id IS NOT NULL');
+        const rooms = await query('SELECT room_id, numeric_room_id FROM room WHERE numeric_room_id IS NOT NULL');
 
         for (const room of rooms) {
-            const updated = run(`
+            const updated = await run(`
                 UPDATE event SET room_id = ? 
                 WHERE room_id = ? AND room_id != ?
             `, [room.room_id, room.numeric_room_id, room.room_id]);
@@ -190,43 +260,77 @@ class Manager {
         const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
 
         // Find next session number for today
-        const result = get('SELECT COUNT(*) as cnt FROM session WHERE session_id LIKE ?', [dateStr + '%']);
+        const result = await get('SELECT COUNT(*) as cnt FROM session WHERE session_id LIKE ?', [dateStr + '%']);
         const cnt = result ? result.cnt : 0;
         const sessionId = `${dateStr}${String(cnt + 1).padStart(2, '0')}`;
 
-        run('INSERT INTO session (session_id, room_id, snapshot_json) VALUES (?, ?, ?)',
+        await run('INSERT INTO session (session_id, room_id, snapshot_json) VALUES (?, ?, ?)',
             [sessionId, roomId, JSON.stringify(snapshotData)]);
         return sessionId;
     }
 
     async getSessions(roomId) {
         await this.ensureDb();
+        // Use LEFT JOIN with aggregate instead of correlated subquery (much faster)
         if (roomId) {
-            return query('SELECT session_id, room_id, created_at FROM session WHERE room_id = ? ORDER BY created_at DESC', [roomId]);
+            return await query(`
+                SELECT s.session_id, s.room_id, s.created_at, et.end_time
+                FROM session s
+                LEFT JOIN (
+                    SELECT session_id, MAX(timestamp) as end_time 
+                    FROM event 
+                    GROUP BY session_id
+                ) et ON s.session_id = et.session_id
+                WHERE s.room_id = ? 
+                ORDER BY s.created_at DESC
+            `, [roomId]);
         }
-        return query('SELECT session_id, room_id, created_at FROM session ORDER BY created_at DESC');
+        return await query(`
+            SELECT s.session_id, s.room_id, s.created_at, et.end_time
+            FROM session s
+            LEFT JOIN (
+                SELECT session_id, MAX(timestamp) as end_time 
+                FROM event 
+                GROUP BY session_id
+            ) et ON s.session_id = et.session_id
+            ORDER BY s.created_at DESC
+        `);
     }
 
     async getSession(sessionId) {
         await this.ensureDb();
-        const row = get('SELECT snapshot_json FROM session WHERE session_id = ?', [sessionId]);
-        if (row && row.snapshot_json) {
+        const row = await get('SELECT session_id, room_id, snapshot_json, created_at FROM session WHERE session_id = ?', [sessionId]);
+        if (!row) {
+            return null; // Session doesn't exist at all
+        }
+
+        // Return session info even if snapshot is empty
+        let snapshot = {};
+        if (row.snapshot_json) {
             try {
-                return JSON.parse(row.snapshot_json);
+                snapshot = JSON.parse(row.snapshot_json);
             } catch (e) {
-                return null;
+                console.error(`[Session] Failed to parse snapshot for ${sessionId}:`, e);
             }
         }
-        return null;
+
+        return {
+            sessionId: row.session_id,
+            roomId: row.room_id,
+            createdAt: row.created_at,
+            ...snapshot
+        };
     }
 
-    // Event Logging - writes to both expanded columns and data_json
+    // Event Logging - writes to expanded columns (data_json removed to save space)
     async logEvent(roomId, eventType, data, sessionId = null) {
         await this.ensureDb();
         const now = getNowBeijing();
 
-        // Sync user data
-        if (data.userId) {
+        // Only sync user data for meaningful event types (chat, gift, like)
+        // This prevents recording users who only triggered member/view events
+        const userRecordableTypes = ['chat', 'gift', 'like'];
+        if (data.userId && userRecordableTypes.includes(eventType)) {
             await this.ensureUser({
                 userId: data.userId,
                 uniqueId: data.uniqueId,
@@ -235,15 +339,14 @@ class Manager {
             });
         }
 
-        // Insert with expanded columns for fast querying
-        run(`INSERT INTO event (
-            room_id, session_id, type, timestamp,
-            user_id, unique_id, nickname,
-            gift_id, diamond_count, repeat_count,
-            like_count, total_like_count,
-            comment, viewer_count,
-            data_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        // Insert with expanded columns for fast querying (no data_json to save space)
+        await run(`INSERT INTO event (
+        room_id, session_id, type, timestamp,
+        user_id, unique_id, nickname,
+        gift_id, diamond_count, repeat_count,
+        like_count, total_like_count,
+        comment, viewer_count
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
             roomId,
             sessionId,
             eventType,
@@ -257,8 +360,7 @@ class Manager {
             data.likeCount || 0,
             data.totalLikeCount || 0,
             data.comment || null,
-            data.viewerCount || null,
-            JSON.stringify(data)
+            data.viewerCount || null
         ]);
     }
 
@@ -269,8 +371,8 @@ class Manager {
         }
 
         const now = getNowBeijing();
-        run(`
-            INSERT INTO user (user_id, unique_id, nickname, avatar, updated_at)
+        await run(`
+            INSERT INTO "user" (user_id, unique_id, nickname, avatar, updated_at)
             VALUES (?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 unique_id = excluded.unique_id,
@@ -286,13 +388,35 @@ class Manager {
         let result;
         if (startTime) {
             const beijingTime = convertToBeijingTimeString(startTime);
-            result = get('SELECT COUNT(*) as cnt FROM event WHERE room_id = ? AND session_id IS NULL AND timestamp >= ?',
+            result = await get('SELECT COUNT(*) as cnt FROM event WHERE room_id = ? AND session_id IS NULL AND timestamp >= ?',
                 [roomId, beijingTime]);
         } else {
-            result = get('SELECT COUNT(*) as cnt FROM event WHERE room_id = ? AND session_id IS NULL',
+            result = await get('SELECT COUNT(*) as cnt FROM event WHERE room_id = ? AND session_id IS NULL',
                 [roomId]);
         }
         return result ? result.cnt : 0;
+    }
+
+    // Get count of untagged GIFT events (only create sessions if gifts exist)
+    async getUntaggedGiftCount(roomId, startTime = null) {
+        await this.ensureDb();
+        let result;
+        if (startTime) {
+            const beijingTime = convertToBeijingTimeString(startTime);
+            result = await get(`SELECT COUNT(*) as cnt FROM event WHERE room_id = ? AND type = 'gift' AND session_id IS NULL AND timestamp >= ?`,
+                [roomId, beijingTime]);
+        } else {
+            result = await get(`SELECT COUNT(*) as cnt FROM event WHERE room_id = ? AND type = 'gift' AND session_id IS NULL`,
+                [roomId]);
+        }
+        return result ? parseInt(result.cnt) || 0 : 0;
+    }
+
+    // Get the timestamp of the oldest untagged event for a room
+    async getOldestOrphanEventTime(roomId) {
+        await this.ensureDb();
+        const result = await get(`SELECT MIN(timestamp) as oldest FROM event WHERE room_id = ? AND session_id IS NULL`, [roomId]);
+        return result && result.oldest ? new Date(result.oldest).getTime() : null;
     }
 
     // Tag all untagged events for a room with a session_id (called when ending session)
@@ -302,11 +426,11 @@ class Manager {
             // Convert to Beijing time string to match DB format
             const beijingTime = convertToBeijingTimeString(startTime);
             // Only tag events from after startTime
-            run('UPDATE event SET session_id = ? WHERE room_id = ? AND session_id IS NULL AND timestamp >= ?',
+            await run('UPDATE event SET session_id = ? WHERE room_id = ? AND session_id IS NULL AND timestamp >= ?',
                 [sessionId, roomId, beijingTime]);
         } else {
             // Tag all untagged events for this room
-            run('UPDATE event SET session_id = ? WHERE room_id = ? AND session_id IS NULL',
+            await run('UPDATE event SET session_id = ? WHERE room_id = ? AND session_id IS NULL',
                 [sessionId, roomId]);
         }
     }
@@ -316,7 +440,7 @@ class Manager {
         await this.ensureDb();
 
         // Find all distinct room_id + date combinations with orphaned events
-        const orphanGroups = query(`
+        const orphanGroups = await query(`
             SELECT room_id, DATE(timestamp) as event_date, COUNT(*) as cnt
             FROM event 
             WHERE session_id IS NULL
@@ -336,11 +460,11 @@ class Manager {
             const sessionId = event_date.replace(/-/g, '') + '99';
 
             // Check if session already exists
-            const existing = get('SELECT session_id FROM session WHERE session_id = ?', [sessionId]);
+            const existing = await get('SELECT session_id FROM session WHERE session_id = ?', [sessionId]);
 
             if (!existing) {
                 // Create new session
-                run(`INSERT INTO session (session_id, room_id, created_at, info) VALUES (?, ?, ?, ?)`, [
+                await run(`INSERT INTO session (session_id, room_id, created_at, info) VALUES (?, ?, ?, ?)`, [
                     sessionId,
                     room_id,
                     event_date + ' 00:00:00',
@@ -350,7 +474,7 @@ class Manager {
             }
 
             // Tag all orphaned events for this room+date
-            run(`UPDATE event SET session_id = ? WHERE room_id = ? AND session_id IS NULL AND DATE(timestamp) = ?`,
+            await run(`UPDATE event SET session_id = ? WHERE room_id = ? AND session_id IS NULL AND DATE(timestamp) = ?`,
                 [sessionId, room_id, event_date]);
             eventsFixed += cnt;
         }
@@ -364,7 +488,7 @@ class Manager {
         await this.ensureDb();
 
         // Find sessions with no events
-        const emptySessions = query(`
+        const emptySessions = await query(`
             SELECT s.session_id, s.room_id
             FROM session s
             LEFT JOIN event e ON s.session_id = e.session_id
@@ -375,7 +499,7 @@ class Manager {
         console.log(`[Manager] Found ${emptySessions.length} empty sessions to delete`);
 
         for (const s of emptySessions) {
-            run('DELETE FROM session WHERE session_id = ?', [s.session_id]);
+            await run('DELETE FROM session WHERE session_id = ?', [s.session_id]);
         }
 
         console.log(`[Manager] Deleted ${emptySessions.length} empty sessions`);
@@ -387,7 +511,7 @@ class Manager {
         await this.ensureDb();
 
         // 1. Missing Sessions
-        const missingSessions = query(`
+        const missingSessions = await query(`
             SELECT DISTINCT e.session_id, e.room_id, 
                    MIN(e.timestamp) as first_event,
                    MAX(e.timestamp) as last_event,
@@ -399,7 +523,7 @@ class Manager {
         `);
 
         // 2. Collided Sessions (Event room_id != Session room_id)
-        const collidedSessions = query(`
+        const collidedSessions = await query(`
             SELECT e.session_id, e.room_id, COUNT(*) as event_count,
                    MIN(e.timestamp) as first_event, MAX(e.timestamp) as last_event
             FROM event e
@@ -419,14 +543,14 @@ class Manager {
 
             let newSessionId = datePrefix + '98';
             let suffix = 98;
-            while (get(`SELECT 1 FROM session WHERE session_id = ?`, [newSessionId])) {
+            while (await get(`SELECT 1 FROM session WHERE session_id = ?`, [newSessionId])) {
                 suffix--;
                 newSessionId = datePrefix + String(suffix).padStart(2, '0');
             }
 
             console.log(`[Manager] Fixing collision for ${c.room_id}: ${c.session_id} -> ${newSessionId}`);
 
-            run(`INSERT INTO session (session_id, room_id, created_at, snapshot_json) VALUES (?, ?, ?, ?)`, [
+            await run(`INSERT INTO session (session_id, room_id, created_at, snapshot_json) VALUES (?, ?, ?, ?)`, [
                 newSessionId,
                 c.room_id,
                 c.first_event,
@@ -437,7 +561,7 @@ class Manager {
                 })
             ]);
 
-            run(`UPDATE event SET session_id = ? WHERE session_id = ? AND room_id = ?`,
+            await run(`UPDATE event SET session_id = ? WHERE session_id = ? AND room_id = ?`,
                 [newSessionId, c.session_id, c.room_id]);
 
             collisionsFixed++;
@@ -446,7 +570,7 @@ class Manager {
 
         // Fix Missing
         for (const ms of missingSessions) {
-            run(`INSERT INTO session (session_id, room_id, created_at, snapshot_json) VALUES (?, ?, ?, ?)`, [
+            await run(`INSERT INTO session (session_id, room_id, created_at, snapshot_json) VALUES (?, ?, ?, ?)`, [
                 ms.session_id,
                 ms.room_id,
                 ms.first_event,
@@ -466,26 +590,34 @@ class Manager {
     // Get events for a specific session
 
     // Merge sessions that are close together (same day, small gap)
+    // OPTIMIZED: Uses LEFT JOIN instead of N+1 subqueries
     async mergeContinuitySessions(gapMinutes = 10) {
         await this.ensureDb();
-        const rooms = query('SELECT DISTINCT room_id FROM session');
-        let mergedCount = 0;
         const gapMs = gapMinutes * 60 * 1000;
 
         console.log(`[Manager] Checking for sessions to merge (Gap < ${gapMinutes}m)...`);
 
-        for (const room of rooms) {
-            // Get sessions ordered by time
-            // We join with event boundaries to know actual start/end
-            const sessions = query(`
-                SELECT session_id, created_at,
-                       (SELECT MIN(timestamp) FROM event WHERE session_id = session.session_id) as start_time,
-                       (SELECT MAX(timestamp) FROM event WHERE session_id = session.session_id) as end_time
-                FROM session 
-                WHERE room_id = ?
-                ORDER BY created_at ASC
-            `, [room.room_id]);
+        // Pre-compute ALL session boundaries in one query (MUCH faster than N+1)
+        const allSessions = await query(`
+            SELECT s.session_id, s.room_id, s.created_at, 
+                   MIN(e.timestamp) as start_time, 
+                   MAX(e.timestamp) as end_time
+            FROM session s
+            LEFT JOIN event e ON s.session_id = e.session_id
+            GROUP BY s.session_id, s.room_id, s.created_at
+            ORDER BY s.room_id, s.created_at ASC
+        `);
 
+        // Group by room
+        const byRoom = {};
+        for (const s of allSessions) {
+            const roomId = s.room_id;
+            if (!byRoom[roomId]) byRoom[roomId] = [];
+            byRoom[roomId].push(s);
+        }
+
+        let mergedCount = 0;
+        for (const sessions of Object.values(byRoom)) {
             mergedCount += await this._mergeSessionList(sessions, gapMs);
         }
 
@@ -494,27 +626,36 @@ class Manager {
     }
 
     // New optimized method for hourly job: Only check recent sessions
+    // OPTIMIZED: Uses LEFT JOIN instead of N+1 subqueries
     async consolidateRecentSessions(hours = 48, gapMinutes = 60) {
         await this.ensureDb();
         const timeLimit = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+        const gapMs = gapMinutes * 60 * 1000;
 
         console.log(`[Manager] Consolidating sessions from last ${hours}h with gap < ${gapMinutes}m...`);
 
-        // Only check rooms active recently
-        const recentRooms = query(`SELECT DISTINCT room_id FROM session WHERE created_at > ?`, [timeLimit]);
+        // Pre-compute ALL recent session boundaries in one query
+        const recentSessions = await query(`
+            SELECT s.session_id, s.room_id, s.created_at, 
+                   MIN(e.timestamp) as start_time, 
+                   MAX(e.timestamp) as end_time
+            FROM session s
+            LEFT JOIN event e ON s.session_id = e.session_id
+            WHERE s.created_at > ?
+            GROUP BY s.session_id, s.room_id, s.created_at
+            ORDER BY s.room_id, s.created_at ASC
+        `, [timeLimit]);
+
+        // Group by room
+        const byRoom = {};
+        for (const s of recentSessions) {
+            const roomId = s.room_id;
+            if (!byRoom[roomId]) byRoom[roomId] = [];
+            byRoom[roomId].push(s);
+        }
+
         let totalMerged = 0;
-        const gapMs = gapMinutes * 60 * 1000;
-
-        for (const room of recentRooms) {
-            const sessions = query(`
-                SELECT session_id, created_at,
-                       (SELECT MIN(timestamp) FROM event WHERE session_id = session.session_id) as start_time,
-                       (SELECT MAX(timestamp) FROM event WHERE session_id = session.session_id) as end_time
-                FROM session 
-                WHERE room_id = ? AND created_at > ?
-                ORDER BY created_at ASC
-            `, [room.room_id, timeLimit]);
-
+        for (const sessions of Object.values(byRoom)) {
             totalMerged += await this._mergeSessionList(sessions, gapMs);
         }
 
@@ -532,36 +673,47 @@ class Manager {
         for (let i = 1; i < sessions.length; i++) {
             const curr = sessions[i];
 
+            // Handle both camelCase (from db.js) and snake_case field names
+            const prevEndTime = prev.endTime || prev.end_time;
+            const currStartTime = curr.startTime || curr.start_time;
+            const prevStartTime = prev.startTime || prev.start_time;
+            const currEndTime = curr.endTime || curr.end_time;
+            const prevSessionId = prev.sessionId || prev.session_id;
+            const currSessionId = curr.sessionId || curr.session_id;
+
             // Skip invalid data
-            if (!prev.end_time || !curr.start_time) {
+            if (!prevEndTime || !currStartTime) {
                 prev = curr;
                 continue;
             }
 
             // Parse times
-            const prevEnd = new Date(prev.end_time).getTime();
-            const currStart = new Date(curr.start_time).getTime();
+            const prevEnd = new Date(prevEndTime).getTime();
+            const currStart = new Date(currStartTime).getTime();
             const gap = currStart - prevEnd; // can be negative if overlaps
 
-            // Compare Dates (YYYY-MM-DD)
-            const prevDay = prev.start_time.slice(0, 10);
-            const currDay = curr.start_time.slice(0, 10);
+            // Compare Dates (YYYY-MM-DD) - handle both Date objects (PostgreSQL) and strings (SQLite)
+            const prevStartStr = prevStartTime instanceof Date ? prevStartTime.toISOString() : String(prevStartTime);
+            const currStartStr = currStartTime instanceof Date ? currStartTime.toISOString() : String(currStartTime);
+            const prevDay = prevStartStr.slice(0, 10);
+            const currDay = currStartStr.slice(0, 10);
 
             // Logic: Same Day AND (Small Gap OR Overlap)
-            if (prevDay === currDay && gap < gapMs) {
+            if (prevDay === currDay && gap < gapMs && gap >= 0) {
                 // Start Merge
-                // console.log(`[Manager] Merging ${curr.session_id} into ${prev.session_id} (Gap: ${(gap / 1000 / 60).toFixed(1)}m)`);
+                console.log(`[Manager] Merging ${currSessionId} into ${prevSessionId} (Gap: ${(gap / 1000 / 60).toFixed(1)}m)`);
 
                 // 1. Move events to prev session
-                run('UPDATE event SET session_id = ? WHERE session_id = ?', [prev.session_id, curr.session_id]);
+                await run('UPDATE event SET session_id = ? WHERE session_id = ?', [prevSessionId, currSessionId]);
 
                 // 2. Delete current session record
-                run('DELETE FROM session WHERE session_id = ?', [curr.session_id]);
+                await run('DELETE FROM session WHERE session_id = ?', [currSessionId]);
 
                 // 3. Update 'prev' end_time for next iteration
-                const currEnd = new Date(curr.end_time).getTime();
+                const currEnd = new Date(currEndTime).getTime();
                 if (currEnd > prevEnd) {
-                    prev.end_time = curr.end_time;
+                    prev.end_time = currEndTime;
+                    prev.endTime = currEndTime;
                 }
                 mergedCount++;
             } else {
@@ -577,7 +729,7 @@ class Manager {
         await this.ensureDb();
         console.log('[Manager] Checking for orphaned live events...');
 
-        const rooms = query('SELECT room_id FROM room WHERE is_monitor_enabled = 1');
+        const rooms = await query('SELECT room_id FROM room WHERE is_monitor_enabled = 1');
         let totalArchived = 0;
 
         for (const room of rooms) {
@@ -585,7 +737,7 @@ class Manager {
             const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
 
             // Just count them first to see if we need to act
-            const staleCountRow = get(`
+            const staleCountRow = await get(`
                 SELECT COUNT(*) as c FROM event 
                 WHERE room_id = ? AND session_id IS NULL AND timestamp < ?
             `, [room.room_id, twoHoursAgo]);
@@ -604,14 +756,14 @@ class Manager {
 
     async getSessionEvents(sessionId) {
         await this.ensureDb();
-        return query('SELECT type, timestamp, data_json FROM event WHERE session_id = ? ORDER BY timestamp ASC',
+        return await query('SELECT type, timestamp, data_json FROM event WHERE session_id = ? ORDER BY timestamp ASC',
             [sessionId]);
     }
 
     // Time Statistics (30-min intervals)
     async getTimeStats(roomId) {
         await this.ensureDb();
-        const events = query(
+        const events = await query(
             'SELECT type, timestamp, data_json FROM event WHERE room_id = ? AND type IN ("gift", "chat", "roomUser") ORDER BY timestamp ASC',
             [roomId]
         );
@@ -672,40 +824,126 @@ class Manager {
     // User Analysis
     async updateUserLanguages(userId, common, mastered) {
         await this.ensureDb();
-        run('UPDATE user SET common_language = ?, mastered_languages = ? WHERE user_id = ?',
+        await run('UPDATE "user" SET common_language = ?, mastered_languages = ? WHERE user_id = ?',
             [common, mastered, userId]);
     }
 
-    async getTopGifters(page = 1, pageSize = 50, langFilter = '') {
+    async updateAIAnalysis(userId, analysis) {
+        await this.ensureDb();
+        // Use upsert pattern - insert if not exists, update if exists
+        await run(`
+            INSERT INTO "user" (user_id, ai_analysis, updated_at) 
+            VALUES (?, ?, NOW())
+            ON CONFLICT(user_id) DO UPDATE SET 
+                ai_analysis = EXCLUDED.ai_analysis,
+                updated_at = NOW()
+        `, [userId, analysis]);
+    }
+
+    async getTopGifters(page = 1, pageSize = 50, filters = {}) {
         await this.ensureDb();
 
+        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', giftPreference = '' } = filters;
         const offset = (page - 1) * pageSize;
 
-        // Step 1: Get top gifters with basic aggregation (fast query)
-        let langCondition = '';
+        // Step 1: Build filter conditions
+        let conditions = ["e.type = 'gift'"];
         let params = [];
 
+        // Language filter from old lang parameter (for backward compatibility)
         if (langFilter) {
-            langCondition = `AND (u.mastered_languages LIKE ? OR u.common_language LIKE ?)`;
-            params.push(`%${langFilter}%`, `%${langFilter}%`);
+            conditions.push(`(u.common_language = ? OR u.mastered_languages = ? OR u.mastered_languages LIKE ?)`);
+            params.push(langFilter, langFilter, `%${langFilter}%`);
         }
 
-        // Get total count
-        const countResult = get(`
+        // New language filter
+        if (languageFilter) {
+            conditions.push(`(u.common_language = ? OR u.mastered_languages = ? OR u.mastered_languages LIKE ?)`);
+            params.push(languageFilter, languageFilter, `%${languageFilter}%`);
+        }
+
+        // Time range filter: if both startHour and endHour are set, filter by range
+        if (activeHour !== null && activeHour !== '') {
+            if (activeHourEnd !== null && activeHourEnd !== '') {
+                // Range filter
+                const startH = parseInt(activeHour);
+                const endH = parseInt(activeHourEnd);
+                if (startH <= endH) {
+                    conditions.push(`EXTRACT(HOUR FROM e.timestamp) BETWEEN ? AND ?`);
+                    params.push(startH, endH);
+                } else {
+                    // Wrap around midnight (e.g., 22:00 to 02:00)
+                    conditions.push(`(EXTRACT(HOUR FROM e.timestamp) >= ? OR EXTRACT(HOUR FROM e.timestamp) <= ?)`);
+                    params.push(startH, endH);
+                }
+            } else {
+                // Single hour filter
+                conditions.push(`EXTRACT(HOUR FROM e.timestamp) = ?`);
+                params.push(parseInt(activeHour));
+            }
+        }
+
+        // Search filter for nickname or uniqueId
+        if (search) {
+            conditions.push(`(u.nickname LIKE ? OR u.unique_id LIKE ?)`);
+            params.push(`%${search}%`, `%${search}%`);
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+        // Build HAVING clause with gift preference filter (Rose vs TikTok)
+        let havingConditions = [
+            `SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) > 0`,
+            `COUNT(DISTINCT e.room_id) >= ?`
+        ];
+
+        // Gift preference filter: compare Rose vs TikTok gift totals
+        // true_love = Rose > TikTok, knife = TikTok > Rose
+        if (giftPreference === 'true_love') {
+            havingConditions.push(`
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose' 
+                    THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) >
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok' 
+                    THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0)
+            `);
+        } else if (giftPreference === 'knife') {
+            havingConditions.push(`
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok' 
+                    THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) >
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose' 
+                    THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0)
+            `);
+        }
+
+        const havingClause = `HAVING ${havingConditions.join(' AND ')}`;
+
+        // Get total count with filters
+        const countSql = `
             SELECT COUNT(*) as total FROM (
                 SELECT e.user_id
                 FROM event e
-                JOIN user u ON e.user_id = u.user_id
-                WHERE e.type = 'gift' ${langCondition}
+                JOIN "user" u ON e.user_id = u.user_id
+                ${whereClause}
                 GROUP BY e.user_id
-                HAVING SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) > 0
-            )
-        `, params);
+                ${havingClause}
+            ) sub
+        `;
+        const countResult = await get(countSql, [...params, parseInt(minRooms)]);
         const totalCount = countResult ? countResult.total : 0;
 
-        // Main query - simplified, no nested correlated subqueries
-        const mainParams = [...params, pageSize, offset];
-        const rows = query(`
+        // Build ORDER BY based on giftPreference
+        let orderByClause = 'ORDER BY totalValue DESC';
+        if (giftPreference === 'true_love') {
+            // Sort by Rose - TikTok difference (descending)
+            orderByClause = 'ORDER BY (rose_value - tiktok_value) DESC';
+        } else if (giftPreference === 'knife') {
+            // Sort by TikTok - Rose difference (descending)
+            orderByClause = 'ORDER BY (tiktok_value - rose_value) DESC';
+        }
+
+        // Main query
+        const mainParams = [...params, parseInt(minRooms), pageSize, offset];
+        const rows = await query(`
             SELECT 
                 u.user_id as userId,
                 u.unique_id as uniqueId,
@@ -714,13 +952,17 @@ class Manager {
                 u.mastered_languages as masteredLanguages,
                 SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as totalValue,
                 COUNT(DISTINCT e.room_id) as roomCount,
-                MAX(e.timestamp) as lastActive
+                MAX(e.timestamp) as lastActive,
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose' 
+                    THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) as rose_value,
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok' 
+                    THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) as tiktok_value
             FROM event e
-            JOIN user u ON e.user_id = u.user_id
-            WHERE e.type = 'gift' ${langCondition}
-            GROUP BY e.user_id
-            HAVING totalValue > 0
-            ORDER BY totalValue DESC
+            JOIN "user" u ON e.user_id = u.user_id
+            ${whereClause}
+            GROUP BY u.user_id, u.unique_id, u.nickname, u.common_language, u.mastered_languages
+            ${havingClause}
+            ${orderByClause}
             LIMIT ? OFFSET ?
         `, mainParams);
 
@@ -733,36 +975,107 @@ class Manager {
         const placeholders = userIds.map(() => '?').join(',');
 
         // Batch: chat counts
-        const chatStats = query(`
+        const chatStats = await query(`
             SELECT user_id, COUNT(*) as chatCount
             FROM event
             WHERE type = 'chat' AND user_id IN (${placeholders})
             GROUP BY user_id
         `, userIds);
-        const chatMap = Object.fromEntries(chatStats.map(r => [r.user_id, r.chatCount]));
+        const chatMap = Object.fromEntries(chatStats.map(r => [r.userId, r.chatCount]));
 
-        // Batch: top room per user (most gifts sent to)
-        const topRoomStats = query(`
-            SELECT user_id, room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as roomValue
-            FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders})
-            GROUP BY user_id, room_id
-            ORDER BY user_id, roomValue DESC
+        // Batch: top room per user (with room name)
+        const topRoomStats = await query(`
+            SELECT e.user_id, e.room_id, r.name as room_name, 
+                   SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as roomValue
+            FROM event e
+            LEFT JOIN room r ON e.room_id = r.room_id
+            WHERE e.type = 'gift' AND e.user_id IN (${placeholders})
+            GROUP BY e.user_id, e.room_id, r.name
+            ORDER BY e.user_id, roomValue DESC
         `, userIds);
 
-        // Extract top room per user
         const topRoomMap = {};
         for (const stat of topRoomStats) {
-            if (!topRoomMap[stat.user_id]) {
-                topRoomMap[stat.user_id] = stat.room_id;
+            if (!topRoomMap[stat.userId]) {
+                topRoomMap[stat.userId] = {
+                    roomId: stat.roomId,
+                    roomName: stat.roomName || stat.roomId
+                };
+            }
+        }
+
+        // Batch: top 6 gifts per user (with gift icon from data_json)
+        const topGiftStats = await query(`
+            SELECT 
+                user_id,
+                (data_json::json->>'giftName') as gift_name,
+                (data_json::json->>'giftPictureUrl') as gift_icon,
+                MAX(COALESCE(diamond_count, 0)) as unit_price,
+                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                SUM(COALESCE(repeat_count, 1)) as gift_count
+            FROM event
+            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL
+            GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
+            ORDER BY user_id, total_value DESC
+        `, userIds);
+
+        // Group by user, keep top 6 per user
+        const topGiftsMap = {};
+        for (const g of topGiftStats) {
+            if (!topGiftsMap[g.userId]) {
+                topGiftsMap[g.userId] = [];
+            }
+            if (topGiftsMap[g.userId].length < 6) {
+                topGiftsMap[g.userId].push({
+                    name: g.giftName || '礼物',
+                    icon: g.giftIcon || '',
+                    unitPrice: parseInt(g.unitPrice) || 0,
+                    totalValue: parseInt(g.totalValue) || 0,
+                    count: parseInt(g.giftCount) || 0
+                });
+            }
+        }
+
+        // Separate query for Rose and TikTok gifts (not in TOP 6 because low value)
+        const roseTikTokStats = await query(`
+            SELECT user_id,
+                LOWER(data_json::json->>'giftName') as gift_type,
+                (data_json::json->>'giftPictureUrl') as gift_icon,
+                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                SUM(COALESCE(repeat_count, 1)) as gift_count
+            FROM event
+            WHERE type = 'gift' 
+              AND user_id IN (${placeholders}) 
+              AND LOWER(data_json::json->>'giftName') IN ('rose', 'tiktok')
+            GROUP BY user_id, LOWER(data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
+        `, userIds);
+
+        // Build maps for Rose and TikTok
+        const roseMap = {};
+        const tiktokMap = {};
+        for (const g of roseTikTokStats) {
+            const stats = {
+                icon: g.giftIcon || '',
+                totalValue: parseInt(g.totalValue) || 0,
+                count: parseInt(g.giftCount) || 0
+            };
+            if (g.giftType === 'rose') {
+                roseMap[g.userId] = stats;
+            } else if (g.giftType === 'tiktok') {
+                tiktokMap[g.userId] = stats;
             }
         }
 
         // Enrich rows
         for (const user of rows) {
-            user.chatCount = chatMap[user.userId] || 0;
-            user.topRoom = topRoomMap[user.userId] || null;
-            user.isTopRoomModerator = false; // Skip moderator check for performance
+            user.chatCount = parseInt(chatMap[user.userId]) || 0;
+            const topRoomInfo = topRoomMap[user.userId] || { roomId: null, roomName: null };
+            user.topRoom = topRoomInfo.roomId;
+            user.topRoomName = topRoomInfo.roomName;
+            user.topGifts = topGiftsMap[user.userId] || [];
+            user.roseStats = roseMap[user.userId] || null;
+            user.tiktokStats = tiktokMap[user.userId] || null;
+            user.isTopRoomModerator = false;
             user.isAdmin = 0;
             user.isSuperAdmin = 0;
             user.isModerator = 0;
@@ -775,7 +1088,7 @@ class Manager {
 
     async getUserChatHistory(userId, limit = 50) {
         await this.ensureDb();
-        return query(`
+        return await query(`
             SELECT comment, timestamp
             FROM event
             WHERE type = 'chat' AND user_id = ?
@@ -787,20 +1100,20 @@ class Manager {
     // Config Management
     async getSetting(key, defaultValue = null) {
         await this.ensureDb();
-        const row = get('SELECT value FROM settings WHERE key = ?', [key]);
+        const row = await get('SELECT value FROM settings WHERE key = ?', [key]);
         return row ? row.value : defaultValue;
     }
 
     async saveSetting(key, value) {
         await this.ensureDb();
-        run(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
+        await run(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
             [key, value]);
     }
 
     async getAllSettings() {
         await this.ensureDb();
-        const rows = query('SELECT key, value FROM settings');
+        const rows = await query('SELECT key, value FROM settings');
         const settings = {};
         for (const r of rows) settings[r.key] = r.value;
         return settings;
@@ -809,9 +1122,9 @@ class Manager {
     // Room Management
     async deleteRoom(roomId) {
         await this.ensureDb();
-        run('DELETE FROM event WHERE room_id = ?', [roomId]);
-        run('DELETE FROM session WHERE room_id = ?', [roomId]);
-        run('DELETE FROM room WHERE room_id = ?', [roomId]);
+        await run('DELETE FROM event WHERE room_id = ?', [roomId]);
+        await run('DELETE FROM session WHERE room_id = ?', [roomId]);
+        await run('DELETE FROM room WHERE room_id = ?', [roomId]);
     }
 
     async getGlobalStats() {
@@ -821,20 +1134,25 @@ class Manager {
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
             .toISOString().replace('T', ' ').slice(0, 19);
 
-        // 24-Hour Distribution - use SQL aggregation with indexed columns
-        // substr(timestamp, 12, 2) extracts hour from 'YYYY-MM-DD HH:mm:ss' format
-        const hourChatRows = query(`
-            SELECT substr(timestamp, 12, 2) as hour, COUNT(*) as cnt
-            FROM event 
-            WHERE type = 'chat' AND timestamp >= ?
+        // Chinese language filter: only include users with Chinese as primary or secondary language
+        const chineseFilter = `(u.common_language = '中文' OR u.mastered_languages = '中文')`;
+
+        // 24-Hour Distribution - use PostgreSQL EXTRACT for hour
+        // Filter by Chinese-speaking users only
+        const hourChatRows = await query(`
+            SELECT to_char(e.timestamp, 'HH24') as hour, COUNT(*) as cnt
+            FROM event e
+            LEFT JOIN "user" u ON e.user_id = u.user_id
+            WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter}
             GROUP BY hour
         `, [thirtyDaysAgo]);
 
-        const hourGiftRows = query(`
-            SELECT substr(timestamp, 12, 2) as hour, 
-                   SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val
-            FROM event 
-            WHERE type = 'gift' AND timestamp >= ?
+        const hourGiftRows = await query(`
+            SELECT to_char(e.timestamp, 'HH24') as hour, 
+                   SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
+            FROM event e
+            LEFT JOIN "user" u ON e.user_id = u.user_id
+            WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter}
             GROUP BY hour
         `, [thirtyDaysAgo]);
 
@@ -842,25 +1160,28 @@ class Manager {
         for (let i = 0; i < 24; i++) hourStats[String(i).padStart(2, '0')] = { gift: 0, chat: 0 };
 
         for (const r of hourChatRows) {
-            if (hourStats[r.hour]) hourStats[r.hour].chat = r.cnt;
+            if (hourStats[r.hour]) hourStats[r.hour].chat = parseInt(r.cnt) || 0;
         }
         for (const r of hourGiftRows) {
-            if (hourStats[r.hour]) hourStats[r.hour].gift = r.val || 0;
+            if (hourStats[r.hour]) hourStats[r.hour].gift = parseInt(r.val) || 0;
         }
 
-        // Weekly Distribution - use SQL aggregation
-        const dayChatRows = query(`
-            SELECT strftime('%w', substr(timestamp, 1, 10)) as day, COUNT(*) as cnt
-            FROM event 
-            WHERE type = 'chat' AND timestamp >= ?
+        // Weekly Distribution - use PostgreSQL EXTRACT(DOW) for day of week (0=Sunday)
+        // Filter by Chinese-speaking users only
+        const dayChatRows = await query(`
+            SELECT EXTRACT(DOW FROM e.timestamp)::int as day, COUNT(*) as cnt
+            FROM event e
+            LEFT JOIN "user" u ON e.user_id = u.user_id
+            WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter}
             GROUP BY day
         `, [thirtyDaysAgo]);
 
-        const dayGiftRows = query(`
-            SELECT strftime('%w', substr(timestamp, 1, 10)) as day,
-                   SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val
-            FROM event 
-            WHERE type = 'gift' AND timestamp >= ?
+        const dayGiftRows = await query(`
+            SELECT EXTRACT(DOW FROM e.timestamp)::int as day,
+                   SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
+            FROM event e
+            LEFT JOIN "user" u ON e.user_id = u.user_id
+            WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter}
             GROUP BY day
         `, [thirtyDaysAgo]);
 
@@ -869,11 +1190,11 @@ class Manager {
 
         for (const r of dayChatRows) {
             const d = parseInt(r.day);
-            dayStats[d].chat = r.cnt;
+            dayStats[d].chat = parseInt(r.cnt) || 0;
         }
         for (const r of dayGiftRows) {
             const d = parseInt(r.day);
-            dayStats[d].gift = r.val || 0;
+            dayStats[d].gift = parseInt(r.val) || 0;
         }
 
         return { hourStats, dayStats };
@@ -881,9 +1202,26 @@ class Manager {
 
     async getRoomStats(liveRoomIds = [], options = {}) {
         await this.ensureDb();
-        const { page = 1, limit = 50, search = '' } = options;
+        const { page = 1, limit = 50, search = '', sort = 'updated_at' } = options;
 
-        let roomSql = 'SELECT * FROM room';
+        let roomSql = `
+            SELECT r.*, 
+                   COALESCE(g.val, 0) as current_gift_value,
+                   COALESCE(ag.val, 0) as all_time_gift_value
+            FROM room r
+            LEFT JOIN (
+                SELECT room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val
+                FROM event
+                WHERE type = 'gift' AND session_id IS NULL
+                GROUP BY room_id
+            ) g ON r.room_id = g.room_id
+            LEFT JOIN (
+                SELECT room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val
+                FROM event
+                WHERE type = 'gift'
+                GROUP BY room_id
+            ) ag ON r.room_id = ag.room_id
+        `;
         let countSql = 'SELECT COUNT(*) as total FROM room';
         const params = [];
         const countParams = [];
@@ -891,36 +1229,65 @@ class Manager {
         // 1. Apply Search Filter
         if (search && search.trim()) {
             const likePattern = `%${search.trim()}%`;
-            roomSql += ' WHERE (room_id LIKE ? OR name LIKE ?)';
+            roomSql += ' WHERE (r.room_id LIKE ? OR r.name LIKE ?)';
             countSql += ' WHERE (room_id LIKE ? OR name LIKE ?)';
             params.push(likePattern, likePattern);
             countParams.push(likePattern, likePattern);
         }
 
-        // 2. Apply Ordering (Live first, Enabled second, Disabled last, then by Updated)
-        // Priority: Live+Enabled=0, Live+Disabled=1, NotLive+Enabled=2, NotLive+Disabled=3
-        if (liveRoomIds.length > 0) {
-            const placeholders = liveRoomIds.map(() => '?').join(',');
-            roomSql += ` ORDER BY 
-                CASE WHEN room_id IN (${placeholders}) THEN 0 ELSE 2 END + 
-                CASE WHEN is_monitor_enabled = 0 THEN 1 ELSE 0 END,
-                updated_at DESC`;
-            params.push(...liveRoomIds);
+        // 2. Apply Ordering
+        let orderBy = '';
+        if (sort === 'gift_desc') {
+            // Sort by current session gift value
+            orderBy = 'current_gift_value DESC, r.updated_at DESC';
+        } else if (sort === 'gift_asc') {
+            orderBy = 'current_gift_value ASC, r.updated_at DESC';
+        } else if (sort === 'total_gift_desc') {
+            // Sort by all-time gift value
+            orderBy = 'all_time_gift_value DESC, r.updated_at DESC';
+        } else if (sort === 'total_gift_asc') {
+            orderBy = 'all_time_gift_value ASC, r.updated_at DESC';
         } else {
-            // No live rooms - sort by enabled status, then by updated_at
-            roomSql += ' ORDER BY CASE WHEN is_monitor_enabled = 0 THEN 1 ELSE 0 END, updated_at DESC';
+            // Default: Live first, then updated_at
+            if (liveRoomIds.length > 0) {
+                const placeholders = liveRoomIds.map(() => '?').join(',');
+                orderBy = `
+                    CASE WHEN r.room_id IN (${placeholders}) THEN 0 ELSE 2 END + 
+                    CASE WHEN r.is_monitor_enabled = 0 THEN 1 ELSE 0 END,
+                    r.updated_at DESC`;
+                params.push(...liveRoomIds);
+            } else {
+                orderBy = 'CASE WHEN r.is_monitor_enabled = 0 THEN 1 ELSE 0 END, r.updated_at DESC';
+            }
         }
 
-        // 3. Get total count (for pagination)
-        const countResult = get(countSql, countParams);
+        roomSql += ` ORDER BY ${orderBy}`;
+
+        // 3. Get total count
+        const countResult = await get(countSql, countParams);
         const total = countResult?.total || 0;
 
-        // 4. Apply Pagination
-        const offset = (page - 1) * limit;
-        roomSql += ' LIMIT ? OFFSET ?';
-        params.push(limit, offset);
+        // Check if this is a calculated metric sort that requires in-memory sorting
+        const calculatedMetricSorts = [
+            'gift_eff_desc', 'gift_eff_asc',
+            'interact_eff_desc', 'interact_eff_asc',
+            'account_quality_desc', 'account_quality_asc',
+            'top10_ratio_desc', 'top10_ratio_asc',
+            'top30_ratio_desc', 'top30_ratio_asc',
+            'top1_ratio_desc', 'top1_ratio_asc',
+            'top3_ratio_desc', 'top3_ratio_asc',
+            'daily_avg_desc', 'daily_avg_asc'
+        ];
+        const isCalculatedSort = calculatedMetricSorts.includes(sort);
 
-        const rooms = query(roomSql, params);
+        // 4. Apply Pagination (skip for calculated sorts - we'll paginate after sorting)
+        const offset = (page - 1) * limit;
+        if (!isCalculatedSort) {
+            roomSql += ' LIMIT ? OFFSET ?';
+            params.push(limit, offset);
+        }
+
+        const rooms = await query(roomSql, params);
 
         if (rooms.length === 0) {
             return {
@@ -929,48 +1296,75 @@ class Manager {
             };
         }
 
-        // 5. Batch fetch stats for these rooms
-        const roomIds = rooms.map(r => r.room_id);
+        // 5. Batch fetch stats for these rooms (use roomId after camelCase conversion)
+        const roomIds = rooms.map(r => r.roomId);
         const placeholders = roomIds.map(() => '?').join(',');
 
-        // Visit counts
-        const visitStats = query(`
+        // Visit counts (current session)
+        const visitStats = await query(`
             SELECT room_id, COUNT(*) as c 
             FROM event 
             WHERE room_id IN (${placeholders}) AND type = 'member' AND session_id IS NULL
             GROUP BY room_id
         `, roomIds);
-        const visitMap = Object.fromEntries(visitStats.map(r => [r.room_id, r.c]));
+        const visitMap = Object.fromEntries(visitStats.map(r => [r.roomId, r.c]));
 
-        // Comment counts
-        const commentStats = query(`
+        // All-time visit counts (for efficiency calculation)
+        const allTimeVisitStats = await query(`
+            SELECT room_id, COUNT(*) as c 
+            FROM event 
+            WHERE room_id IN (${placeholders}) AND type = 'member'
+            GROUP BY room_id
+        `, roomIds);
+        const allTimeVisitMap = Object.fromEntries(allTimeVisitStats.map(r => [r.roomId, r.c]));
+
+        // Comment counts (current session)
+        const commentStats = await query(`
             SELECT room_id, COUNT(*) as c 
             FROM event 
             WHERE room_id IN (${placeholders}) AND type = 'chat' AND session_id IS NULL
             GROUP BY room_id
         `, roomIds);
-        const commentMap = Object.fromEntries(commentStats.map(r => [r.room_id, r.c]));
+        const commentMap = Object.fromEntries(commentStats.map(r => [r.roomId, r.c]));
 
-        // Gift values
-        const giftStats = query(`
+        // All-time comment counts (for efficiency calculation)
+        const allTimeCommentStats = await query(`
+            SELECT room_id, COUNT(*) as c 
+            FROM event 
+            WHERE room_id IN (${placeholders}) AND type = 'chat'
+            GROUP BY room_id
+        `, roomIds);
+        const allTimeCommentMap = Object.fromEntries(allTimeCommentStats.map(r => [r.roomId, r.c]));
+
+        // Current session gift values
+        const giftStats = await query(`
             SELECT room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val 
             FROM event 
             WHERE room_id IN (${placeholders}) AND type = 'gift' AND session_id IS NULL
             GROUP BY room_id
         `, roomIds);
-        const giftMap = Object.fromEntries(giftStats.map(r => [r.room_id, r.val || 0]));
+        const giftMap = Object.fromEntries(giftStats.map(r => [r.roomId, r.val || 0]));
+
+        // All-time gift values (including archived sessions)
+        const allTimeGiftStats = await query(`
+            SELECT room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val 
+            FROM event 
+            WHERE room_id IN (${placeholders}) AND type = 'gift'
+            GROUP BY room_id
+        `, roomIds);
+        const allTimeGiftMap = Object.fromEntries(allTimeGiftStats.map(r => [r.roomId, r.val || 0]));
 
         // Max like counts
-        const likeStats = query(`
+        const likeStats = await query(`
             SELECT room_id, MAX(COALESCE(total_like_count, 0)) as m 
             FROM event 
             WHERE room_id IN (${placeholders}) AND type = 'like' AND session_id IS NULL
             GROUP BY room_id
         `, roomIds);
-        const likeMap = Object.fromEntries(likeStats.map(r => [r.room_id, r.m || 0]));
+        const likeMap = Object.fromEntries(likeStats.map(r => [r.roomId, r.m || 0]));
 
         // Last session times
-        const lastSessions = query(`
+        const lastSessions = await query(`
             SELECT s1.room_id, s1.created_at 
             FROM session s1
             INNER JOIN (
@@ -980,29 +1374,176 @@ class Manager {
                 GROUP BY room_id
             ) s2 ON s1.room_id = s2.room_id AND s1.created_at = s2.max_created
         `, roomIds);
-        const sessionMap = Object.fromEntries(lastSessions.map(r => [r.room_id, r.created_at]));
+        const sessionMap = Object.fromEntries(lastSessions.map(r => [r.roomId, r.createdAt]));
 
-        // 6. Build final stats objects
-        const stats = rooms.map(r => ({
-            ...r,
-            isLive: liveRoomIds.includes(r.room_id),
-            totalVisits: visitMap[r.room_id] || 0,
-            totalComments: commentMap[r.room_id] || 0,
-            totalGiftValue: giftMap[r.room_id] || 0,
-            totalLikes: likeMap[r.room_id] || 0,
-            lastSessionTime: sessionMap[r.room_id] || null
-        }));
+        // Current session duration (in seconds) - only unarchived events
+        const durationStats = await query(`
+            SELECT room_id, 
+                   EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) as duration_secs,
+                   MIN(timestamp) as start_time
+            FROM event 
+            WHERE room_id IN (${placeholders}) AND session_id IS NULL
+            GROUP BY room_id
+        `, roomIds);
+        const durationMap = Object.fromEntries(durationStats.map(r => [r.roomId, parseFloat(r.durationSecs) || 0]));
+        const startTimeMap = Object.fromEntries(durationStats.map(r => [r.roomId, r.startTime || null]));
 
-        // In-memory sort fallback (just in case, though SQL sort handles it)
-        // Actually SQL sort is sufficient, but this ensures consistency if IDs were missing in SQL params
-        stats.sort((a, b) => {
-            if (a.isLive && !b.isLive) return -1;
-            if (!a.isLive && b.isLive) return 1;
-            return 0;
+        // TOP1/TOP3/TOP10/TOP30 Gift Concentration - calculate per-room using window functions
+        // This calculates what % of total gifts come from top N gifters (based on ALL historical data)
+        const concentrationStats = await query(`
+            WITH user_gifts AS (
+                SELECT room_id, user_id,
+                       SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as user_total
+                FROM event 
+                WHERE room_id IN (${placeholders}) AND type = 'gift' AND user_id IS NOT NULL
+                GROUP BY room_id, user_id
+            ),
+            ranked_users AS (
+                SELECT room_id, user_id, user_total,
+                       ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY user_total DESC) as rank,
+                       SUM(user_total) OVER (PARTITION BY room_id) as room_total
+                FROM user_gifts
+            )
+            SELECT room_id,
+                   COALESCE(SUM(CASE WHEN rank <= 1 THEN user_total ELSE 0 END), 0) as top1_value,
+                   COALESCE(SUM(CASE WHEN rank <= 3 THEN user_total ELSE 0 END), 0) as top3_value,
+                   COALESCE(SUM(CASE WHEN rank <= 10 THEN user_total ELSE 0 END), 0) as top10_value,
+                   COALESCE(SUM(CASE WHEN rank <= 30 THEN user_total ELSE 0 END), 0) as top30_value,
+                   MAX(room_total) as total_value
+            FROM ranked_users
+            GROUP BY room_id
+        `, roomIds);
+        const concentrationMap = Object.fromEntries(concentrationStats.map(r => [r.roomId, {
+            top1: parseInt(r.top1Value) || 0,
+            top3: parseInt(r.top3Value) || 0,
+            top10: parseInt(r.top10Value) || 0,
+            top30: parseInt(r.top30Value) || 0,
+            total: parseInt(r.totalValue) || 0
+        }]));
+
+        // Valid Daily Gift Average: average gift value on days with >3 hours of broadcast
+        // Uses CTE to find valid broadcast days per room
+        // Note: includes ALL events (archived + live) to get complete picture
+        const validDailyStats = await query(`
+            WITH daily_stats AS (
+                SELECT 
+                    room_id,
+                    DATE(timestamp) as day,
+                    SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as gift_value,
+                    EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 as hours
+                FROM event 
+                WHERE room_id IN (${placeholders})
+                GROUP BY room_id, DATE(timestamp)
+                HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 3
+            )
+            SELECT room_id, 
+                   AVG(gift_value) as avg_gift,
+                   COUNT(*) as valid_days
+            FROM daily_stats
+            GROUP BY room_id
+        `, roomIds);
+        const validDailyMap = Object.fromEntries(validDailyStats.map(r => [r.roomId, {
+            avgGift: Math.round(parseFloat(r.avgGift)) || 0,
+            validDays: parseInt(r.validDays) || 0
+        }]));
+
+        // 6. Build final stats objects (use roomId after camelCase conversion)
+        // Note: currentGiftValue and allTimeGiftValue come from the SQL JOIN already
+        const stats = rooms.map(r => {
+            const visits = parseInt(visitMap[r.roomId]) || 0;
+            const comments = parseInt(commentMap[r.roomId]) || 0;
+            const allTimeVisits = parseInt(allTimeVisitMap[r.roomId]) || 0;
+            const allTimeComments = parseInt(allTimeCommentMap[r.roomId]) || 0;
+            const currentGift = parseInt(r.currentGiftValue) || 0;
+            const allTimeGift = parseInt(r.allTimeGiftValue) || 0;
+            const durationSecs = durationMap[r.roomId] || 0;
+            const durationMins = durationSecs / 60;
+
+            // Calculate efficiency metrics using ALL-TIME data (avoid division by zero)
+            const giftEfficiency = allTimeVisits > 0 ? (allTimeGift / allTimeVisits).toFixed(2) : 0;
+            const interactEfficiency = allTimeVisits > 0 ? (allTimeComments / allTimeVisits).toFixed(2) : 0;
+            // Account quality: visits per minute of total broadcast (higher = better traffic quality)
+            const accountQuality = durationMins > 0 ? (allTimeVisits / durationMins).toFixed(2) : 0;
+
+            // TOP1/TOP3/TOP10/TOP30 gift concentration ratios (% of total gifts from top N users)
+            const concentration = concentrationMap[r.roomId] || { top1: 0, top3: 0, top10: 0, top30: 0, total: 0 };
+            const top1Ratio = concentration.total > 0 ? Math.round((concentration.top1 / concentration.total) * 100) : 0;
+            const top3Ratio = concentration.total > 0 ? Math.round((concentration.top3 / concentration.total) * 100) : 0;
+            const top10Ratio = concentration.total > 0 ? Math.round((concentration.top10 / concentration.total) * 100) : 0;
+            const top30Ratio = concentration.total > 0 ? Math.round((concentration.top30 / concentration.total) * 100) : 0;
+
+            return {
+                ...r,
+                isLive: liveRoomIds.includes(r.roomId),
+                totalVisits: visits,
+                totalComments: comments,
+                totalGiftValue: currentGift,  // Current session gift value
+                allTimeGiftValue: allTimeGift,  // All time gift value
+                totalLikes: parseInt(likeMap[r.roomId]) || 0,
+                lastSessionTime: sessionMap[r.roomId] || null,
+                broadcastDuration: Math.round(durationSecs),  // Current session seconds
+                startTime: startTimeMap[r.roomId] || null,    // Current session start time
+                giftEfficiency: parseFloat(giftEfficiency),  // Gift value per visitor
+                interactEfficiency: parseFloat(interactEfficiency),  // Comments per visitor
+                accountQuality: parseFloat(accountQuality),  // Visits per minute
+                top1Ratio: top1Ratio,    // TOP1 gifter % of total
+                top3Ratio: top3Ratio,    // TOP3 gifters % of total
+                top10Ratio: top10Ratio,  // TOP10 gifters % of total
+                top30Ratio: top30Ratio,  // TOP30 gifters % of total
+                validDailyAvg: (validDailyMap[r.roomId]?.avgGift) || 0,    // Avg daily gift on valid days (>3h)
+                validDays: (validDailyMap[r.roomId]?.validDays) || 0       // Number of valid broadcast days
+            };
         });
 
+        // In-memory sort for calculated metrics and default mode
+        if (sort === 'default') {
+            stats.sort((a, b) => {
+                if (a.isLive && !b.isLive) return -1;
+                if (!a.isLive && b.isLive) return 1;
+                return 0;
+            });
+        } else if (sort === 'gift_eff_desc') {
+            stats.sort((a, b) => b.giftEfficiency - a.giftEfficiency);
+        } else if (sort === 'gift_eff_asc') {
+            stats.sort((a, b) => a.giftEfficiency - b.giftEfficiency);
+        } else if (sort === 'interact_eff_desc') {
+            stats.sort((a, b) => b.interactEfficiency - a.interactEfficiency);
+        } else if (sort === 'interact_eff_asc') {
+            stats.sort((a, b) => a.interactEfficiency - b.interactEfficiency);
+        } else if (sort === 'account_quality_desc') {
+            stats.sort((a, b) => b.accountQuality - a.accountQuality);
+        } else if (sort === 'account_quality_asc') {
+            stats.sort((a, b) => a.accountQuality - b.accountQuality);
+        } else if (sort === 'top10_ratio_desc') {
+            stats.sort((a, b) => b.top10Ratio - a.top10Ratio);
+        } else if (sort === 'top10_ratio_asc') {
+            stats.sort((a, b) => a.top10Ratio - b.top10Ratio);
+        } else if (sort === 'top30_ratio_desc') {
+            stats.sort((a, b) => b.top30Ratio - a.top30Ratio);
+        } else if (sort === 'top30_ratio_asc') {
+            stats.sort((a, b) => a.top30Ratio - b.top30Ratio);
+        } else if (sort === 'top1_ratio_desc') {
+            stats.sort((a, b) => b.top1Ratio - a.top1Ratio);
+        } else if (sort === 'top1_ratio_asc') {
+            stats.sort((a, b) => a.top1Ratio - b.top1Ratio);
+        } else if (sort === 'top3_ratio_desc') {
+            stats.sort((a, b) => b.top3Ratio - a.top3Ratio);
+        } else if (sort === 'top3_ratio_asc') {
+            stats.sort((a, b) => a.top3Ratio - b.top3Ratio);
+        } else if (sort === 'daily_avg_desc') {
+            stats.sort((a, b) => b.validDailyAvg - a.validDailyAvg);
+        } else if (sort === 'daily_avg_asc') {
+            stats.sort((a, b) => a.validDailyAvg - b.validDailyAvg);
+        }
+
+        // Apply pagination AFTER in-memory sort for calculated metrics
+        let paginatedStats = stats;
+        if (isCalculatedSort) {
+            paginatedStats = stats.slice(offset, offset + limit);
+        }
+
         return {
-            data: stats,
+            data: paginatedStats,
             pagination: {
                 page,
                 limit,
@@ -1015,102 +1556,80 @@ class Manager {
     async getUserAnalysis(userId) {
         await this.ensureDb();
 
-        // 1. Basic Stats
-        const giftStats = get(`
+        // 1. Basic Stats - use direct columns instead of JSON extraction to avoid Unicode errors
+        const giftStats = await get(`
             SELECT 
-                SUM(
-                    COALESCE(json_extract(data_json, '$.diamondCount'), 0) * 
-                    COALESCE(json_extract(data_json, '$.repeatCount'), 1)
-                ) as totalValue,
+                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as totalValue,
                 MIN(timestamp) as firstSeen,
                 MAX(timestamp) as lastSeen,
-                COUNT(DISTINCT substr(timestamp, 1, 10)) as activeDays
+                COUNT(DISTINCT timestamp::date) as activeDays
             FROM event 
-            WHERE type = 'gift' AND json_extract(data_json, '$.userId') = ?
+            WHERE type = 'gift' AND user_id = ?
         `, [userId]);
 
-        // 2. Top Rooms (Gift)
-        const giftRooms = query(`
-            SELECT e.room_id, r.name, SUM(
-                COALESCE(json_extract(e.data_json, '$.diamondCount'), 0) * 
-                COALESCE(json_extract(e.data_json, '$.repeatCount'), 1)
-            ) as val
+        // 2. Top Rooms (Gift) - use direct columns
+        const giftRooms = await query(`
+            SELECT e.room_id, MAX(r.name) as name, 
+                   SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
             FROM event e
             LEFT JOIN room r ON e.room_id = r.room_id
-            WHERE e.type = 'gift' AND json_extract(e.data_json, '$.userId') = ?
+            WHERE e.type = 'gift' AND e.user_id = ?
             GROUP BY e.room_id
             ORDER BY val DESC
             LIMIT 10
         `, [userId]);
 
-        // 3. Top Rooms (Visit - from member/chat/gift combined or just member)
-        // Since 'member' event is entry, let's use that for "visits"
-        const visitRooms = query(`
-             SELECT e.room_id, r.name, COUNT(*) as cnt
+        // 3. Top Rooms (Visit - from member events)
+        const visitRooms = await query(`
+             SELECT e.room_id, MAX(r.name) as name, COUNT(*) as cnt
              FROM event e
              LEFT JOIN room r ON e.room_id = r.room_id
-             WHERE e.type = 'member' AND json_extract(e.data_json, '$.userId') = ?
+             WHERE e.type = 'member' AND e.user_id = ?
              GROUP BY e.room_id
              ORDER BY cnt DESC
              LIMIT 10
         `, [userId]);
 
         // 4. Time Distribution (Hour of Day)
-        const hourStats = query(`
-            SELECT strftime('%H', timestamp) as hour, COUNT(*) as cnt
+        const hourStats = await query(`
+            SELECT to_char(timestamp, 'HH24') as hour, COUNT(*) as cnt
             FROM event
-            WHERE type = 'gift' AND json_extract(data_json, '$.userId') = ?
+            WHERE type = 'gift' AND user_id = ?
             GROUP BY hour
             ORDER BY hour
         `, [userId]);
 
         // 5. Day of Week (0 = Sunday, 6 = Saturday)
-        const dayStats = query(`
-            SELECT strftime('%w', timestamp) as day, COUNT(*) as cnt
+        const dayStats = await query(`
+            SELECT EXTRACT(DOW FROM timestamp)::int as day, COUNT(*) as cnt
             FROM event
-            WHERE type = 'gift' AND json_extract(data_json, '$.userId') = ?
+            WHERE type = 'gift' AND user_id = ?
             GROUP BY day
             ORDER BY day
         `, [userId]);
 
-        // 6. Role and Fan Badge Info (from latest event)
-        const roleInfo = get(`
-            SELECT 
-                MAX(json_extract(data_json, '$.isAdmin')) as isAdmin,
-                MAX(json_extract(data_json, '$.isSuperAdmin')) as isSuperAdmin,
-                MAX(json_extract(data_json, '$.isModerator')) as isModerator,
-                MAX(json_extract(data_json, '$.fanLevel')) as fanLevel,
-                (SELECT json_extract(data_json, '$.fanClubName') FROM event 
-                 WHERE json_extract(data_json, '$.userId') = ? 
-                 AND json_extract(data_json, '$.fanClubName') IS NOT NULL 
-                 AND json_extract(data_json, '$.fanClubName') != '' 
-                 ORDER BY timestamp DESC LIMIT 1) as fanClubName
-            FROM event
-            WHERE json_extract(data_json, '$.userId') = ?
-        `, [userId, userId]);
+        // 6. Role and Fan Badge Info - query user table which stores these values
+        const userInfo = await get(`SELECT * FROM "user" WHERE user_id = ?`, [userId]);
 
-        // 7. Rooms where user is moderator
-        const moderatorRooms = query(`
-            SELECT DISTINCT e.room_id, r.name
-            FROM event e
-            LEFT JOIN room r ON e.room_id = r.room_id
-            WHERE json_extract(e.data_json, '$.userId') = ?
-            AND json_extract(e.data_json, '$.isModerator') = 1
-        `, [userId]);
+        // 7. Rooms where user is moderator - check from user table or skip if performance issue
+        const moderatorRooms = [];
 
         return {
-            totalValue: giftStats?.totalValue || 0,
-            activeDays: giftStats?.activeDays || 1,
-            dailyAvg: (giftStats?.totalValue || 0) / (giftStats?.activeDays || 1),
+            totalValue: parseInt(giftStats?.totalValue) || 0,
+            activeDays: parseInt(giftStats?.activeDays) || 1,
+            dailyAvg: (parseInt(giftStats?.totalValue) || 0) / (parseInt(giftStats?.activeDays) || 1),
             giftRooms,
             visitRooms,
             hourStats,
             dayStats,
-            isAdmin: roleInfo?.isAdmin || false,
-            isSuperAdmin: roleInfo?.isSuperAdmin || false,
-            isModerator: roleInfo?.isModerator || false,
-            fanLevel: roleInfo?.fanLevel || 0,
-            fanClubName: roleInfo?.fanClubName || '',
+            isAdmin: userInfo?.isAdmin || 0,
+            isSuperAdmin: userInfo?.isSuperAdmin || 0,
+            isModerator: userInfo?.isModerator || 0,
+            fanLevel: userInfo?.fanLevel || 0,
+            fanClubName: userInfo?.fanClubName || '',
+            commonLanguage: userInfo?.commonLanguage || '',
+            masteredLanguages: userInfo?.masteredLanguages || '',
+            aiAnalysis: userInfo?.aiAnalysis || null,
             moderatorRooms
         };
     }
@@ -1139,7 +1658,7 @@ class Manager {
         // For Viewers/Members: COUNT(*) of 'member' events approx unique entries if session-based.
         // For Likes: MAX(likeCount) is best for snapshot.
 
-        const summary = get(`
+        const summary = await get(`
             SELECT 
                 SUM(CASE WHEN type='chat' THEN 1 ELSE 0 END) as totalComments,
                 SUM(CASE WHEN type='member' THEN 1 ELSE 0 END) as totalVisits,
@@ -1151,7 +1670,7 @@ class Manager {
 
         // Duration calculation
         // Min/Max timestamp
-        const timeRange = get(`SELECT MIN(timestamp) as start, MAX(timestamp) as end FROM event ${whereClause}`, params);
+        const timeRange = await get(`SELECT MIN(timestamp) as start, MAX(timestamp) as end FROM event ${whereClause}`, params);
         let duration = 0;
         if (timeRange.start && timeRange.end) {
             const start = new Date(timeRange.start);
@@ -1162,9 +1681,9 @@ class Manager {
         // 2. Leaderboards
 
         // Top Gifters
-        const topGifters = query(`
+        const topGifters = await query(`
             SELECT 
-                nickname,
+                MAX(nickname) as nickname,
                 user_id as userId,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as value
             FROM event
@@ -1175,9 +1694,9 @@ class Manager {
         `, params);
 
         // Top Chatters
-        const topChatters = query(`
+        const topChatters = await query(`
             SELECT 
-                nickname,
+                MAX(nickname) as nickname,
                 user_id as userId,
                 COUNT(*) as count
             FROM event
@@ -1189,9 +1708,9 @@ class Manager {
 
         // Top Likers
         // likeCount is the number of likes in each packet, SUM gives total contribution
-        const topLikers = query(`
+        const topLikers = await query(`
             SELECT 
-                nickname,
+                MAX(nickname) as nickname,
                 user_id as userId,
                 SUM(COALESCE(like_count, 0)) as count
             FROM event
@@ -1202,17 +1721,17 @@ class Manager {
         `, params);
 
         // Gift Details - breakdown by user + gift (for 礼物明细 tab)
-        const giftDetails = query(`
+        const giftDetails = await query(`
             SELECT 
-                nickname,
-                unique_id as uniqueId,
-                json_extract(data_json, '$.giftName') as giftName,
+                MAX(nickname) as nickname,
+                MAX(unique_id) as uniqueId,
+                (data_json::json->>'giftName') as giftName,
                 SUM(COALESCE(repeat_count, 1)) as count,
                 MAX(COALESCE(diamond_count, 0)) as unitPrice,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as totalValue
             FROM event
             ${whereClause} AND type = 'gift'
-            GROUP BY user_id, json_extract(data_json, '$.giftId')
+            GROUP BY user_id, (data_json::json->>'giftId'), (data_json::json->>'giftName')
             ORDER BY totalValue DESC
             LIMIT 100
         `, params);
@@ -1235,6 +1754,56 @@ class Manager {
         };
     }
 
+    // All-time TOP30 leaderboards (across all sessions)
+    async getAllTimeLeaderboards(roomId) {
+        await this.ensureDb();
+
+        // Top 30 Gifters (all time)
+        const topGifters = await query(`
+            SELECT 
+                MAX(nickname) as nickname,
+                user_id as userId,
+                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as value
+            FROM event
+            WHERE room_id = ? AND type = 'gift' AND user_id IS NOT NULL
+            GROUP BY user_id
+            ORDER BY value DESC
+            LIMIT 30
+        `, [roomId]);
+
+        // Top 30 Chatters (all time)
+        const topChatters = await query(`
+            SELECT 
+                MAX(nickname) as nickname,
+                user_id as userId,
+                COUNT(*) as count
+            FROM event
+            WHERE room_id = ? AND type = 'chat' AND user_id IS NOT NULL
+            GROUP BY user_id
+            ORDER BY count DESC
+            LIMIT 30
+        `, [roomId]);
+
+        // Top 30 Likers (all time)
+        const topLikers = await query(`
+            SELECT 
+                MAX(nickname) as nickname,
+                user_id as userId,
+                SUM(COALESCE(like_count, 0)) as count
+            FROM event
+            WHERE room_id = ? AND type = 'like' AND user_id IS NOT NULL
+            GROUP BY user_id
+            ORDER BY count DESC
+            LIMIT 30
+        `, [roomId]);
+
+        return {
+            gifters: topGifters,
+            chatters: topChatters,
+            likers: topLikers
+        };
+    }
+
     // Archive stale live events (fix for "long session" bug)
     // Two strategies:
     // 1. If there's a large time gap (1 hour), split the events at the gap
@@ -1246,7 +1815,7 @@ class Manager {
         const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString();
 
         // Get all timestamps of current live events
-        const events = query(`
+        const events = await query(`
             SELECT id, timestamp 
             FROM event 
             WHERE room_id = ? AND session_id IS NULL 
@@ -1294,26 +1863,43 @@ class Manager {
             }
         }
 
+        // Strategy 3: If all orphan events are older than 30 minutes, archive ALL of them
+        // This handles the case where stream ended and we're reconnecting much later
+        if (splitIndex === -1) {
+            const newestEventTime = new Date(events[events.length - 1].timestamp).getTime();
+            const ageOfNewest = now - newestEventTime;
+            const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+
+            if (ageOfNewest > STALE_THRESHOLD_MS) {
+                // All events are stale - archive everything
+                splitIndex = events.length; // Archive all
+                console.log(`[Manager] Archiving all ${events.length} stale events for ${roomId} (All events > 30 min old)`);
+            }
+        }
+
         if (splitIndex > 0) {
             // Archive events[0...splitIndex-1]
             const staleEvents = events.slice(0, splitIndex);
             const firstT = events[0].timestamp;
             const lastT = events[splitIndex - 1].timestamp;
 
-            const sessionId = firstT.slice(0, 10).replace(/-/g, '') + '99'; // e.g. 2025121299
+            // Convert timestamp to string format if it's a Date object (PostgreSQL)
+            const firstTStr = firstT instanceof Date ? firstT.toISOString().slice(0, 10) : firstT.slice(0, 10);
+            const sessionId = firstTStr.replace(/-/g, '') + '99'; // e.g. 2025121299
 
             // Generate unique session ID if collision
             let finalSessionId = sessionId;
             let suffix = 99;
-            while (get(`SELECT 1 FROM session WHERE session_id = ?`, [finalSessionId])) {
+            while (await get(`SELECT 1 FROM session WHERE session_id = ?`, [finalSessionId])) {
                 suffix--;
-                finalSessionId = firstT.slice(0, 10).replace(/-/g, '') + suffix;
+                finalSessionId = firstTStr.replace(/-/g, '') + suffix;
             }
 
-            console.log(`[Manager] Archiving ${staleEvents.length} stale events for ${roomId} (Gap at ${events[splitIndex].timestamp})`);
+            const splitInfo = splitIndex < events.length ? `Gap at ${events[splitIndex].timestamp}` : 'All events stale';
+            console.log(`[Manager] Archiving ${staleEvents.length} stale events for ${roomId} (${splitInfo})`);
 
             // Create session
-            run(`INSERT INTO session (session_id, room_id, snapshot_json, created_at) VALUES (?, ?, ?, ?)`, [
+            await run(`INSERT INTO session (session_id, room_id, snapshot_json, created_at) VALUES (?, ?, ?, ?)`, [
                 finalSessionId,
                 roomId,
                 JSON.stringify({
@@ -1325,7 +1911,7 @@ class Manager {
             ]);
 
             // Update events
-            run(`
+            await run(`
                 UPDATE event 
                 SET session_id = ? 
                 WHERE room_id = ? AND session_id IS NULL AND timestamp <= ?
@@ -1335,6 +1921,105 @@ class Manager {
         }
 
         return { archived: 0 };
+    }
+
+    // Analyze user languages from chat messages
+    // Uses regex to detect Chinese and English, updates primary_language (common_language) and secondary_language (mastered_languages)
+    async analyzeUserLanguages(limit = 100) {
+        await this.ensureDb();
+        console.log('[Manager] Starting user language analysis...');
+
+        // Get users who haven't been analyzed yet (language_analyzed = 0 or NULL)
+        const users = await query(`
+            SELECT user_id FROM "user" 
+            WHERE (language_analyzed IS NULL OR language_analyzed = 0)
+            LIMIT ?
+        `, [limit]);
+
+        if (users.length === 0) {
+            console.log('[Manager] No users to analyze');
+            return { analyzed: 0 };
+        }
+
+        console.log(`[Manager] Analyzing language for ${users.length} users...`);
+
+        const CHINESE_REGEX = /[\u4e00-\u9fff]/g;
+        const ENGLISH_REGEX = /[a-zA-Z]{2,}/g;
+        const EMOJI_ONLY_REGEX = /^[\p{Emoji}\s\d]+$/u;
+
+        let analyzed = 0;
+        for (const user of users) {
+            // Get last 20 chat messages for this user
+            const chats = await query(`
+                SELECT comment FROM event 
+                WHERE user_id = ? AND type = 'chat' AND comment IS NOT NULL
+                ORDER BY timestamp DESC LIMIT 20
+            `, [user.userId]);
+
+            if (chats.length === 0) {
+                // Mark as analyzed with no language
+                await run(`UPDATE "user" SET language_analyzed = 1 WHERE user_id = ?`, [user.userId]);
+                continue;
+            }
+
+            let chineseCount = 0;
+            let englishCount = 0;
+            let validMessages = 0;
+
+            for (const chat of chats) {
+                const text = chat.comment || '';
+
+                // Skip emoji-only messages
+                if (EMOJI_ONLY_REGEX.test(text)) continue;
+
+                validMessages++;
+                const chineseMatches = text.match(CHINESE_REGEX) || [];
+                const englishMatches = text.match(ENGLISH_REGEX) || [];
+
+                if (chineseMatches.length > 0) chineseCount++;
+                if (englishMatches.length > 0) englishCount++;
+            }
+
+            if (validMessages === 0) {
+                await run(`UPDATE "user" SET language_analyzed = 1 WHERE user_id = ?`, [user.userId]);
+                continue;
+            }
+
+            // Determine primary and secondary language
+            let primaryLang = null;
+            let secondaryLang = null;
+
+            if (chineseCount > 0 && englishCount > 0) {
+                // Both detected
+                if (chineseCount >= englishCount) {
+                    primaryLang = '中文';
+                    secondaryLang = 'English';
+                } else {
+                    primaryLang = 'English';
+                    secondaryLang = '中文';
+                }
+            } else if (chineseCount > 0) {
+                primaryLang = '中文';
+            } else if (englishCount > 0) {
+                primaryLang = 'English';
+            } else {
+                primaryLang = '其他语种';
+            }
+
+            // Update user
+            await run(`
+                UPDATE "user" SET 
+                    common_language = ?,
+                    mastered_languages = ?,
+                    language_analyzed = 1
+                WHERE user_id = ?
+            `, [primaryLang, secondaryLang, user.userId]);
+
+            analyzed++;
+        }
+
+        console.log(`[Manager] Language analysis complete. Analyzed ${analyzed} users.`);
+        return { analyzed };
     }
 }
 
