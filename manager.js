@@ -335,7 +335,8 @@ class Manager {
                 userId: data.userId,
                 uniqueId: data.uniqueId,
                 nickname: data.nickname,
-                avatar: data.profilePictureUrl || ''
+                avatar: data.profilePictureUrl || '',
+                region: data.region || null
             });
         }
 
@@ -372,14 +373,15 @@ class Manager {
 
         const now = getNowBeijing();
         await run(`
-            INSERT INTO "user" (user_id, unique_id, nickname, avatar, updated_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO "user" (user_id, unique_id, nickname, avatar, updated_at, region)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
                 unique_id = excluded.unique_id,
                 nickname = excluded.nickname,
                 avatar = excluded.avatar,
-                updated_at = excluded.updated_at
-        `, [u.userId, u.uniqueId || '', u.nickname || '', u.avatar || '', now]);
+                updated_at = excluded.updated_at,
+                region = COALESCE(excluded.region, "user".region)
+        `, [u.userId, u.uniqueId || '', u.nickname || '', u.avatar || '', now, u.region || null]);
     }
 
     // Get count of untagged events for a room (to check if session should be saved)
@@ -950,6 +952,7 @@ class Manager {
                 u.nickname as nickname,
                 u.common_language as commonLanguage,
                 u.mastered_languages as masteredLanguages,
+                u.region as region,
                 SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as totalValue,
                 COUNT(DISTINCT e.room_id) as roomCount,
                 MAX(e.timestamp) as lastActive,
@@ -960,7 +963,7 @@ class Manager {
             FROM event e
             JOIN "user" u ON e.user_id = u.user_id
             ${whereClause}
-            GROUP BY u.user_id, u.unique_id, u.nickname, u.common_language, u.mastered_languages
+            GROUP BY u.user_id, u.unique_id, u.nickname, u.common_language, u.mastered_languages, u.region
             ${havingClause}
             ${orderByClause}
             LIMIT ? OFFSET ?
@@ -1629,6 +1632,7 @@ class Manager {
             fanClubName: userInfo?.fanClubName || '',
             commonLanguage: userInfo?.commonLanguage || '',
             masteredLanguages: userInfo?.masteredLanguages || '',
+            region: userInfo?.region || '',
             aiAnalysis: userInfo?.aiAnalysis || null,
             moderatorRooms
         };

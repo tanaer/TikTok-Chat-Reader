@@ -86,7 +86,8 @@ async function initDb() {
                 common_language TEXT,
                 mastered_languages TEXT,
                 ai_analysis TEXT,
-                is_moderator INTEGER DEFAULT 0
+                is_moderator INTEGER DEFAULT 0,
+                region TEXT
             )
         `);
 
@@ -129,6 +130,7 @@ async function initDb() {
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS language TEXT DEFAULT '中文'`);
         await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS language_analyzed INTEGER DEFAULT 0`);
         await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis TEXT`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS region TEXT`);
         await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
 
         console.log('[DB] Tables and indexes created.');
