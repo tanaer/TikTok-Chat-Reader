@@ -11,11 +11,34 @@ const ROOM_LIST_REFRESH_INTERVAL = 10000; // 10 seconds for listing is enough
 // Helper to escape strings for use in HTML attributes
 const escapeHtml = (str) => String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
+// Helper to format duration in seconds to human readable string
+const formatDuration = (seconds) => {
+    if (!seconds || seconds <= 0) return '-';
+    const hours = Math.floor(seconds / 3600);
+    const mins = Math.floor((seconds % 3600) / 60);
+    if (hours > 0) return `${hours}h${mins}m`;
+    return `${mins}m`;
+};
+
+// Helper to copy text to clipboard
+const copyToClipboard = (text, event) => {
+    event.stopPropagation();
+    navigator.clipboard.writeText(text).then(() => {
+        // Show brief feedback
+        const el = event.target;
+        const original = el.textContent;
+        el.textContent = '✓ 已复制';
+        setTimeout(() => el.textContent = original, 1000);
+    });
+};
+window.copyToClipboard = copyToClipboard;
+
 // Render a single room as a card
 function renderRoomCard(r, index = 0) {
     const isLive = r.isLive === true;
     const badgeClass = isLive ? 'badge-success' : 'badge-ghost';
     const statusText = isLive ? '🟢 直播中' : '未开播';
+    const duration = formatDuration(r.broadcastDuration);
     const lastSession = r.lastSessionTime ? new Date(r.lastSessionTime).toLocaleString() : '无记录';
     const isMonitorOn = r.isMonitorEnabled !== 0;
     const safeRoomId = escapeHtml(r.roomId);
@@ -31,11 +54,15 @@ function renderRoomCard(r, index = 0) {
                         <h2 class="card-title text-lg font-bold truncate w-36" title="${r.name}">${r.name || '未命名'}</h2>
                     </div>
                     <div class="flex items-center gap-1 mt-1">
-                        <div class="badge badge-outline badge-sm opacity-70 truncate max-w-[150px]" title="${r.roomId}">${r.roomId}</div>
+                        <div class="badge badge-outline badge-sm opacity-70 truncate max-w-[150px] cursor-pointer hover:bg-base-300" 
+                             title="点击复制: ${r.roomId}" onclick="copyToClipboard('${safeRoomId}', event)">${r.roomId}</div>
                     </div>
                 </div>
                 <div class="flex flex-col items-end gap-1">
-                    <div class="badge ${badgeClass} badge-sm">${statusText}</div>
+                    <div class="flex items-center gap-1">
+                        <span class="text-xs font-mono opacity-60" title="本场开播时长">⏱️${duration}</span>
+                        <div class="badge ${badgeClass} badge-sm">${statusText}</div>
+                    </div>
                     <label class="label cursor-pointer p-0 gap-2">
                         <span class="label-text text-xs opacity-70">LZ</span> 
                         <input type="checkbox" class="toggle toggle-xs toggle-success" 
@@ -100,6 +127,7 @@ function renderRoomRow(r, index = 0) {
     const isLive = r.isLive === true;
     const badgeClass = isLive ? 'badge-success' : 'badge-ghost';
     const statusText = isLive ? '🟢' : '⚫';
+    const duration = formatDuration(r.broadcastDuration);
     const isMonitorOn = r.isMonitorEnabled !== 0;
     const safeRoomId = escapeHtml(r.roomId);
     const safeName = escapeHtml(r.name || '');
@@ -112,10 +140,11 @@ function renderRoomRow(r, index = 0) {
                 <span class="text-lg" title="${isLive ? '直播中' : '未开播'}">${statusText}</span>
                 <div>
                     <div class="font-bold truncate max-w-[120px]" title="${r.name}">${r.name || '未命名'}</div>
-                    <div class="text-xs opacity-50">${r.roomId}</div>
+                    <div class="text-xs opacity-50 cursor-pointer hover:opacity-100" onclick="event.stopPropagation();copyToClipboard('${safeRoomId}', event)" title="点击复制">${r.roomId}</div>
                 </div>
             </div>
         </td>
+        <td class="p-2 text-center font-mono text-xs opacity-60" title="本场时长">${duration}</td>
         <td class="p-2 text-center font-mono text-sm">${(r.totalVisits || 0).toLocaleString()}</td>
         <td class="p-2 text-center font-mono text-sm">${(r.totalComments || 0).toLocaleString()}</td>
         <td class="p-2 text-center font-mono text-sm text-warning">${(r.totalGiftValue || 0).toLocaleString()}</td>
@@ -211,6 +240,7 @@ async function renderRoomList() {
                         <tr class="bg-base-200">
                             <th class="p-2 text-center">#</th>
                             <th class="p-2">房间</th>
+                            <th class="p-2 text-center">时长</th>
                             <th class="p-2 text-center">进房</th>
                             <th class="p-2 text-center">弹幕</th>
                             <th class="p-2 text-center">💎本场</th>
