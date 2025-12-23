@@ -1,6 +1,9 @@
 
 const { TikTokConnectionWrapper, getKeyCount } = require('./connectionWrapper');
 const { manager } = require('./manager');
+const keyManager = require('./utils/keyManager');
+const dynamicProxyManager = require('./utils/DynamicProxyManager');
+
 
 class AutoRecorder {
     constructor() {
@@ -343,6 +346,10 @@ class AutoRecorder {
             // Fetch Settings
             const dbSettings = await manager.getAllSettings();
 
+            // Refresh dynamic configurations from database
+            keyManager.refreshKeys(dbSettings);
+            dynamicProxyManager.refreshConfig(dbSettings);
+
             // Auto-Archive Stale Live Events (Prevent 24h+ duration bug)
             try {
                 // If there are dangling events from a previous crash/restart > 1h ago, archive them now.
@@ -367,7 +374,7 @@ class AutoRecorder {
             const options = {
                 enableExtendedGiftInfo: true,
                 fetchRoomInfoOnConnect: true,
-                proxyUrl: dbSettings.proxy,
+                proxyUrl: dbSettings.proxy_url || dbSettings.proxy,
                 eulerApiKey: dbSettings.euler_api_key,
                 // Conditionally add session credentials
                 ...(sessionId ? {
@@ -829,6 +836,11 @@ class AutoRecorder {
 
             // Use the same connection logic as checkAndConnect
             const dbSettings = await manager.getAllSettings();
+
+            // Refresh dynamic configurations from database
+            keyManager.refreshKeys(dbSettings);
+            dynamicProxyManager.refreshConfig(dbSettings);
+
             // IMPORTANT: Only include sessionId/ttTargetIdc when sessionId is a VALID TikTok session
             // Invalid formats (like csrf_session_id=...) cause WebSocket 200 errors
             let rawSessionId = dbSettings.session_id || process.env.SESSIONID;

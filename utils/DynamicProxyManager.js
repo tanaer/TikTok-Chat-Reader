@@ -17,6 +17,26 @@ class DynamicProxyManager {
         this.tunnelProxy = process.env.DYNAMIC_TUNNEL_PROXY; // "http://user:pass@host:port"
     }
 
+    /**
+     * Refresh configuration from database settings
+     * @param {Object} dbSettings - Settings object from manager.getAllSettings()
+     */
+    refreshConfig(dbSettings) {
+        // Prioritize database settings over environment variables
+        const newTunnelProxy = dbSettings?.dynamic_tunnel_proxy || process.env.DYNAMIC_TUNNEL_PROXY || '';
+        const newApiUrl = dbSettings?.proxy_api_url || process.env.PROXY_API_URL || '';
+
+        if (newTunnelProxy !== this.tunnelProxy) {
+            console.log(`[DynamicProxy] Updated tunnel proxy from ${this.tunnelProxy ? 'previous' : 'none'} to ${newTunnelProxy ? 'new value' : 'none'}`);
+            this.tunnelProxy = newTunnelProxy;
+        }
+
+        if (newApiUrl !== this.apiUrl) {
+            console.log(`[DynamicProxy] Updated API URL from ${this.apiUrl ? 'previous' : 'none'} to ${newApiUrl ? 'new value' : 'none'}`);
+            this.apiUrl = newApiUrl;
+        }
+    }
+
     loadCache() {
         // If tunnel proxy is set, we don't need cache
         if (this.tunnelProxy) return;
@@ -136,3 +156,4 @@ class DynamicProxyManager {
 }
 
 module.exports = new DynamicProxyManager();
+
