@@ -12,7 +12,7 @@ const pool = new Pool({
     database: process.env.PG_DATABASE || 'tkmonitor',
     user: process.env.PG_USER || 'postgres',
     password: process.env.PG_PASSWORD || 'root',
-    max: 20, // Maximum connections in pool
+    max: process.env.PG_MAX_CONNECTIONS || 20, // Maximum connections in pool
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 2000,
 });

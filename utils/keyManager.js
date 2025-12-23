@@ -8,18 +8,37 @@ class KeyManager {
         this.disabledKeys = new Map(); // key -> disableUntil timestamp
         this.currentIndex = 0;
 
-        // Load keys from environment
-        const rawKeys = process.env.EULER_KEYS || process.env.EULER_API_KEY || '';
-        console.log(`[KeyManager] Initializing with raw keys string length: ${rawKeys.length}`);
+        // Load initial keys from environment (will be overridden by refreshKeys if DB has values)
+        this._loadKeysFromString(process.env.EULER_KEYS || process.env.EULER_API_KEY || '');
+    }
 
+    _loadKeysFromString(rawKeys) {
         if (rawKeys) {
             this.keys = rawKeys.split(',').map(k => k.trim()).filter(k => k.length > 0);
+        } else {
+            this.keys = [];
         }
-
         console.log(`[KeyManager] Loaded ${this.keys.length} keys.`);
         this.keys.forEach((key, i) => {
             console.log(`[KeyManager] Key #${i + 1}: ${key.slice(0, 10)}...`);
         });
+    }
+
+    /**
+     * Refresh keys from database settings
+     * @param {Object} dbSettings - Settings object from manager.getAllSettings()
+     */
+    refreshKeys(dbSettings) {
+        const dbKeys = dbSettings?.euler_keys || '';
+        const envKeys = process.env.EULER_KEYS || process.env.EULER_API_KEY || '';
+
+        // Prioritize database settings over environment variables
+        const rawKeys = dbKeys || envKeys;
+
+        if (rawKeys !== this.keys.join(',')) {
+            console.log(`[KeyManager] Refreshing keys from ${dbKeys ? 'database' : 'environment'}`);
+            this._loadKeysFromString(rawKeys);
+        }
     }
 
     getKeyCount() {
@@ -76,3 +95,4 @@ class KeyManager {
 const keyManager = new KeyManager();
 
 module.exports = keyManager;
+

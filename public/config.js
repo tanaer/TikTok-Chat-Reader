@@ -4,14 +4,17 @@
 async function loadConfig() {
     try {
         const cfg = await $.get('/api/config');
-        $('#cfg_interval').val(cfg.interval || 5);
+        $('#cfg_interval').val(cfg.scan_interval || cfg.interval || 5);
         $('#cfg_autoMonitor').prop('checked', cfg.auto_monitor_enabled === 'true' || cfg.auto_monitor_enabled === true);
-        $('#cfg_proxy').val(cfg.proxy || '');
-        $('#cfg_eulerKey').val(cfg.euler_api_key || '');
+        $('#cfg_proxy').val(cfg.proxy_url || cfg.proxy || '');
+        $('#cfg_eulerKeys').val(cfg.euler_keys || '');
         $('#cfg_sessionId').val(cfg.session_id || '');
         $('#cfg_port').val(cfg.port || '8081');
         $('#cfg_aiKey').val(cfg.ai_api_key || '');
         $('#cfg_aiUrl').val(cfg.ai_api_url || '');
+        $('#cfg_aiModel').val(cfg.ai_model_name || '');
+        $('#cfg_tunnelProxy').val(cfg.dynamic_tunnel_proxy || '');
+        $('#cfg_proxyApiUrl').val(cfg.proxy_api_url || '');
     } catch (err) {
         console.error('Config load error', err);
     }
@@ -22,11 +25,14 @@ async function saveConfig() {
         scan_interval: $('#cfg_interval').val(),
         auto_monitor_enabled: $('#cfg_autoMonitor').is(':checked'),
         proxy_url: $('#cfg_proxy').val(),
-        euler_api_key: $('#cfg_eulerKey').val(),
+        euler_keys: $('#cfg_eulerKeys').val(),
         session_id: $('#cfg_sessionId').val(),
         port: $('#cfg_port').val(),
         ai_api_key: $('#cfg_aiKey').val(),
-        ai_api_url: $('#cfg_aiUrl').val()
+        ai_api_url: $('#cfg_aiUrl').val(),
+        ai_model_name: $('#cfg_aiModel').val(),
+        dynamic_tunnel_proxy: $('#cfg_tunnelProxy').val(),
+        proxy_api_url: $('#cfg_proxyApiUrl').val()
     };
 
     try {

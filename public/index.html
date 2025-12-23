@@ -513,15 +513,38 @@
                             </label>
                         </div>
 
+                        <div class="divider">代理配置</div>
+
                         <div class="form-control w-full">
-                            <label class="label"><span class="label-text">SOCKS 代理</span></label>
+                            <label class="label"><span class="label-text">SOCKS5 代理 (连接 TikTok)</span></label>
                             <input type="text" id="cfg_proxy" class="input input-bordered w-full"
                                 placeholder="socks5://127.0.0.1:1080">
                         </div>
 
                         <div class="form-control w-full">
-                            <label class="label"><span class="label-text">EulerStream API Key</span></label>
-                            <input type="text" id="cfg_eulerKey" class="input input-bordered w-full">
+                            <label class="label"><span class="label-text">动态隧道代理 (获取 RoomID)</span></label>
+                            <input type="text" id="cfg_tunnelProxy" class="input input-bordered w-full"
+                                placeholder="http://user:pass@host:port">
+                            <label class="label"><span class="label-text-alt text-xs opacity-50">用于访问 TikTok 获取直播间ID，格式:
+                                    http://用户名:密码@主机:端口</span></label>
+                        </div>
+
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">代理池 API URL</span></label>
+                            <input type="text" id="cfg_proxyApiUrl" class="input input-bordered w-full"
+                                placeholder="http://api.provider.com/get?num=10">
+                            <label class="label"><span class="label-text-alt text-xs opacity-50">返回 ip:port 列表的 API
+                                    地址（与隧道代理二选一）</span></label>
+                        </div>
+
+                        <div class="divider">TikTok 配置</div>
+
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">EulerStream API Keys</span></label>
+                            <textarea id="cfg_eulerKeys" class="textarea textarea-bordered w-full h-24"
+                                placeholder="euler_xxx,euler_yyy,euler_zzz"></textarea>
+                            <label class="label"><span class="label-text-alt text-xs opacity-50">多个 Key
+                                    用逗号分隔，系统会自动轮询使用</span></label>
                         </div>
 
                         <div class="form-control w-full">
@@ -529,13 +552,21 @@
                             <input type="text" id="cfg_sessionId" class="input input-bordered w-full">
                         </div>
 
+                        <div class="divider">AI 配置</div>
+
                         <div class="form-control w-full">
                             <label class="label"><span class="label-text">AI API Key</span></label>
                             <input type="text" id="cfg_aiKey" class="input input-bordered w-full">
                         </div>
                         <div class="form-control w-full">
                             <label class="label"><span class="label-text">AI API URL</span></label>
-                            <input type="text" id="cfg_aiUrl" class="input input-bordered w-full">
+                            <input type="text" id="cfg_aiUrl" class="input input-bordered w-full"
+                                placeholder="https://api-inference.modelscope.cn/v1/">
+                        </div>
+                        <div class="form-control w-full">
+                            <label class="label"><span class="label-text">AI 模型名称</span></label>
+                            <input type="text" id="cfg_aiModel" class="input input-bordered w-full"
+                                placeholder="deepseek-ai/DeepSeek-V3.2">
                         </div>
 
                         <div class="card-actions justify-end mt-6">
