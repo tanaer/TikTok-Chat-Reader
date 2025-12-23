@@ -1324,7 +1324,9 @@ class Manager {
                     MAX(CASE WHEN session_id IS NULL THEN timestamp END) - 
                     MIN(CASE WHEN session_id IS NULL THEN timestamp END)
                 )) as duration_secs,
-                MIN(CASE WHEN session_id IS NULL THEN timestamp END) as start_time
+                MIN(CASE WHEN session_id IS NULL THEN timestamp END) as start_time,
+                -- All-time duration (for accountQuality calculation)
+                EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) as all_time_duration_secs
             FROM event 
             WHERE room_id IN (${placeholders})
             GROUP BY room_id
@@ -1342,6 +1344,7 @@ class Manager {
                 allComments: parseInt(r.allComments) || 0,
                 allGift: parseInt(r.allGift) || 0,
                 durationSecs: parseFloat(r.durationSecs) || 0,
+                allTimeDurationSecs: parseFloat(r.allTimeDurationSecs) || 0,
                 startTime: r.startTime || null
             };
         }
@@ -1430,12 +1433,13 @@ class Manager {
             const allTimeGift = s.allGift || parseInt(r.allTimeGiftValue) || 0;
             const durationSecs = s.durationSecs || 0;
             const durationMins = durationSecs / 60;
+            const allTimeDurationMins = (s.allTimeDurationSecs || 0) / 60;
 
             // Calculate efficiency metrics using ALL-TIME data (avoid division by zero)
             const giftEfficiency = allTimeVisits > 0 ? (allTimeGift / allTimeVisits).toFixed(2) : 0;
             const interactEfficiency = allTimeVisits > 0 ? (allTimeComments / allTimeVisits).toFixed(2) : 0;
-            // Account quality: visits per minute of total broadcast (higher = better traffic quality)
-            const accountQuality = durationMins > 0 ? (allTimeVisits / durationMins).toFixed(2) : 0;
+            // Account quality: visits per minute of ALL-TIME broadcast (higher = better traffic quality)
+            const accountQuality = allTimeDurationMins > 0 ? (allTimeVisits / allTimeDurationMins).toFixed(2) : 0;
 
             // TOP1/TOP3/TOP10/TOP30 gift concentration ratios (% of total gifts from top N users)
             const concentration = concentrationMap[r.roomId] || { top1: 0, top3: 0, top10: 0, top30: 0, total: 0 };
