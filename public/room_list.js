@@ -249,6 +249,8 @@ async function renderRoomList() {
                     <option value="20" ${roomListLimit === 20 ? 'selected' : ''}>20</option>
                     <option value="50" ${roomListLimit === 50 ? 'selected' : ''}>50</option>
                     <option value="100" ${roomListLimit === 100 ? 'selected' : ''}>100</option>
+                    <option value="200" ${roomListLimit === 200 ? 'selected' : ''}>200</option>
+                    <option value="500" ${roomListLimit === 500 ? 'selected' : ''}>500</option>
                 </select>
             </div>
             ${pagination.totalPages > 1 ? `
