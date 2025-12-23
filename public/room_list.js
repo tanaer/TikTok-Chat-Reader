@@ -11,8 +11,11 @@ const ROOM_LIST_REFRESH_INTERVAL = 10000; // 10 seconds for listing is enough
 // Helper to escape strings for use in HTML attributes
 const escapeHtml = (str) => String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
-// Helper to format duration in seconds to human readable string
-const formatDuration = (seconds) => {
+// Helper to format duration in seconds (uses global formatDuration from app.js if available)
+const formatRoomDuration = (seconds) => {
+    if (typeof window.formatDuration === 'function') {
+        return window.formatDuration(seconds);
+    }
     if (!seconds || seconds <= 0) return '-';
     const hours = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -38,7 +41,7 @@ function renderRoomCard(r, index = 0) {
     const isLive = r.isLive === true;
     const badgeClass = isLive ? 'badge-success' : 'badge-ghost';
     const statusText = isLive ? '🟢 直播中' : '未开播';
-    const duration = formatDuration(r.broadcastDuration);
+    const duration = formatRoomDuration(r.broadcastDuration);
     const lastSession = r.lastSessionTime ? new Date(r.lastSessionTime).toLocaleString() : '无记录';
     const isMonitorOn = r.isMonitorEnabled !== 0;
     const safeRoomId = escapeHtml(r.roomId);
@@ -127,7 +130,7 @@ function renderRoomRow(r, index = 0) {
     const isLive = r.isLive === true;
     const badgeClass = isLive ? 'badge-success' : 'badge-ghost';
     const statusText = isLive ? '🟢' : '⚫';
-    const duration = formatDuration(r.broadcastDuration);
+    const duration = formatRoomDuration(r.broadcastDuration);
     const isMonitorOn = r.isMonitorEnabled !== 0;
     const safeRoomId = escapeHtml(r.roomId);
     const safeName = escapeHtml(r.name || '');
