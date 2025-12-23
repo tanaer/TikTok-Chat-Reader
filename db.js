@@ -126,6 +126,12 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_room_session_type ON event(room_id, session_id, type)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_session_timestamp ON event(session_id, timestamp)`);
 
+        // Performance optimization: indexes for aggregation queries
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_type_session ON event(type, session_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_type_room ON event(type, room_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_gift_agg ON event(room_id, type, user_id) WHERE type = 'gift'`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_room_created ON session(room_id, created_at DESC)`);
+
         // Migrations for new columns
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS language TEXT DEFAULT '中文'`);
         await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS language_analyzed INTEGER DEFAULT 0`);

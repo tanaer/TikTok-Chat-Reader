@@ -1303,70 +1303,50 @@ class Manager {
         const roomIds = rooms.map(r => r.roomId);
         const placeholders = roomIds.map(() => '?').join(',');
 
-        // Visit counts (current session)
-        const visitStats = await query(`
-            SELECT room_id, COUNT(*) as c 
+        // OPTIMIZED: Single consolidated query for all basic stats (replaces 9 separate queries)
+        const combinedStats = await query(`
+            SELECT 
+                room_id,
+                -- Current session stats (session_id IS NULL)
+                COUNT(*) FILTER (WHERE type = 'member' AND session_id IS NULL) as curr_visits,
+                COUNT(*) FILTER (WHERE type = 'chat' AND session_id IS NULL) as curr_comments,
+                COALESCE(SUM(CASE WHEN type = 'gift' AND session_id IS NULL 
+                    THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as curr_gift,
+                MAX(CASE WHEN type = 'like' AND session_id IS NULL 
+                    THEN COALESCE(total_like_count, 0) ELSE 0 END) as curr_likes,
+                -- All-time stats
+                COUNT(*) FILTER (WHERE type = 'member') as all_visits,
+                COUNT(*) FILTER (WHERE type = 'chat') as all_comments,
+                COALESCE(SUM(CASE WHEN type = 'gift' 
+                    THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as all_gift,
+                -- Duration (current session only)
+                EXTRACT(EPOCH FROM (
+                    MAX(CASE WHEN session_id IS NULL THEN timestamp END) - 
+                    MIN(CASE WHEN session_id IS NULL THEN timestamp END)
+                )) as duration_secs,
+                MIN(CASE WHEN session_id IS NULL THEN timestamp END) as start_time
             FROM event 
-            WHERE room_id IN (${placeholders}) AND type = 'member' AND session_id IS NULL
+            WHERE room_id IN (${placeholders})
             GROUP BY room_id
         `, roomIds);
-        const visitMap = Object.fromEntries(visitStats.map(r => [r.roomId, r.c]));
 
-        // All-time visit counts (for efficiency calculation)
-        const allTimeVisitStats = await query(`
-            SELECT room_id, COUNT(*) as c 
-            FROM event 
-            WHERE room_id IN (${placeholders}) AND type = 'member'
-            GROUP BY room_id
-        `, roomIds);
-        const allTimeVisitMap = Object.fromEntries(allTimeVisitStats.map(r => [r.roomId, r.c]));
+        // Build lookup maps from combined query
+        const statsMap = {};
+        for (const r of combinedStats) {
+            statsMap[r.roomId] = {
+                currVisits: parseInt(r.currVisits) || 0,
+                currComments: parseInt(r.currComments) || 0,
+                currGift: parseInt(r.currGift) || 0,
+                currLikes: parseInt(r.currLikes) || 0,
+                allVisits: parseInt(r.allVisits) || 0,
+                allComments: parseInt(r.allComments) || 0,
+                allGift: parseInt(r.allGift) || 0,
+                durationSecs: parseFloat(r.durationSecs) || 0,
+                startTime: r.startTime || null
+            };
+        }
 
-        // Comment counts (current session)
-        const commentStats = await query(`
-            SELECT room_id, COUNT(*) as c 
-            FROM event 
-            WHERE room_id IN (${placeholders}) AND type = 'chat' AND session_id IS NULL
-            GROUP BY room_id
-        `, roomIds);
-        const commentMap = Object.fromEntries(commentStats.map(r => [r.roomId, r.c]));
-
-        // All-time comment counts (for efficiency calculation)
-        const allTimeCommentStats = await query(`
-            SELECT room_id, COUNT(*) as c 
-            FROM event 
-            WHERE room_id IN (${placeholders}) AND type = 'chat'
-            GROUP BY room_id
-        `, roomIds);
-        const allTimeCommentMap = Object.fromEntries(allTimeCommentStats.map(r => [r.roomId, r.c]));
-
-        // Current session gift values
-        const giftStats = await query(`
-            SELECT room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val 
-            FROM event 
-            WHERE room_id IN (${placeholders}) AND type = 'gift' AND session_id IS NULL
-            GROUP BY room_id
-        `, roomIds);
-        const giftMap = Object.fromEntries(giftStats.map(r => [r.roomId, r.val || 0]));
-
-        // All-time gift values (including archived sessions)
-        const allTimeGiftStats = await query(`
-            SELECT room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val 
-            FROM event 
-            WHERE room_id IN (${placeholders}) AND type = 'gift'
-            GROUP BY room_id
-        `, roomIds);
-        const allTimeGiftMap = Object.fromEntries(allTimeGiftStats.map(r => [r.roomId, r.val || 0]));
-
-        // Max like counts
-        const likeStats = await query(`
-            SELECT room_id, MAX(COALESCE(total_like_count, 0)) as m 
-            FROM event 
-            WHERE room_id IN (${placeholders}) AND type = 'like' AND session_id IS NULL
-            GROUP BY room_id
-        `, roomIds);
-        const likeMap = Object.fromEntries(likeStats.map(r => [r.roomId, r.m || 0]));
-
-        // Last session times
+        // Last session times (keep separate - uses session table)
         const lastSessions = await query(`
             SELECT s1.room_id, s1.created_at 
             FROM session s1
@@ -1378,18 +1358,6 @@ class Manager {
             ) s2 ON s1.room_id = s2.room_id AND s1.created_at = s2.max_created
         `, roomIds);
         const sessionMap = Object.fromEntries(lastSessions.map(r => [r.roomId, r.createdAt]));
-
-        // Current session duration (in seconds) - only unarchived events
-        const durationStats = await query(`
-            SELECT room_id, 
-                   EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) as duration_secs,
-                   MIN(timestamp) as start_time
-            FROM event 
-            WHERE room_id IN (${placeholders}) AND session_id IS NULL
-            GROUP BY room_id
-        `, roomIds);
-        const durationMap = Object.fromEntries(durationStats.map(r => [r.roomId, parseFloat(r.durationSecs) || 0]));
-        const startTimeMap = Object.fromEntries(durationStats.map(r => [r.roomId, r.startTime || null]));
 
         // TOP1/TOP3/TOP10/TOP30 Gift Concentration - calculate per-room using window functions
         // This calculates what % of total gifts come from top N gifters (based on ALL historical data)
@@ -1453,13 +1421,14 @@ class Manager {
         // 6. Build final stats objects (use roomId after camelCase conversion)
         // Note: currentGiftValue and allTimeGiftValue come from the SQL JOIN already
         const stats = rooms.map(r => {
-            const visits = parseInt(visitMap[r.roomId]) || 0;
-            const comments = parseInt(commentMap[r.roomId]) || 0;
-            const allTimeVisits = parseInt(allTimeVisitMap[r.roomId]) || 0;
-            const allTimeComments = parseInt(allTimeCommentMap[r.roomId]) || 0;
-            const currentGift = parseInt(r.currentGiftValue) || 0;
-            const allTimeGift = parseInt(r.allTimeGiftValue) || 0;
-            const durationSecs = durationMap[r.roomId] || 0;
+            const s = statsMap[r.roomId] || {};
+            const visits = s.currVisits || 0;
+            const comments = s.currComments || 0;
+            const allTimeVisits = s.allVisits || 0;
+            const allTimeComments = s.allComments || 0;
+            const currentGift = s.currGift || parseInt(r.currentGiftValue) || 0;
+            const allTimeGift = s.allGift || parseInt(r.allTimeGiftValue) || 0;
+            const durationSecs = s.durationSecs || 0;
             const durationMins = durationSecs / 60;
 
             // Calculate efficiency metrics using ALL-TIME data (avoid division by zero)
@@ -1482,10 +1451,10 @@ class Manager {
                 totalComments: comments,
                 totalGiftValue: currentGift,  // Current session gift value
                 allTimeGiftValue: allTimeGift,  // All time gift value
-                totalLikes: parseInt(likeMap[r.roomId]) || 0,
+                totalLikes: s.currLikes || 0,
                 lastSessionTime: sessionMap[r.roomId] || null,
                 broadcastDuration: Math.round(durationSecs),  // Current session seconds
-                startTime: startTimeMap[r.roomId] || null,    // Current session start time
+                startTime: s.startTime || null,    // Current session start time
                 giftEfficiency: parseFloat(giftEfficiency),  // Gift value per visitor
                 interactEfficiency: parseFloat(interactEfficiency),  // Comments per visitor
                 accountQuality: parseFloat(accountQuality),  // Visits per minute
