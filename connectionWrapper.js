@@ -9,7 +9,7 @@ const { EventEmitter } = require('events');
 
 // KeyManager for API key rotation
 const keyManager = require('./utils/keyManager');
-if (process.env.EULER_API_KEY) {
+if (process.env.EULER_API_KEY && SignConfig) {
     SignConfig.apiKey = process.env.EULER_API_KEY;
     console.log('[Sign] EulerStream API Key configured');
 }
@@ -44,12 +44,16 @@ class TikTokConnectionWrapper extends EventEmitter {
         // Set API Key using KeyManager for rotation
         const apiKey = keyManager.getActiveKey();
         if (apiKey) {
-            SignConfig.apiKey = apiKey;
-            console.log(`[Wrapper] Using Euler Key: ${apiKey.slice(0, 10)}...`);
+            if (SignConfig) {
+                SignConfig.apiKey = apiKey;
+                console.log(`[Wrapper] Using Euler Key: ${apiKey.slice(0, 10)}...`);
+            } else {
+                console.warn(`[Wrapper] SignConfig not available, passing key via options`);
+            }
         } else if (options.eulerApiKey) {
-            SignConfig.apiKey = options.eulerApiKey;
+            if (SignConfig) SignConfig.apiKey = options.eulerApiKey;
         } else if (process.env.EULER_API_KEY) {
-            SignConfig.apiKey = process.env.EULER_API_KEY;
+            if (SignConfig) SignConfig.apiKey = process.env.EULER_API_KEY;
         }
 
         // Merge options with proxy settings
