@@ -1207,24 +1207,9 @@ class Manager {
         await this.ensureDb();
         const { page = 1, limit = 50, search = '', sort = 'updated_at' } = options;
 
-        let roomSql = `
-            SELECT r.*, 
-                   COALESCE(g.val, 0) as current_gift_value,
-                   COALESCE(ag.val, 0) as all_time_gift_value
-            FROM room r
-            LEFT JOIN (
-                SELECT room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val
-                FROM event
-                WHERE type = 'gift' AND session_id IS NULL
-                GROUP BY room_id
-            ) g ON r.room_id = g.room_id
-            LEFT JOIN (
-                SELECT room_id, SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as val
-                FROM event
-                WHERE type = 'gift'
-                GROUP BY room_id
-            ) ag ON r.room_id = ag.room_id
-        `;
+        // OPTIMIZED: Simple room query without expensive subqueries
+        // Gift values are calculated in the batch combinedStats query for only the current page's rooms
+        let roomSql = `SELECT * FROM room r`;
         let countSql = 'SELECT COUNT(*) as total FROM room';
         const params = [];
         const countParams = [];
@@ -1239,17 +1224,11 @@ class Manager {
         }
 
         // 2. Apply Ordering
+        // NOTE: Gift-based sorts use in-memory sorting since we removed expensive subqueries
         let orderBy = '';
-        if (sort === 'gift_desc') {
-            // Sort by current session gift value
-            orderBy = 'current_gift_value DESC, r.updated_at DESC';
-        } else if (sort === 'gift_asc') {
-            orderBy = 'current_gift_value ASC, r.updated_at DESC';
-        } else if (sort === 'total_gift_desc') {
-            // Sort by all-time gift value
-            orderBy = 'all_time_gift_value DESC, r.updated_at DESC';
-        } else if (sort === 'total_gift_asc') {
-            orderBy = 'all_time_gift_value ASC, r.updated_at DESC';
+        if (sort === 'gift_desc' || sort === 'gift_asc' || sort === 'total_gift_desc' || sort === 'total_gift_asc') {
+            // Will be sorted in-memory after fetching stats - use default order for now
+            orderBy = 'r.updated_at DESC';
         } else {
             // Default: Live first, then updated_at
             if (liveRoomIds.length > 0) {
@@ -1272,6 +1251,7 @@ class Manager {
 
         // Check if this is a calculated metric sort that requires in-memory sorting
         const calculatedMetricSorts = [
+            'gift_desc', 'gift_asc', 'total_gift_desc', 'total_gift_asc',  // Gift sorts now in-memory
             'gift_eff_desc', 'gift_eff_asc',
             'interact_eff_desc', 'interact_eff_asc',
             'account_quality_desc', 'account_quality_asc',
@@ -1362,75 +1342,81 @@ class Manager {
         `, roomIds);
         const sessionMap = Object.fromEntries(lastSessions.map(r => [r.roomId, r.createdAt]));
 
-        // TOP1/TOP3/TOP10/TOP30 Gift Concentration - calculate per-room using window functions
-        // This calculates what % of total gifts come from top N gifters (based on ALL historical data)
-        const concentrationStats = await query(`
-            WITH user_gifts AS (
-                SELECT room_id, user_id,
-                       SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as user_total
-                FROM event 
-                WHERE room_id IN (${placeholders}) AND type = 'gift' AND user_id IS NOT NULL
-                GROUP BY room_id, user_id
-            ),
-            ranked_users AS (
-                SELECT room_id, user_id, user_total,
-                       ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY user_total DESC) as rank,
-                       SUM(user_total) OVER (PARTITION BY room_id) as room_total
-                FROM user_gifts
-            )
-            SELECT room_id,
-                   COALESCE(SUM(CASE WHEN rank <= 1 THEN user_total ELSE 0 END), 0) as top1_value,
-                   COALESCE(SUM(CASE WHEN rank <= 3 THEN user_total ELSE 0 END), 0) as top3_value,
-                   COALESCE(SUM(CASE WHEN rank <= 10 THEN user_total ELSE 0 END), 0) as top10_value,
-                   COALESCE(SUM(CASE WHEN rank <= 30 THEN user_total ELSE 0 END), 0) as top30_value,
-                   MAX(room_total) as total_value
-            FROM ranked_users
-            GROUP BY room_id
-        `, roomIds);
-        const concentrationMap = Object.fromEntries(concentrationStats.map(r => [r.roomId, {
-            top1: parseInt(r.top1Value) || 0,
-            top3: parseInt(r.top3Value) || 0,
-            top10: parseInt(r.top10Value) || 0,
-            top30: parseInt(r.top30Value) || 0,
-            total: parseInt(r.totalValue) || 0
-        }]));
+        // OPTIMIZATION: Only calculate expensive metrics when needed for sorting
+        const needsConcentration = sort.includes('top1') || sort.includes('top3') || sort.includes('top10') || sort.includes('top30');
+        const needsDailyAvg = sort.includes('daily_avg');
 
-        // Valid Daily Gift Average: average gift value on days with >3 hours of broadcast
-        // Uses CTE to find valid broadcast days per room
-        // Note: includes ALL events (archived + live) to get complete picture
-        const validDailyStats = await query(`
-            WITH daily_stats AS (
-                SELECT 
-                    room_id,
-                    DATE(timestamp) as day,
-                    SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as gift_value,
-                    EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 as hours
-                FROM event 
-                WHERE room_id IN (${placeholders})
-                GROUP BY room_id, DATE(timestamp)
-                HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 3
-            )
-            SELECT room_id, 
-                   AVG(gift_value) as avg_gift,
-                   COUNT(*) as valid_days
-            FROM daily_stats
-            GROUP BY room_id
-        `, roomIds);
-        const validDailyMap = Object.fromEntries(validDailyStats.map(r => [r.roomId, {
-            avgGift: Math.round(parseFloat(r.avgGift)) || 0,
-            validDays: parseInt(r.validDays) || 0
-        }]));
+        // TOP1/TOP3/TOP10/TOP30 Gift Concentration - only if sorting by these metrics
+        let concentrationMap = {};
+        if (needsConcentration) {
+            const concentrationStats = await query(`
+                WITH user_gifts AS (
+                    SELECT room_id, user_id,
+                           SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as user_total
+                    FROM event 
+                    WHERE room_id IN (${placeholders}) AND type = 'gift' AND user_id IS NOT NULL
+                    GROUP BY room_id, user_id
+                ),
+                ranked_users AS (
+                    SELECT room_id, user_id, user_total,
+                           ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY user_total DESC) as rank,
+                           SUM(user_total) OVER (PARTITION BY room_id) as room_total
+                    FROM user_gifts
+                )
+                SELECT room_id,
+                       COALESCE(SUM(CASE WHEN rank <= 1 THEN user_total ELSE 0 END), 0) as top1_value,
+                       COALESCE(SUM(CASE WHEN rank <= 3 THEN user_total ELSE 0 END), 0) as top3_value,
+                       COALESCE(SUM(CASE WHEN rank <= 10 THEN user_total ELSE 0 END), 0) as top10_value,
+                       COALESCE(SUM(CASE WHEN rank <= 30 THEN user_total ELSE 0 END), 0) as top30_value,
+                       MAX(room_total) as total_value
+                FROM ranked_users
+                GROUP BY room_id
+            `, roomIds);
+            concentrationMap = Object.fromEntries(concentrationStats.map(r => [r.roomId, {
+                top1: parseInt(r.top1Value) || 0,
+                top3: parseInt(r.top3Value) || 0,
+                top10: parseInt(r.top10Value) || 0,
+                top30: parseInt(r.top30Value) || 0,
+                total: parseInt(r.totalValue) || 0
+            }]));
+        }
+
+        // Valid Daily Gift Average - only if sorting by daily average
+        let validDailyMap = {};
+        if (needsDailyAvg) {
+            const validDailyStats = await query(`
+                WITH daily_stats AS (
+                    SELECT 
+                        room_id,
+                        DATE(timestamp) as day,
+                        SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as gift_value,
+                        EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 as hours
+                    FROM event 
+                    WHERE room_id IN (${placeholders})
+                    GROUP BY room_id, DATE(timestamp)
+                    HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 3
+                )
+                SELECT room_id, 
+                       AVG(gift_value) as avg_gift,
+                       COUNT(*) as valid_days
+                FROM daily_stats
+                GROUP BY room_id
+            `, roomIds);
+            validDailyMap = Object.fromEntries(validDailyStats.map(r => [r.roomId, {
+                avgGift: Math.round(parseFloat(r.avgGift)) || 0,
+                validDays: parseInt(r.validDays) || 0
+            }]));
+        }
 
         // 6. Build final stats objects (use roomId after camelCase conversion)
-        // Note: currentGiftValue and allTimeGiftValue come from the SQL JOIN already
         const stats = rooms.map(r => {
             const s = statsMap[r.roomId] || {};
             const visits = s.currVisits || 0;
             const comments = s.currComments || 0;
             const allTimeVisits = s.allVisits || 0;
             const allTimeComments = s.allComments || 0;
-            const currentGift = s.currGift || parseInt(r.currentGiftValue) || 0;
-            const allTimeGift = s.allGift || parseInt(r.allTimeGiftValue) || 0;
+            const currentGift = s.currGift || 0;
+            const allTimeGift = s.allGift || 0;
             const durationSecs = s.durationSecs || 0;
             const durationMins = durationSecs / 60;
             const allTimeDurationMins = (s.allTimeDurationSecs || 0) / 60;
@@ -1478,6 +1464,14 @@ class Manager {
                 if (!a.isLive && b.isLive) return 1;
                 return 0;
             });
+        } else if (sort === 'gift_desc') {
+            stats.sort((a, b) => b.totalGiftValue - a.totalGiftValue);
+        } else if (sort === 'gift_asc') {
+            stats.sort((a, b) => a.totalGiftValue - b.totalGiftValue);
+        } else if (sort === 'total_gift_desc') {
+            stats.sort((a, b) => b.allTimeGiftValue - a.allTimeGiftValue);
+        } else if (sort === 'total_gift_asc') {
+            stats.sort((a, b) => a.allTimeGiftValue - b.allTimeGiftValue);
         } else if (sort === 'gift_eff_desc') {
             stats.sort((a, b) => b.giftEfficiency - a.giftEfficiency);
         } else if (sort === 'gift_eff_asc') {
