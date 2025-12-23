@@ -1106,8 +1106,8 @@ class Manager {
 
     async saveSetting(key, value) {
         await this.ensureDb();
-        await run(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, datetime('now', 'localtime'))
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at`,
+        await run(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, NOW())
+             ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
             [key, value]);
     }
 
