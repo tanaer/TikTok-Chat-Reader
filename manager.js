@@ -1342,44 +1342,40 @@ class Manager {
         `, roomIds);
         const sessionMap = Object.fromEntries(lastSessions.map(r => [r.roomId, r.createdAt]));
 
-        // OPTIMIZATION: Only calculate expensive metrics when needed for sorting
-        const needsConcentration = sort.includes('top1') || sort.includes('top3') || sort.includes('top10') || sort.includes('top30');
+        // Valid Daily Gift Average - only if sorting by daily average (for performance)
         const needsDailyAvg = sort.includes('daily_avg');
 
-        // TOP1/TOP3/TOP10/TOP30 Gift Concentration - only if sorting by these metrics
-        let concentrationMap = {};
-        if (needsConcentration) {
-            const concentrationStats = await query(`
-                WITH user_gifts AS (
-                    SELECT room_id, user_id,
-                           SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as user_total
-                    FROM event 
-                    WHERE room_id IN (${placeholders}) AND type = 'gift' AND user_id IS NOT NULL
-                    GROUP BY room_id, user_id
-                ),
-                ranked_users AS (
-                    SELECT room_id, user_id, user_total,
-                           ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY user_total DESC) as rank,
-                           SUM(user_total) OVER (PARTITION BY room_id) as room_total
-                    FROM user_gifts
-                )
-                SELECT room_id,
-                       COALESCE(SUM(CASE WHEN rank <= 1 THEN user_total ELSE 0 END), 0) as top1_value,
-                       COALESCE(SUM(CASE WHEN rank <= 3 THEN user_total ELSE 0 END), 0) as top3_value,
-                       COALESCE(SUM(CASE WHEN rank <= 10 THEN user_total ELSE 0 END), 0) as top10_value,
-                       COALESCE(SUM(CASE WHEN rank <= 30 THEN user_total ELSE 0 END), 0) as top30_value,
-                       MAX(room_total) as total_value
-                FROM ranked_users
-                GROUP BY room_id
-            `, roomIds);
-            concentrationMap = Object.fromEntries(concentrationStats.map(r => [r.roomId, {
-                top1: parseInt(r.top1Value) || 0,
-                top3: parseInt(r.top3Value) || 0,
-                top10: parseInt(r.top10Value) || 0,
-                top30: parseInt(r.top30Value) || 0,
-                total: parseInt(r.totalValue) || 0
-            }]));
-        }
+        // TOP1/TOP3/TOP10/TOP30 Gift Concentration - always calculate (displayed in default view)
+        const concentrationStats = await query(`
+            WITH user_gifts AS (
+                SELECT room_id, user_id,
+                       SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as user_total
+                FROM event 
+                WHERE room_id IN (${placeholders}) AND type = 'gift' AND user_id IS NOT NULL
+                GROUP BY room_id, user_id
+            ),
+            ranked_users AS (
+                SELECT room_id, user_id, user_total,
+                       ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY user_total DESC) as rank,
+                       SUM(user_total) OVER (PARTITION BY room_id) as room_total
+                FROM user_gifts
+            )
+            SELECT room_id,
+                   COALESCE(SUM(CASE WHEN rank <= 1 THEN user_total ELSE 0 END), 0) as top1_value,
+                   COALESCE(SUM(CASE WHEN rank <= 3 THEN user_total ELSE 0 END), 0) as top3_value,
+                   COALESCE(SUM(CASE WHEN rank <= 10 THEN user_total ELSE 0 END), 0) as top10_value,
+                   COALESCE(SUM(CASE WHEN rank <= 30 THEN user_total ELSE 0 END), 0) as top30_value,
+                   MAX(room_total) as total_value
+            FROM ranked_users
+            GROUP BY room_id
+        `, roomIds);
+        const concentrationMap = Object.fromEntries(concentrationStats.map(r => [r.roomId, {
+            top1: parseInt(r.top1Value) || 0,
+            top3: parseInt(r.top3Value) || 0,
+            top10: parseInt(r.top10Value) || 0,
+            top30: parseInt(r.top30Value) || 0,
+            total: parseInt(r.totalValue) || 0
+        }]));
 
         // Valid Daily Gift Average - only if sorting by daily average
         let validDailyMap = {};
@@ -1485,21 +1481,22 @@ class Manager {
         } else if (sort === 'account_quality_asc') {
             stats.sort((a, b) => a.accountQuality - b.accountQuality);
         } else if (sort === 'top10_ratio_desc') {
-            stats.sort((a, b) => b.top10Ratio - a.top10Ratio);
-        } else if (sort === 'top10_ratio_asc') {
+            // Sort from low to high (lower concentration = better diversification)
             stats.sort((a, b) => a.top10Ratio - b.top10Ratio);
+        } else if (sort === 'top10_ratio_asc') {
+            stats.sort((a, b) => b.top10Ratio - a.top10Ratio);
         } else if (sort === 'top30_ratio_desc') {
-            stats.sort((a, b) => b.top30Ratio - a.top30Ratio);
-        } else if (sort === 'top30_ratio_asc') {
             stats.sort((a, b) => a.top30Ratio - b.top30Ratio);
+        } else if (sort === 'top30_ratio_asc') {
+            stats.sort((a, b) => b.top30Ratio - a.top30Ratio);
         } else if (sort === 'top1_ratio_desc') {
-            stats.sort((a, b) => b.top1Ratio - a.top1Ratio);
-        } else if (sort === 'top1_ratio_asc') {
             stats.sort((a, b) => a.top1Ratio - b.top1Ratio);
+        } else if (sort === 'top1_ratio_asc') {
+            stats.sort((a, b) => b.top1Ratio - a.top1Ratio);
         } else if (sort === 'top3_ratio_desc') {
-            stats.sort((a, b) => b.top3Ratio - a.top3Ratio);
-        } else if (sort === 'top3_ratio_asc') {
             stats.sort((a, b) => a.top3Ratio - b.top3Ratio);
+        } else if (sort === 'top3_ratio_asc') {
+            stats.sort((a, b) => b.top3Ratio - a.top3Ratio);
         } else if (sort === 'daily_avg_desc') {
             stats.sort((a, b) => b.validDailyAvg - a.validDailyAvg);
         } else if (sort === 'daily_avg_asc') {
