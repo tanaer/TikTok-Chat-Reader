@@ -1692,17 +1692,20 @@ class Manager {
         `, params);
 
         // Gift Details - breakdown by user + gift (for 礼物明细 tab)
+        // Use LEFT JOIN gift table for gift names since data_json is no longer written
         const giftDetails = await query(`
             SELECT 
-                MAX(nickname) as nickname,
-                MAX(unique_id) as uniqueId,
-                (data_json::json->>'giftName') as giftName,
-                SUM(COALESCE(repeat_count, 1)) as count,
-                MAX(COALESCE(diamond_count, 0)) as unitPrice,
-                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as totalValue
-            FROM event
-            ${whereClause} AND type = 'gift'
-            GROUP BY user_id, (data_json::json->>'giftId'), (data_json::json->>'giftName')
+                MAX(e.nickname) as nickname,
+                MAX(e.unique_id) as uniqueId,
+                e.gift_id as giftId,
+                COALESCE(g.name_cn, g.name_en, 'ID:' || e.gift_id) as giftName,
+                SUM(COALESCE(e.repeat_count, 1)) as count,
+                MAX(COALESCE(e.diamond_count, 0)) as unitPrice,
+                SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as totalValue
+            FROM event e
+            LEFT JOIN gift g ON e.gift_id = g.gift_id
+            ${whereClause.replace(/room_id/g, 'e.room_id').replace(/session_id/g, 'e.session_id')} AND e.type = 'gift'
+            GROUP BY e.user_id, e.gift_id, g.name_cn, g.name_en
             ORDER BY totalValue DESC
             LIMIT 100
         `, params);
