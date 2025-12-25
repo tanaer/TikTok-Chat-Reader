@@ -1688,8 +1688,8 @@ class Manager {
             LIMIT 20
         `, params);
 
-        // Gift Details - breakdown by user + gift (for 礼物明细 tab)
         // Use LEFT JOIN gift table for gift names since data_json is no longer written
+        // Note: e.gift_id is INTEGER but g.gift_id is TEXT, need to cast for JOIN
         const giftDetails = await query(`
             SELECT 
                 MAX(e.nickname) as nickname,
@@ -1700,7 +1700,7 @@ class Manager {
                 MAX(COALESCE(e.diamond_count, 0)) as unitPrice,
                 SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as totalValue
             FROM event e
-            LEFT JOIN gift g ON e.gift_id = g.gift_id
+            LEFT JOIN gift g ON e.gift_id::TEXT = g.gift_id
             ${whereClause.replace(/room_id/g, 'e.room_id').replace(/session_id/g, 'e.session_id')} AND e.type = 'gift'
             GROUP BY e.user_id, e.gift_id, g.name_cn, g.name_en
             ORDER BY totalValue DESC
