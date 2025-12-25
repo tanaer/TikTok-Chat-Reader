@@ -258,11 +258,11 @@ class Manager {
         await this.ensureDb();
         const now = new Date();
         const dateStr = now.toISOString().slice(0, 10).replace(/-/g, '');
+        const timeStr = now.toISOString().slice(11, 16).replace(':', '');
 
-        // Find next session number for today
-        const result = await get('SELECT COUNT(*) as cnt FROM session WHERE session_id LIKE ?', [dateStr + '%']);
-        const cnt = result ? result.cnt : 0;
-        const sessionId = `${dateStr}${String(cnt + 1).padStart(2, '0')}`;
+        // Use room_id + date + time as session_id to prevent collisions
+        // Format: roomId_YYYYMMDD_HHMM (e.g., blooming1881_20251225_1430)
+        const sessionId = `${roomId}_${dateStr}_${timeStr}`;
 
         await run('INSERT INTO session (session_id, room_id, snapshot_json) VALUES (?, ?, ?)',
             [sessionId, roomId, JSON.stringify(snapshotData)]);
