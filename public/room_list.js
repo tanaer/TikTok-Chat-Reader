@@ -93,7 +93,7 @@ function renderRoomCard(r, index = 0) {
                     <div class="stat-value text-sm text-success font-mono">${(r.allTimeGiftValue || 0).toLocaleString()}</div>
                 </div>
                 ${roomListSort.includes('daily_avg') ? `
-                <div class="stat p-2 place-items-center" title="有效日均 (开播>3h的日期)&#10;有效天数: ${r.validDays || 0}天">
+                <div class="stat p-2 place-items-center" title="有效日均 (开播>2h的日期)&#10;有效天数: ${r.validDays || 0}天">
                     <div class="stat-title text-[10px] uppercase tracking-wider">💎日</div>
                     <div class="stat-value text-sm text-primary font-mono">${(r.validDailyAvg || 0).toLocaleString()}</div>
                 </div>
@@ -250,7 +250,7 @@ async function renderRoomList() {
                             <th class="p-2 text-center">弹幕</th>
                             <th class="p-2 text-center">💎本场</th>
                             <th class="p-2 text-center">💎总计</th>
-                            ${roomListSort.includes('daily_avg') ? '<th class="p-2 text-center" title="有效日均 (开播>3h的日期)">💎日均</th>' : ''}
+                            ${roomListSort.includes('daily_avg') ? '<th class="p-2 text-center" title="有效日均 (开播>2h的日期)">💎日均</th>' : ''}
                             <th class="p-2 text-center">💰效率</th>
                             <th class="p-2 text-center">💬效率</th>
                             <th class="p-2 text-center">👥质量</th>
