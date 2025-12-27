@@ -34,6 +34,9 @@ class Manager {
     constructor() {
         this.prices = this.loadPrices();
         this.dbReady = false;
+        // Settings cache to avoid frequent DB queries
+        this.settingsCache = null;
+        this.settingsCacheTime = 0;
     }
 
     async ensureDb() {
@@ -272,15 +275,17 @@ class Manager {
     async getSessions(roomId) {
         await this.ensureDb();
         // Use LEFT JOIN with aggregate instead of correlated subquery (much faster)
+        // OPTIMIZED: Use LATERAL join to avoid full table scan on event table
+        // This allows the query to use the idx_event_session_timestamp_desc index
         if (roomId) {
             return await query(`
                 SELECT s.session_id, s.room_id, s.created_at, et.end_time
                 FROM session s
-                LEFT JOIN (
-                    SELECT session_id, MAX(timestamp) as end_time 
+                LEFT JOIN LATERAL (
+                    SELECT MAX(timestamp) as end_time 
                     FROM event 
-                    GROUP BY session_id
-                ) et ON s.session_id = et.session_id
+                    WHERE event.session_id = s.session_id
+                ) et ON true
                 WHERE s.room_id = ? 
                 ORDER BY s.created_at DESC
             `, [roomId]);
@@ -288,11 +293,11 @@ class Manager {
         return await query(`
             SELECT s.session_id, s.room_id, s.created_at, et.end_time
             FROM session s
-            LEFT JOIN (
-                SELECT session_id, MAX(timestamp) as end_time 
+            LEFT JOIN LATERAL (
+                SELECT MAX(timestamp) as end_time 
                 FROM event 
-                GROUP BY session_id
-            ) et ON s.session_id = et.session_id
+                WHERE event.session_id = s.session_id
+            ) et ON true
             ORDER BY s.created_at DESC
         `);
     }
@@ -1112,13 +1117,25 @@ class Manager {
         await run(`INSERT INTO settings (key, value, updated_at) VALUES (?, ?, NOW())
              ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
             [key, value]);
+        // Invalidate cache when settings change
+        this.settingsCache = null;
     }
 
     async getAllSettings() {
+        // Return cached settings if still valid (60s TTL)
+        const CACHE_TTL = 60 * 1000;
+        if (this.settingsCache && (Date.now() - this.settingsCacheTime) < CACHE_TTL) {
+            return this.settingsCache;
+        }
+
         await this.ensureDb();
         const rows = await query('SELECT key, value FROM settings');
         const settings = {};
         for (const r of rows) settings[r.key] = r.value;
+
+        // Update cache
+        this.settingsCache = settings;
+        this.settingsCacheTime = Date.now();
         return settings;
     }
 
@@ -1390,7 +1407,7 @@ class Manager {
                     FROM event 
                     WHERE room_id IN (${placeholders})
                     GROUP BY room_id, DATE(timestamp)
-                    HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 3
+                    HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 2
                 )
                 SELECT room_id, 
                        AVG(gift_value) as avg_gift,
