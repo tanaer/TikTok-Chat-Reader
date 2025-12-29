@@ -102,9 +102,19 @@ class TikTokConnectionWrapper extends EventEmitter {
                 const errors = err?.errors || [];
                 const errorReasons = [];
 
+                // Log full error details for debugging
+                if (errors.length === 0) {
+                    console.error(`[Wrapper] @${this.uniqueId} FetchIsLiveError with no nested errors. Full error:`, err);
+                }
+
                 for (const e of errors) {
                     const eMsg = e?.message || String(e);
-                    if (eMsg?.includes?.('SIGI_STATE')) {
+                    const eCode = e?.code || e?.statusCode || '';
+
+                    // Check for rate limiting indicators
+                    if (eCode === 429 || eMsg?.includes?.('rate limit') || eMsg?.includes?.('Too Many Requests')) {
+                        errorReasons.push('🚫 API 请求频率过高，已被限流');
+                    } else if (eMsg?.includes?.('SIGI_STATE')) {
                         errorReasons.push('🔒 TikTok 页面解析失败（可能被封锁或页面结构变化）');
                     } else if (eMsg?.includes?.('InvalidResponseError') || e?.name === 'InvalidResponseError') {
                         errorReasons.push('❌ API 返回无效响应');
@@ -112,15 +122,21 @@ class TikTokConnectionWrapper extends EventEmitter {
                         errorReasons.push('🔑 Euler API Key 权限不足，无法使用备用方法');
                     } else if (eMsg?.includes?.('timeout') || eMsg?.includes?.('Timeout')) {
                         errorReasons.push('⏱️ 连接超时');
+                    } else if (eMsg?.includes?.('403') || eMsg?.includes?.('Forbidden')) {
+                        errorReasons.push('🚫 访问被拒绝 (403)');
+                    } else if (eMsg?.includes?.('ECONNRESET') || eMsg?.includes?.('ECONNREFUSED')) {
+                        errorReasons.push('🔌 网络连接被重置');
                     } else if (eMsg) {
-                        errorReasons.push(`⚠️ ${eMsg.slice(0, 80)}`);
+                        errorReasons.push(`⚠️ ${eMsg.slice(0, 100)}`);
                     }
                 }
 
                 if (errorReasons.length > 0) {
                     humanMessage = `无法获取房间信息:\n  ${errorReasons.join('\n  ')}`;
                 } else {
-                    humanMessage = '无法获取房间信息（未知原因）';
+                    // When no specific reason found, log more details
+                    humanMessage = `无法获取房间信息（未知原因）- errors数组长度: ${errors.length}`;
+                    console.error(`[Wrapper] @${this.uniqueId} Unknown fetch error. Info:`, err?.info, 'Message:', msg);
                 }
 
             } else if (msg?.includes?.('504') || msg?.includes?.('500') || msg?.includes?.('sign server')) {
