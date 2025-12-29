@@ -5,6 +5,9 @@
 		},
 		{
 			"path": "../TikTok-Live-Connector"
+		},
+		{
+			"path": "../Tiktok_chajian"
 		}
 	],
 	"settings": {}

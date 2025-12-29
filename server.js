@@ -383,10 +383,10 @@ app.get('/api/rooms', async (req, res) => {
 // Room Management API
 app.post('/api/rooms', async (req, res) => {
     try {
-        const { roomId, name, isMonitorEnabled, language } = req.body;
+        const { roomId, name, isMonitorEnabled, language, priority } = req.body;
         if (!roomId) return res.status(400).json({ error: 'roomId required' });
 
-        const result = await manager.updateRoom(roomId, name, null, isMonitorEnabled, language);
+        const result = await manager.updateRoom(roomId, name, null, isMonitorEnabled, language, priority);
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -512,6 +512,7 @@ app.get('/api/analysis/users', async (req, res) => {
             activeHour: req.query.activeHour !== undefined ? req.query.activeHour : null,
             activeHourEnd: req.query.activeHourEnd !== undefined ? req.query.activeHourEnd : null,
             search: req.query.search || '',
+            searchExact: req.query.searchExact === 'true',
             giftPreference: req.query.giftPreference || ''
         };
         const page = parseInt(req.query.page) || 1;
@@ -690,7 +691,7 @@ app.post('/api/analysis/ai', async (req, res) => {
 
 app.post('/api/rooms', async (req, res) => {
     try {
-        let { roomId, name, address, isMonitorEnabled } = req.body;
+        let { roomId, name, address, isMonitorEnabled, language, priority } = req.body;
 
         // Normalize roomId: remove @ prefix to prevent duplicates (e.g. @blooming1881 vs blooming1881)
         if (roomId && roomId.startsWith('@')) {
@@ -698,12 +699,12 @@ app.post('/api/rooms', async (req, res) => {
             console.log(`[API] Normalized roomId by removing @ prefix: ${roomId}`);
         }
 
-        console.log(`[API] POST /api/rooms - roomId: ${roomId}, isMonitorEnabled: ${isMonitorEnabled} (type: ${typeof isMonitorEnabled})`);
+        console.log(`[API] POST /api/rooms - roomId: ${roomId}, isMonitorEnabled: ${isMonitorEnabled} (type: ${typeof isMonitorEnabled}), priority: ${priority}`);
 
         // If isMonitorEnabled is undefined, default to 1 (true) for new rooms, or preserve existing?
         // Manager handles upsert. We should pass what we have.
         // Frontend "saveRoom" sends all fields.
-        const room = await manager.updateRoom(roomId, name, address, isMonitorEnabled);
+        const room = await manager.updateRoom(roomId, name, address, isMonitorEnabled, language, priority);
         console.log(`[API] Room updated:`, room);
 
         // If monitor was just disabled, disconnect immediately and save session

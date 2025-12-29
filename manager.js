@@ -126,12 +126,12 @@ class Manager {
     }
 
     // Room Management
-    async updateRoom(roomId, name, address, isMonitorEnabled, language = null) {
+    async updateRoom(roomId, name, address, isMonitorEnabled, language = null, priority = null) {
         await this.ensureDb();
         const now = getNowBeijing();
 
         // Check if room exists to preserve existing values when null is passed
-        const existing = await get('SELECT name, address, is_monitor_enabled, language FROM room WHERE room_id = ?', [roomId]);
+        const existing = await get('SELECT name, address, is_monitor_enabled, language, priority FROM room WHERE room_id = ?', [roomId]);
 
         // Preserve name if null/undefined passed
         let finalName = name;
@@ -151,6 +151,14 @@ class Manager {
             finalLanguage = existing ? existing.language : '中文';
         }
 
+        // Preserve priority if null/undefined passed (default 0)
+        let finalPriority = priority;
+        if (priority === null || priority === undefined) {
+            finalPriority = existing ? (existing.priority || 0) : 0;
+        } else {
+            finalPriority = parseInt(priority) || 0;
+        }
+
         // Handle monitor enabled - preserve existing value if undefined
         let monitorVal;
         console.log(`[Manager] updateRoom - isMonitorEnabled: ${isMonitorEnabled} (type: ${typeof isMonitorEnabled})`);
@@ -168,19 +176,20 @@ class Manager {
             monitorVal = 1;
         }
 
-        console.log(`[Manager] updateRoom - monitorVal: ${monitorVal}, language: ${finalLanguage}`);
+        console.log(`[Manager] updateRoom - monitorVal: ${monitorVal}, language: ${finalLanguage}, priority: ${finalPriority}`);
 
         await run(`
-            INSERT INTO room (room_id, name, address, language, updated_at, is_monitor_enabled) 
-            VALUES (?, ?, ?, ?, ?, ?)
+            INSERT INTO room (room_id, name, address, language, updated_at, is_monitor_enabled, priority) 
+            VALUES (?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(room_id) DO UPDATE SET 
                 name = excluded.name, 
                 address = excluded.address,
                 language = excluded.language,
                 updated_at = excluded.updated_at,
-                is_monitor_enabled = excluded.is_monitor_enabled
-        `, [roomId, finalName, finalAddress, finalLanguage, now, monitorVal]);
-        return { room_id: roomId, name: finalName, address: finalAddress, language: finalLanguage, is_monitor_enabled: monitorVal };
+                is_monitor_enabled = excluded.is_monitor_enabled,
+                priority = excluded.priority
+        `, [roomId, finalName, finalAddress, finalLanguage, now, monitorVal, finalPriority]);
+        return { room_id: roomId, name: finalName, address: finalAddress, language: finalLanguage, is_monitor_enabled: monitorVal, priority: finalPriority };
     }
 
     async getRooms(options = {}) {
@@ -850,7 +859,7 @@ class Manager {
     async getTopGifters(page = 1, pageSize = 50, filters = {}) {
         await this.ensureDb();
 
-        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', giftPreference = '' } = filters;
+        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '' } = filters;
         const offset = (page - 1) * pageSize;
 
         // Step 1: Build filter conditions
@@ -890,10 +899,17 @@ class Manager {
             }
         }
 
-        // Search filter for nickname or uniqueId
+        // Search filter for nickname or uniqueId - support exact vs fuzzy mode
         if (search) {
-            conditions.push(`(u.nickname LIKE ? OR u.unique_id LIKE ?)`);
-            params.push(`%${search}%`, `%${search}%`);
+            if (searchExact === true || searchExact === 'true') {
+                // Exact match
+                conditions.push(`(u.nickname = ? OR u.unique_id = ?)`);
+                params.push(search, search);
+            } else {
+                // Fuzzy match (default)
+                conditions.push(`(u.nickname LIKE ? OR u.unique_id LIKE ?)`);
+                params.push(`%${search}%`, `%${search}%`);
+            }
         }
 
         const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -1276,7 +1292,8 @@ class Manager {
             'top30_ratio_desc', 'top30_ratio_asc',
             'top1_ratio_desc', 'top1_ratio_asc',
             'top3_ratio_desc', 'top3_ratio_asc',
-            'daily_avg_desc', 'daily_avg_asc'
+            'daily_avg_desc', 'daily_avg_asc',
+            'priority_desc', 'priority_asc'
         ];
         const isCalculatedSort = calculatedMetricSorts.includes(sort);
 
@@ -1518,6 +1535,10 @@ class Manager {
             stats.sort((a, b) => b.validDailyAvg - a.validDailyAvg);
         } else if (sort === 'daily_avg_asc') {
             stats.sort((a, b) => a.validDailyAvg - b.validDailyAvg);
+        } else if (sort === 'priority_desc') {
+            stats.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+        } else if (sort === 'priority_asc') {
+            stats.sort((a, b) => (a.priority || 0) - (b.priority || 0));
         }
 
         // Apply pagination AFTER in-memory sort for calculated metrics
@@ -1742,47 +1763,50 @@ class Manager {
         };
     }
 
-    // All-time TOP30 leaderboards (across all sessions)
+    // All-time TOP50 leaderboards (across all sessions)
     async getAllTimeLeaderboards(roomId) {
         await this.ensureDb();
 
-        // Top 30 Gifters (all time)
+        // Top 50 Gifters (all time) - include unique_id for clickable search
         const topGifters = await query(`
             SELECT 
                 MAX(nickname) as nickname,
+                MAX(unique_id) as unique_id,
                 user_id as userId,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as value
             FROM event
             WHERE room_id = ? AND type = 'gift' AND user_id IS NOT NULL
             GROUP BY user_id
             ORDER BY value DESC
-            LIMIT 30
+            LIMIT 50
         `, [roomId]);
 
-        // Top 30 Chatters (all time)
+        // Top 50 Chatters (all time) - include unique_id for clickable search
         const topChatters = await query(`
             SELECT 
                 MAX(nickname) as nickname,
+                MAX(unique_id) as unique_id,
                 user_id as userId,
                 COUNT(*) as count
             FROM event
             WHERE room_id = ? AND type = 'chat' AND user_id IS NOT NULL
             GROUP BY user_id
             ORDER BY count DESC
-            LIMIT 30
+            LIMIT 50
         `, [roomId]);
 
-        // Top 30 Likers (all time)
+        // Top 50 Likers (all time) - include unique_id for clickable search
         const topLikers = await query(`
             SELECT 
                 MAX(nickname) as nickname,
+                MAX(unique_id) as unique_id,
                 user_id as userId,
                 SUM(COALESCE(like_count, 0)) as count
             FROM event
             WHERE room_id = ? AND type = 'like' AND user_id IS NOT NULL
             GROUP BY user_id
             ORDER BY count DESC
-            LIMIT 30
+            LIMIT 50
         `, [roomId]);
 
         return {
