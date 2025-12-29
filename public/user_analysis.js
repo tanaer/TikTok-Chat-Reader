@@ -4,7 +4,13 @@
 // Pagination state
 let userListPage = 1;
 let userListTotalCount = 0;
-const userListPageSize = 50;
+let userListPageSize = 50;  // Now mutable for dynamic page size
+
+function setUserPageSize(size) {
+    userListPageSize = parseInt(size) || 50;
+    userListPage = 1;  // Reset to first page
+    fetchUserAnalysis();
+}
 
 function renderUserList() {
     fetchUserAnalysis();
@@ -99,6 +105,7 @@ function renderPagination(currentPage, totalPages) {
 
 function fetchUserAnalysis() {
     const search = $('#userSearch').val();
+    const searchMode = $('#userSearchMode').val();  // 'exact' or 'fuzzy'
     const langFilter = $('#userLanguageFilter').val();
     const minRooms = $('#userMinRooms').val() || 1;
     const activeHour = $('#userActiveHour').val();
@@ -122,6 +129,9 @@ function fetchUserAnalysis() {
     }
     if (search) {
         url += `&search=${encodeURIComponent(search)}`;
+        if (searchMode === 'exact') {
+            url += `&searchExact=true`;
+        }
     }
     if (giftPreference) {
         url += `&giftPreference=${giftPreference}`;
@@ -468,6 +478,7 @@ window.showUserDetails = showUserDetails;
 window.renderGlobalCharts = renderGlobalCharts;
 window.runAiAnalysis = runAiAnalysis;
 window.goToUserPage = goToUserPage;
+window.setUserPageSize = setUserPageSize;
 
 // Global Charts Logic
 async function renderGlobalCharts() {

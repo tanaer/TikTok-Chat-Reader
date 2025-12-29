@@ -400,17 +400,21 @@ async function toggleMonitor(roomId, enabled, name, address) {
     }
 }
 
-function openAddRoomModal(id = null, name = null, isMonitorOn = true) {
+function openAddRoomModal(id = null, name = null, isMonitorOn = true, language = '中文', priority = 0) {
     if (id && id !== 'undefined' && id !== 'null') { // check string 'null' if called from template
         $('#editRoomIdRaw').val(id);
         $('#roomUniqueId').val(id).prop('disabled', true);
         $('#roomNameInput').val(name);
         $('#roomMonitorToggle').prop('checked', isMonitorOn);
+        if (language) $('#roomLanguage').val(language);
+        $('#roomPriority').val(priority || 0);
     } else {
         $('#editRoomIdRaw').val('');
         $('#roomUniqueId').val('').prop('disabled', false);
         $('#roomNameInput').val('');
         $('#roomMonitorToggle').prop('checked', true);
+        $('#roomLanguage').val('中文');
+        $('#roomPriority').val(0);
     }
     document.getElementById('roomModal').showModal();
 }
@@ -444,6 +448,7 @@ window.saveRoom = async function () {
     const name = $('#roomNameInput').val().trim();
     const isMonitor = $('#roomMonitorToggle').is(':checked');
     const language = $('#roomLanguage').val();
+    const priority = parseInt($('#roomPriority').val()) || 0;
 
     if (!id) return alert('ID required');
     try {
@@ -451,7 +456,7 @@ window.saveRoom = async function () {
             url: '/api/rooms',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ roomId: id, name: name, isMonitorEnabled: isMonitor, language: language })
+            data: JSON.stringify({ roomId: id, name: name, isMonitorEnabled: isMonitor, language: language, priority: priority })
         });
         closeRoomModal();
         renderRoomList();

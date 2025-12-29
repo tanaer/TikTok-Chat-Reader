@@ -263,13 +263,14 @@ function updateLeaderboards(boards) {
     // Gift Stats Table (礼物明细 Tab - shows per-user per-gift breakdown)
     renderGiftTable('#giftTable tbody', boards.giftDetails);
 
-    // Top Gifters (送礼榜)
+    // Current Session Leaderboards (本场榜)
+    renderTopTable('#currentGiftersTable tbody', boards.gifters, '💎', 'value');
+    renderTopTable('#currentChattersTable tbody', boards.chatters, '💬', 'count');
+    renderTopTable('#currentLikersTable tbody', boards.likers, '❤️', 'count');
+
+    // Also update old tables for compatibility with room list
     renderTopTable('#topGiftersTable tbody', boards.gifters, '💎', 'value');
-
-    // Top Chatters (发言榜) - use CHATTERS data
     renderTopTable('#topContributorsTable tbody', boards.chatters, '💬', 'count');
-
-    // Top Likers (点赞榜) - use LIKERS data
     renderTopTable('#topLikersTable tbody', boards.likers, '❤️', 'count');
 }
 
@@ -536,9 +537,20 @@ function renderAlltimeTable(selector, data, icon, valueKey) {
     data.forEach((row, i) => {
         const val = row[valueKey] || row.value || row.count || 0;
         const rank = i < 3 ? ['🥇', '🥈', '🥉'][i] : `${i + 1}.`;
-        tbody.append(`<tr><td class="truncate max-w-[80px]">${rank} ${row.nickname || '匿名'}</td><td class="text-right font-mono">${val.toLocaleString()}</td></tr>`);
+        const uniqueId = row.uniqueId || '';
+        // Make user name clickable to search in user analysis
+        const nameCell = uniqueId
+            ? `<a href="javascript:void(0)" class="link link-hover text-accent" onclick="searchUserExact('${uniqueId.replace(/'/g, "\\'")}')" title="点击精确搜索该用户">${row.nickname || '匿名'}</a>`
+            : `${row.nickname || '匿名'}`;
+        tbody.append(`<tr><td class="truncate max-w-[80px]">${rank} ${nameCell}</td><td class="text-right font-mono">${val.toLocaleString()}</td></tr>`);
     });
 }
+
+// Search user with exact match in new window
+function searchUserExact(uniqueId) {
+    window.open(`/index.html?section=userAnalysis&search=${encodeURIComponent(uniqueId)}&searchExact=true`, '_blank');
+}
+window.searchUserExact = searchUserExact;
 
 function switchAlltimeTab(tabId, btnElement) {
     // Toggle tabs
@@ -549,6 +561,26 @@ function switchAlltimeTab(tabId, btnElement) {
     $(`#alltime-${tabId}`).removeClass('hidden');
 }
 
+// New outer tab switching for 本场榜 vs 历史榜
+function switchLeaderboardOuterTab(tabId, btnElement) {
+    // Toggle outer tab buttons
+    $('.leaderboard-outer-tab').removeClass('tab-active');
+    $(btnElement).addClass('tab-active');
+    // Toggle outer content panels
+    $('.leaderboard-outer-content').addClass('hidden');
+    $(`#leaderboard-${tabId}`).removeClass('hidden');
+}
+
+// Current session inner tab switching
+function switchCurrentTab(tabId, btnElement) {
+    // Toggle tabs
+    $('.current-tab').removeClass('tab-active');
+    $(btnElement).addClass('tab-active');
+    // Toggle content
+    $('.current-tab-content').addClass('hidden');
+    $(`#current-${tabId}`).removeClass('hidden');
+}
+
 // Assign to window for inline onclick handlers
 window.switchDetailTab = switchDetailTab;
 window.changeSession = changeSession;
@@ -557,3 +589,5 @@ window.connectToLive = connectToLive;
 window.saveCurrentSession = saveCurrentSession;
 window.stopCurrentRecord = stopCurrentRecord;
 window.switchAlltimeTab = switchAlltimeTab;
+window.switchLeaderboardOuterTab = switchLeaderboardOuterTab;
+window.switchCurrentTab = switchCurrentTab;

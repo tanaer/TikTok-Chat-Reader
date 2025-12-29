@@ -55,6 +55,8 @@
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn active"
                             onclick="setRoomSort('default', this)">默认</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                            onclick="setRoomSort('priority_desc', this)">优先级</button>
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
                             onclick="setRoomSort('gift_desc', this)">本场💎</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
                             onclick="setRoomSort('total_gift_desc', this)">总💎</button>
@@ -259,47 +261,105 @@
                             </div>
                         </div>
 
-                        <!-- All-Time TOP30 Leaderboards -->
-                        <div class="divider my-2">历史总榜 TOP30</div>
-                        <div role="tablist" class="tabs tabs-boxed tabs-xs mb-2">
-                            <a role="tab" class="tab tab-active alltime-tab"
-                                onclick="switchAlltimeTab('gifters', this)">💎送礼</a>
-                            <a role="tab" class="tab alltime-tab" onclick="switchAlltimeTab('chatters', this)">💬发言</a>
-                            <a role="tab" class="tab alltime-tab" onclick="switchAlltimeTab('likers', this)">❤️点赞</a>
+                        <!-- Leaderboards with Outer Tabs (本场/历史) -->
+                        <div class="divider my-2">排行榜</div>
+
+                        <!-- Outer Tab Selector: 本场榜 vs 历史榜 -->
+                        <div role="tablist" class="tabs tabs-boxed tabs-sm mb-2 bg-base-300">
+                            <a role="tab" class="tab tab-active leaderboard-outer-tab"
+                                onclick="switchLeaderboardOuterTab('current', this)">📊 本场榜</a>
+                            <a role="tab" class="tab leaderboard-outer-tab"
+                                onclick="switchLeaderboardOuterTab('alltime', this)">📈 历史榜 TOP50</a>
                         </div>
 
-                        <div id="alltime-gifters" class="alltime-tab-content">
-                            <table class="table table-xs table-compact w-full" id="alltimeGiftersTable">
-                                <thead>
-                                    <tr>
-                                        <th>昵称</th>
-                                        <th class="text-right">💎</th>
-                                    </tr>
-                                </thead>
-                                <tbody></tbody>
-                            </table>
+                        <!-- Current Session Leaderboards (uses existing leaderboards from room detail) -->
+                        <div id="leaderboard-current" class="leaderboard-outer-content">
+                            <div role="tablist" class="tabs tabs-boxed tabs-xs mb-2">
+                                <a role="tab" class="tab tab-active current-tab"
+                                    onclick="switchCurrentTab('gifters', this)">💎送礼</a>
+                                <a role="tab" class="tab current-tab"
+                                    onclick="switchCurrentTab('chatters', this)">💬发言</a>
+                                <a role="tab" class="tab current-tab"
+                                    onclick="switchCurrentTab('likers', this)">❤️点赞</a>
+                            </div>
+                            <div id="current-gifters" class="current-tab-content">
+                                <table class="table table-xs table-compact w-full" id="currentGiftersTable">
+                                    <thead>
+                                        <tr>
+                                            <th>昵称</th>
+                                            <th class="text-right">💎</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                            <div id="current-chatters" class="current-tab-content hidden">
+                                <table class="table table-xs table-compact w-full" id="currentChattersTable">
+                                    <thead>
+                                        <tr>
+                                            <th>昵称</th>
+                                            <th class="text-right">💬</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                            <div id="current-likers" class="current-tab-content hidden">
+                                <table class="table table-xs table-compact w-full" id="currentLikersTable">
+                                    <thead>
+                                        <tr>
+                                            <th>昵称</th>
+                                            <th class="text-right">❤️</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
                         </div>
-                        <div id="alltime-chatters" class="alltime-tab-content hidden">
-                            <table class="table table-xs table-compact w-full" id="alltimeChattersTable">
-                                <thead>
-                                    <tr>
-                                        <th>昵称</th>
-                                        <th class="text-right">💬</th>
-                                    </tr>
-                                </thead>
-                                <tbody></tbody>
-                            </table>
-                        </div>
-                        <div id="alltime-likers" class="alltime-tab-content hidden">
-                            <table class="table table-xs table-compact w-full" id="alltimeLikersTable">
-                                <thead>
-                                    <tr>
-                                        <th>昵称</th>
-                                        <th class="text-right">❤️</th>
-                                    </tr>
-                                </thead>
-                                <tbody></tbody>
-                            </table>
+
+                        <!-- All-Time TOP50 Leaderboards (hidden by default) -->
+                        <div id="leaderboard-alltime" class="leaderboard-outer-content hidden">
+                            <div role="tablist" class="tabs tabs-boxed tabs-xs mb-2">
+                                <a role="tab" class="tab tab-active alltime-tab"
+                                    onclick="switchAlltimeTab('gifters', this)">💎送礼</a>
+                                <a role="tab" class="tab alltime-tab"
+                                    onclick="switchAlltimeTab('chatters', this)">💬发言</a>
+                                <a role="tab" class="tab alltime-tab"
+                                    onclick="switchAlltimeTab('likers', this)">❤️点赞</a>
+                            </div>
+                            <div id="alltime-gifters" class="alltime-tab-content">
+                                <table class="table table-xs table-compact w-full" id="alltimeGiftersTable">
+                                    <thead>
+                                        <tr>
+                                            <th>昵称</th>
+                                            <th class="text-right">💎</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                            <div id="alltime-chatters" class="alltime-tab-content hidden">
+                                <table class="table table-xs table-compact w-full" id="alltimeChattersTable">
+                                    <thead>
+                                        <tr>
+                                            <th>昵称</th>
+                                            <th class="text-right">💬</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                            <div id="alltime-likers" class="alltime-tab-content hidden">
+                                <table class="table table-xs table-compact w-full" id="alltimeLikersTable">
+                                    <thead>
+                                        <tr>
+                                            <th>昵称</th>
+                                            <th class="text-right">❤️</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -317,8 +377,14 @@
                 <div class="flex flex-wrap gap-2 mb-4 items-end">
                     <div class="form-control w-48">
                         <label class="label p-1"><span class="label-text text-xs">搜索账号/昵称</span></label>
-                        <input type="text" id="userSearch" placeholder="输入账号或昵称..."
-                            class="input input-bordered input-sm w-full">
+                        <div class="join">
+                            <input type="text" id="userSearch" placeholder="输入账号或昵称..."
+                                class="input input-bordered input-sm join-item w-32">
+                            <select id="userSearchMode" class="select select-bordered select-sm join-item w-16">
+                                <option value="fuzzy">模糊</option>
+                                <option value="exact">精确</option>
+                            </select>
+                        </div>
                     </div>
                     <div class="form-control w-40">
                         <label class="label p-1"><span class="label-text text-xs">语言/常驻</span></label>
@@ -433,6 +499,17 @@
                     </table>
                 </div>
                 <div class="flex items-center justify-center gap-2 mt-4 flex-wrap">
+                    <div class="flex items-center gap-2">
+                        <span class="text-sm opacity-50">每页</span>
+                        <select id="userPageSizeSelect" class="select select-bordered select-xs"
+                            onchange="setUserPageSize(this.value)">
+                            <option value="50" selected>50</option>
+                            <option value="100">100</option>
+                            <option value="200">200</option>
+                            <option value="500">500</option>
+                        </select>
+                        <span class="text-sm opacity-50">条</span>
+                    </div>
                     <span class="text-sm opacity-50">共 <span id="userTotalCount">0</span> 用户</span>
                     <div class="join" id="userPagination">
                         <!-- Pagination buttons generated by JS -->
@@ -650,6 +727,12 @@
                     <option value="ไทย">ไทย</option>
                     <option value="日本語">日本語</option>
                 </select>
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">优先级 (0-10，数字越大越优先)</span></label>
+                <input type="number" id="roomPriority" min="0" max="10" value="0" class="input input-bordered w-full" />
+                <label class="label"><span class="label-text-alt text-xs opacity-50">高优先级的房间会优先连接采集数据</span></label>
             </div>
 
             <div class="modal-action">
