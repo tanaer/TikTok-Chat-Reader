@@ -14,6 +14,11 @@ function switchConfigTab(tab) {
     if (tab === 'gifts') {
         loadGiftConfig();
     }
+
+    // Load proxy config when switching to proxy tab
+    if (tab === 'proxy' && typeof initProxyConfig === 'function') {
+        initProxyConfig();
+    }
 }
 
 // Load and render gift configuration

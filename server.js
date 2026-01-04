@@ -831,10 +831,362 @@ app.get('/api/sessions', async (req, res) => {
     }
 });
 
+// ========================
+// Proxy Node Groups API
+// ========================
+const proxyManager = require('./utils/proxyManager');
+const db = require('./db');
+
+// Get all node groups
+app.get('/api/proxy/groups', async (req, res) => {
+    try {
+        const groups = await db.query(`
+            SELECT g.*, COUNT(n.id) as "nodeCount"
+            FROM proxy_node_group g
+            LEFT JOIN proxy_node n ON n.group_id = g.id
+            GROUP BY g.id
+            ORDER BY g.created_at DESC
+        `);
+        res.json(groups);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get single node group
+app.get('/api/proxy/groups/:id', async (req, res) => {
+    try {
+        const groups = await db.query(`SELECT * FROM proxy_node_group WHERE id = ?`, [req.params.id]);
+        if (!groups || groups.length === 0) {
+            return res.status(404).json({ error: 'Group not found' });
+        }
+        res.json(groups[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Add new node group
+app.post('/api/proxy/groups', async (req, res) => {
+    try {
+        const { name, content } = req.body;
+        if (!name) return res.status(400).json({ error: 'Name is required' });
+        if (!content) return res.status(400).json({ error: 'Content is required' });
+
+        // Create group
+        const result = await db.query(
+            `INSERT INTO proxy_node_group (name, content) VALUES (?, ?) RETURNING id`,
+            [name, content]
+        );
+        const groupId = result[0]?.id;
+
+        // Parse and save nodes
+        const nodes = proxyManager.parseContent(content);
+        for (const node of nodes) {
+            await db.query(
+                `INSERT INTO proxy_node (group_id, name, type, server, port, config_json, proxy_url)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [groupId, node.name, node.type, node.server, node.port, JSON.stringify(node.config), node.proxyUrl]
+            );
+        }
+
+        // Auto-manage sing-box
+        autoManageSingbox();
+
+        res.json({ success: true, id: groupId, nodeCount: nodes.length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Update node group
+app.put('/api/proxy/groups/:id', async (req, res) => {
+    try {
+        const { name, content } = req.body;
+        const groupId = req.params.id;
+
+        // Update group info
+        await db.query(
+            `UPDATE proxy_node_group SET name = ?, content = ?, updated_at = NOW() WHERE id = ?`,
+            [name, content, groupId]
+        );
+
+        // Delete old nodes and re-parse
+        await db.query(`DELETE FROM proxy_node WHERE group_id = ?`, [groupId]);
+
+        // Parse and save new nodes
+        const nodes = proxyManager.parseContent(content);
+        for (const node of nodes) {
+            await db.query(
+                `INSERT INTO proxy_node (group_id, name, type, server, port, config_json, proxy_url)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [groupId, node.name, node.type, node.server, node.port, JSON.stringify(node.config), node.proxyUrl]
+            );
+        }
+
+        // Auto-manage sing-box
+        autoManageSingbox();
+
+        res.json({ success: true, nodeCount: nodes.length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete node group
+app.delete('/api/proxy/groups/:id', async (req, res) => {
+    try {
+        await db.query(`DELETE FROM proxy_node_group WHERE id = ?`, [req.params.id]);
+
+        // Auto-manage sing-box
+        autoManageSingbox();
+
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+// Get all nodes with group name
+app.get('/api/proxy/nodes', async (req, res) => {
+    try {
+        const nodes = await db.query(`
+            SELECT n.*, g.name as "groupName"
+            FROM proxy_node n
+            LEFT JOIN proxy_node_group g ON g.id = n.group_id
+            ORDER BY n.euler_latency ASC NULLS LAST, n.tiktok_latency ASC NULLS LAST
+        `);
+        res.json(nodes);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Test single node
+app.post('/api/proxy/nodes/:id/test', async (req, res) => {
+    try {
+        const result = await proxyManager.testNode(req.params.id);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Test all nodes
+app.post('/api/proxy/nodes/test-all', async (req, res) => {
+    try {
+        const results = await proxyManager.testAllNodes();
+        res.json({ results });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete single node
+app.delete('/api/proxy/nodes/:id', async (req, res) => {
+    try {
+        await db.query(`DELETE FROM proxy_node WHERE id = ?`, [req.params.id]);
+        // Auto-manage sing-box
+        autoManageSingbox();
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get best proxy URL (for testing)
+app.get('/api/proxy/best', async (req, res) => {
+    try {
+        const purpose = req.query.purpose || 'both';
+        const proxy = await proxyManager.getBestProxy(purpose);
+        res.json(proxy || { error: 'No available proxy' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ========================
+// Sing-Box Management API
+// ========================
+const singBoxManager = require('./utils/singBoxManager');
+
+// Auto-manage sing-box: start when nodes exist, stop when no nodes, restart on config changes
+async function autoManageSingbox() {
+    try {
+        const nodes = await db.query(`SELECT * FROM proxy_node`);
+
+        if (!nodes || nodes.length === 0) {
+            // No nodes - stop sing-box if running
+            if (singBoxManager.isRunning) {
+                console.log('[SingBox] No nodes, stopping...');
+                await singBoxManager.stop();
+            }
+            return;
+        }
+
+        // Generate config from nodes
+        const config = singBoxManager.generateConfig(nodes);
+        await singBoxManager.saveConfig(config);
+
+        // Start or restart sing-box
+        if (singBoxManager.isRunning) {
+            console.log('[SingBox] Config updated, restarting...');
+            await singBoxManager.restart();
+        } else {
+            console.log('[SingBox] Starting with', nodes.length, 'nodes...');
+            await singBoxManager.start();
+        }
+    } catch (e) {
+        console.error('[SingBox] Auto-manage error:', e.message);
+    }
+}
+
+// Get sing-box status
+app.get('/api/singbox/status', (req, res) => {
+    try {
+        const status = singBoxManager.getStatus();
+        res.json(status);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Generate config from current nodes
+app.post('/api/singbox/generate-config', async (req, res) => {
+    try {
+        const nodes = await proxyManager.getNodes();
+        if (!nodes || nodes.length === 0) {
+            return res.status(400).json({ error: 'No proxy nodes available. Add subscriptions first.' });
+        }
+
+        const config = singBoxManager.generateConfig(nodes, req.body.selectedNode);
+        await singBoxManager.saveConfig(config);
+        res.json({ success: true, nodeCount: nodes.length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Start sing-box
+app.post('/api/singbox/start', async (req, res) => {
+    try {
+        const result = await singBoxManager.start();
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Stop sing-box
+app.post('/api/singbox/stop', async (req, res) => {
+    try {
+        const result = await singBoxManager.stop();
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Restart sing-box
+app.post('/api/singbox/restart', async (req, res) => {
+    try {
+        const result = await singBoxManager.restart();
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Install sing-box binary (download from GitHub)
+app.post('/api/singbox/install', async (req, res) => {
+    try {
+        const result = await singBoxManager.ensureBinaryInstalled();
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Upgrade sing-box binary (force re-download)
+app.post('/api/singbox/upgrade', async (req, res) => {
+    try {
+        const result = await singBoxManager.downloadBinary();
+        if (result.success && singBoxManager.isRunning) {
+            await singBoxManager.restart();
+        }
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Refresh sing-box (regenerate config and restart if needed)
+app.post('/api/singbox/refresh', async (req, res) => {
+    try {
+        // Get current nodes
+        const nodes = await db.query(`SELECT * FROM proxy_node`);
+        if (!nodes || nodes.length === 0) {
+            return res.json({ success: false, message: 'No nodes to configure' });
+        }
+
+        // Generate and save config
+        const config = singBoxManager.generateConfig(nodes);
+        await singBoxManager.saveConfig(config);
+
+        // Restart if already running
+        if (singBoxManager.isRunning) {
+            await singBoxManager.restart();
+        }
+
+        res.json({ success: true, nodeCount: nodes.length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Add manual nodes (paste YAML/JSON)
+app.post('/api/proxy/nodes/manual', async (req, res) => {
+    try {
+        const { content, subscriptionId } = req.body;
+        if (!content) {
+            return res.status(400).json({ error: 'Content is required' });
+        }
+
+        const nodes = proxyManager.parseContent(content);
+
+        // Save nodes to database
+        const subId = subscriptionId || null;
+        for (const node of nodes) {
+            await require('./db').query(
+                `INSERT INTO proxy_node (subscription_id, name, type, server, port, config_json, proxy_url)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                [subId, node.name, node.type, node.server, node.port, JSON.stringify(node.config), node.proxyUrl]
+            );
+        }
+
+        res.json({ success: true, nodeCount: nodes.length });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Start Server
 const PORT = process.env.PORT || 8081;
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
     console.log(`Server started on http://localhost:${PORT}`);
+
+    // Check and download sing-box binary if needed
+    try {
+        const result = await singBoxManager.ensureBinaryInstalled();
+        if (result.success && result.version) {
+            console.log(`[SingBox] Installed version: ${result.version}`);
+        }
+        // Auto-start sing-box if nodes exist
+        await autoManageSingbox();
+    } catch (err) {
+        console.error('[SingBox] Failed to check/install binary:', err.message);
+    }
 
     // Scheduled jobs
     // Run user language analysis every hour

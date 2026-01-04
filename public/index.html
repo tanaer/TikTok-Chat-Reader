@@ -569,6 +569,7 @@
                 <button class="btn btn-sm btn-outline sub-nav-btn active" onclick="switchConfigTab('system')">⚙️
                     系统配置</button>
                 <button class="btn btn-sm btn-outline sub-nav-btn" onclick="switchConfigTab('gifts')">🎁 礼物配置</button>
+                <button class="btn btn-sm btn-outline sub-nav-btn" onclick="switchConfigTab('proxy')">🌐 代理管理</button>
             </div>
 
             <!-- System Config Tab -->
@@ -681,6 +682,106 @@
                                 <tbody>
                                     <tr>
                                         <td colspan="4" class="text-center opacity-50">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Proxy Config Tab -->
+            <div id="configTab-proxy" class="config-tab-content hidden">
+                <!-- Sing-Box Status Bar -->
+                <div class="alert mb-4">
+                    <div class="flex justify-between items-center w-full">
+                        <div class="flex items-center gap-3">
+                            <span class="text-lg">🚀</span>
+                            <div>
+                                <div class="font-bold">Sing-Box 代理客户端</div>
+                                <div id="singboxInfo" class="text-sm opacity-70">状态检测中...</div>
+                            </div>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <div id="singboxStatus" class="badge badge-ghost">检测中</div>
+                            <button class="btn btn-xs btn-outline" onclick="singboxUpgrade()" title="检查更新">⬆️
+                                升级</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    <!-- Node Groups List -->
+                    <div class="card bg-base-100 shadow-xl">
+                        <div class="card-body">
+                            <div class="flex justify-between items-center mb-2">
+                                <h2 class="card-title">📦 节点组管理</h2>
+                                <div class="flex gap-2">
+                                    <span id="nodeGroupSummary" class="text-sm opacity-60">共 0 个组</span>
+                                </div>
+                            </div>
+
+                            <div id="nodeGroupList" class="space-y-2 max-h-96 overflow-y-auto">
+                                <div class="text-center opacity-50 py-4">加载中...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Add/Edit Node Group -->
+                    <div class="card bg-base-100 shadow-xl">
+                        <div class="card-body">
+                            <h2 class="card-title">✏️ <span id="nodeGroupFormTitle">添加节点组</span></h2>
+                            <input type="hidden" id="editNodeGroupId">
+
+                            <div class="form-control w-full mb-2">
+                                <label class="label"><span class="label-text">组名称</span></label>
+                                <input type="text" id="nodeGroupName" class="input input-bordered input-sm w-full"
+                                    placeholder="例如: 日本节点、美国节点">
+                            </div>
+
+                            <div class="form-control w-full mb-2">
+                                <label class="label"><span class="label-text">节点配置 (YAML格式)</span></label>
+                                <textarea id="nodeGroupContent"
+                                    class="textarea textarea-bordered w-full h-48 font-mono text-xs"
+                                    placeholder="- { name: '日本01', type: anytls, server: jp.example.com, port: 18888, password: xxx }"></textarea>
+                            </div>
+
+                            <div class="flex justify-end gap-2 mt-2">
+                                <button class="btn btn-sm btn-ghost" onclick="resetNodeGroupForm()">取消</button>
+                                <button class="btn btn-sm btn-primary" onclick="saveNodeGroup()">保存</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Node List with Testing -->
+                <div class="card bg-base-100 shadow-xl mt-4">
+                    <div class="card-body">
+                        <div class="flex justify-between items-center mb-2">
+                            <h2 class="card-title">🌐 节点列表</h2>
+                            <div class="flex gap-2">
+                                <span id="proxyNodeSummary" class="text-sm opacity-60">共 0 个节点</span>
+                                <button id="testAllBtn" class="btn btn-xs btn-outline" onclick="testAllProxyNodes()">🔍
+                                    测试所有节点</button>
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto max-h-80">
+                            <table class="table table-xs table-zebra">
+                                <thead>
+                                    <tr>
+                                        <th>组</th>
+                                        <th>名称</th>
+                                        <th>类型</th>
+                                        <th>地址</th>
+                                        <th>Euler</th>
+                                        <th>TikTok</th>
+                                        <th></th>
+                                    </tr>
+                                </thead>
+                                <tbody id="proxyNodeList">
+                                    <tr>
+                                        <td colspan="7" class="text-center opacity-50 py-4">加载中...</td>
                                     </tr>
                                 </tbody>
                             </table>
@@ -889,6 +990,7 @@
         </form>
     </dialog>
 
+    <script src="proxy_config.js"></script>
 </body>
 
 </html>

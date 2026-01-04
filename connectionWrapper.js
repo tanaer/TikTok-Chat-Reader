@@ -33,13 +33,39 @@ class TikTokConnectionWrapper extends EventEmitter {
         this.didEmitDisconnected = false; // Prevent duplicate disconnected events
         this.maxReconnectAttempts = 5;
 
-        // Setup proxy agent - use options if valid, otherwise fallback to env
+        // Setup proxy agent - try proxyManager first, then options, then env
         // Important: ignore empty strings from database settings
-        const proxyUrl = (options.proxyUrl && options.proxyUrl.trim())
-            ? options.proxyUrl
-            : (process.env.PROXY_URL || null);
-        const agent = proxyUrl ? new SocksProxyAgent(proxyUrl) : null;
-        if (proxyUrl) console.log(`[Proxy] Using proxy: ${proxyUrl}`);
+        let proxyUrl = null;
+        let proxyNodeId = null;
+
+        // Check if proxy was passed from auto_recorder (from proxyManager)
+        if (options.dynamicProxyUrl) {
+            proxyUrl = options.dynamicProxyUrl;
+            proxyNodeId = options.dynamicProxyNodeId || null;
+            console.log(`[Proxy] Using dynamic proxy: ${proxyUrl.slice(0, 30)}... (nodeId: ${proxyNodeId})`);
+        }
+
+        // Fallback to options or env
+        if (!proxyUrl) {
+            proxyUrl = (options.proxyUrl && options.proxyUrl.trim())
+                ? options.proxyUrl
+                : (process.env.PROXY_URL || null);
+            if (proxyUrl) console.log(`[Proxy] Using config proxy: ${proxyUrl}`);
+        }
+
+        // Create agent based on proxy URL type
+        let agent = null;
+        if (proxyUrl) {
+            if (proxyUrl.startsWith('socks')) {
+                agent = new SocksProxyAgent(proxyUrl);
+            } else if (proxyUrl.startsWith('http')) {
+                const { HttpsProxyAgent } = require('https-proxy-agent');
+                agent = new HttpsProxyAgent(proxyUrl);
+            }
+        }
+
+        // Store proxyNodeId for marking success/failure later
+        this.proxyNodeId = proxyNodeId;
 
         // Set API Key using KeyManager for rotation
         const apiKey = keyManager.getActiveKey();
@@ -102,8 +128,20 @@ class TikTokConnectionWrapper extends EventEmitter {
                 const errors = err?.errors || [];
                 const errorReasons = [];
 
-                // Log full error details for debugging
-                if (errors.length === 0) {
+                // Also check main error info and exception
+                const mainInfo = err?.info || '';
+                const exceptionMsg = err?.exception?.message || '';
+
+                // Check main error info for common patterns first
+                if (mainInfo?.includes?.('lack of permission') || exceptionMsg?.includes?.('lack of permission')) {
+                    errorReasons.push('🔑 Euler API Key 权限不足（需要付费版或更高权限）');
+                }
+                if (mainInfo?.includes?.('SIGI_STATE') || mainInfo?.includes?.('blocked by TikTok')) {
+                    errorReasons.push('🔒 服务器 IP 被 TikTok 封禁');
+                }
+
+                // Log full error details for debugging when errors array is empty
+                if (errors.length === 0 && errorReasons.length === 0) {
                     console.error(`[Wrapper] @${this.uniqueId} FetchIsLiveError with no nested errors. Full error:`, err);
                 }
 
@@ -114,28 +152,31 @@ class TikTokConnectionWrapper extends EventEmitter {
                     // Check for rate limiting indicators
                     if (eCode === 429 || eMsg?.includes?.('rate limit') || eMsg?.includes?.('Too Many Requests')) {
                         errorReasons.push('🚫 API 请求频率过高，已被限流');
-                    } else if (eMsg?.includes?.('SIGI_STATE')) {
-                        errorReasons.push('🔒 TikTok 页面解析失败（可能被封锁或页面结构变化）');
+                    } else if (eMsg?.includes?.('SIGI_STATE') || eMsg?.includes?.('blocked by TikTok')) {
+                        errorReasons.push('🔒 服务器 IP 被 TikTok 封禁（无法解析页面）');
                     } else if (eMsg?.includes?.('InvalidResponseError') || e?.name === 'InvalidResponseError') {
                         errorReasons.push('❌ API 返回无效响应');
                     } else if (eMsg?.includes?.('lack of permission') || eMsg?.includes?.('Euler Stream')) {
-                        errorReasons.push('🔑 Euler API Key 权限不足，无法使用备用方法');
+                        errorReasons.push('🔑 Euler API Key 权限不足');
                     } else if (eMsg?.includes?.('timeout') || eMsg?.includes?.('Timeout')) {
                         errorReasons.push('⏱️ 连接超时');
                     } else if (eMsg?.includes?.('403') || eMsg?.includes?.('Forbidden')) {
                         errorReasons.push('🚫 访问被拒绝 (403)');
                     } else if (eMsg?.includes?.('ECONNRESET') || eMsg?.includes?.('ECONNREFUSED')) {
                         errorReasons.push('🔌 网络连接被重置');
-                    } else if (eMsg) {
+                    } else if (eMsg && !errorReasons.some(r => r.includes(eMsg.slice(0, 30)))) {
+                        // Only add if not already covered by another reason
                         errorReasons.push(`⚠️ ${eMsg.slice(0, 100)}`);
                     }
                 }
 
-                if (errorReasons.length > 0) {
-                    humanMessage = `无法获取房间信息:\n  ${errorReasons.join('\n  ')}`;
+                // Deduplicate error reasons
+                const uniqueReasons = [...new Set(errorReasons)];
+
+                if (uniqueReasons.length > 0) {
+                    humanMessage = `无法获取房间信息:\n  ${uniqueReasons.join('\n  ')}`;
                 } else {
-                    // When no specific reason found, log more details
-                    humanMessage = `无法获取房间信息（未知原因）- errors数组长度: ${errors.length}`;
+                    humanMessage = `无法获取房间信息（未知原因）`;
                     console.error(`[Wrapper] @${this.uniqueId} Unknown fetch error. Info:`, err?.info, 'Message:', msg);
                 }
 
