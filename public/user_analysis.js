@@ -276,13 +276,13 @@ function showUserDetails(userId, nickname, uniqueId) {
         </div>
 
         <div class="grid grid-cols-2 gap-4 my-6">
-             <div class="stat bg-base-100 rounded-box shadow-sm p-4 text-center">
+             <div class="stat bg-base-100 rounded-box shadow-sm p-4 text-center overflow-hidden">
                 <div class="stat-title text-xs">总礼物价值</div>
-                <div class="stat-value text-warning text-2xl" id="detailTotalValue">...</div>
+                <div class="stat-value text-warning text-base md:text-2xl truncate" id="detailTotalValue">...</div>
              </div>
-             <div class="stat bg-base-100 rounded-box shadow-sm p-4 text-center">
+             <div class="stat bg-base-100 rounded-box shadow-sm p-4 text-center overflow-hidden">
                 <div class="stat-title text-xs">日均消费</div>
-                <div class="stat-value text-success text-2xl" id="detailDailyAvg">...</div>
+                <div class="stat-value text-success text-base md:text-2xl truncate" id="detailDailyAvg">...</div>
              </div>
         </div>
 
@@ -344,7 +344,7 @@ function showUserDetails(userId, nickname, uniqueId) {
 
     $.get('/api/analysis/user/' + userId, (data) => {
         $('#detailTotalValue').text('💎 ' + (data.totalValue || 0).toLocaleString());
-        $('#detailDailyAvg').text('💎 ' + (data.dailyAvg || 0).toFixed(0));
+        $('#detailDailyAvg').text('💎 ' + Math.round(data.dailyAvg || 0).toLocaleString());
 
         // Render gift rooms (db.js converts room_id to roomId)
         if (data.giftRooms && data.giftRooms.length > 0) {

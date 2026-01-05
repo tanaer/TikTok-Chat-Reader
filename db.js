@@ -145,6 +145,72 @@ async function initDb() {
         await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS region TEXT`);
         await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
 
+        // Proxy subscription management tables
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS proxy_node_group (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                content TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS proxy_node (
+                id SERIAL PRIMARY KEY,
+                group_id INTEGER REFERENCES proxy_node_group(id) ON DELETE CASCADE,
+                name TEXT,
+                type TEXT,
+                server TEXT,
+                port INTEGER,
+                config_json TEXT,
+                proxy_url TEXT,
+                euler_status TEXT DEFAULT 'unknown',
+                tiktok_status TEXT DEFAULT 'unknown',
+                last_euler_test TIMESTAMP,
+                last_tiktok_test TIMESTAMP,
+                euler_latency INTEGER DEFAULT -1,
+                tiktok_latency INTEGER DEFAULT -1,
+                success_count INTEGER DEFAULT 0,
+                fail_count INTEGER DEFAULT 0,
+                last_used TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        // Index for fast node lookup by status
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_proxy_node_status ON proxy_node(euler_status, tiktok_status)`);
+
+        // Migration: Add group_id column if proxy_node has subscription_id instead
+        try {
+            const colCheck = await pool.query(`
+                SELECT column_name FROM information_schema.columns 
+                WHERE table_name = 'proxy_node' AND column_name = 'group_id'
+            `);
+
+            if (colCheck.rows.length === 0) {
+                console.log('[DB] Migrating proxy_node table: adding group_id column...');
+
+                // Check if subscription_id exists (old schema)
+                const subCheck = await pool.query(`
+                    SELECT column_name FROM information_schema.columns 
+                    WHERE table_name = 'proxy_node' AND column_name = 'subscription_id'
+                `);
+
+                if (subCheck.rows.length > 0) {
+                    // Rename subscription_id to group_id
+                    await pool.query(`ALTER TABLE proxy_node RENAME COLUMN subscription_id TO group_id`);
+                } else {
+                    // Add group_id column
+                    await pool.query(`ALTER TABLE proxy_node ADD COLUMN IF NOT EXISTS group_id INTEGER`);
+                }
+                console.log('[DB] Migration complete: group_id column added');
+            }
+        } catch (migErr) {
+            console.warn('[DB] Migration note:', migErr.message);
+        }
+
         console.log('[DB] Tables and indexes created.');
         isInitialized = true;
 
@@ -235,7 +301,14 @@ function toCamelCase(obj) {
             'durationsecs': 'durationSecs',
             'broadcastduration': 'broadcastDuration',
             'accountquality': 'accountQuality',
-            'endtime': 'endTime'
+            'endtime': 'endTime',
+            // User analysis stats mappings
+            'activedays': 'activeDays',
+            'firstseen': 'firstSeen',
+            'lastseen': 'lastSeen',
+            'dailyavg': 'dailyAvg',
+            'dailyvalue': 'dailyValue',
+            'toproomname': 'topRoomName'
         };
 
         if (knownMappings[camelKey.toLowerCase()]) {
