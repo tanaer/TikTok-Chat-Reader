@@ -831,6 +831,17 @@ app.get('/api/sessions', async (req, res) => {
     }
 });
 
+// Manually refresh room_stats cache (for immediate update after changes)
+app.post('/api/maintenance/refresh_room_stats', async (req, res) => {
+    try {
+        console.log('[API] Manual room stats refresh requested...');
+        const result = await manager.refreshRoomStats();
+        res.json({ success: true, ...result });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Start Server
 const PORT = process.env.PORT || 8081;
 httpServer.listen(PORT, () => {
@@ -857,7 +868,17 @@ httpServer.listen(PORT, () => {
         }
     }, 60 * 60 * 1000); // Every hour
 
-    // Run initial language analysis after startup
+    // Refresh room_stats cache every 30 minutes (for fast API responses)
+    setInterval(async () => {
+        try {
+            console.log('[CRON] Refreshing room stats cache...');
+            await manager.refreshRoomStats();
+        } catch (err) {
+            console.error('[CRON] Room stats refresh error:', err.message);
+        }
+    }, 30 * 60 * 1000); // Every 30 minutes
+
+    // Run initial tasks after startup
     setTimeout(async () => {
         try {
             console.log('[CRON] Running initial user language analysis...');
@@ -866,4 +887,14 @@ httpServer.listen(PORT, () => {
             console.error('[CRON] Initial language analysis error:', err.message);
         }
     }, 30000); // 30 seconds after startup
+
+    // Refresh room stats on startup (for API performance)
+    setTimeout(async () => {
+        try {
+            console.log('[CRON] Initial room stats refresh...');
+            await manager.refreshRoomStats();
+        } catch (err) {
+            console.error('[CRON] Initial room stats refresh error:', err.message);
+        }
+    }, 10000); // 10 seconds after startup
 });

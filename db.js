@@ -145,6 +145,30 @@ async function initDb() {
         await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS region TEXT`);
         await pool.query(`ALTER TABLE settings ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
 
+        // Room statistics cache table (pre-aggregated for performance)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS room_stats (
+                room_id TEXT PRIMARY KEY REFERENCES room(room_id) ON DELETE CASCADE,
+                all_time_gift_value BIGINT DEFAULT 0,
+                all_time_visit_count INTEGER DEFAULT 0,
+                all_time_chat_count INTEGER DEFAULT 0,
+                valid_daily_avg INTEGER DEFAULT 0,
+                valid_days INTEGER DEFAULT 0,
+                top1_ratio INTEGER DEFAULT 0,
+                top3_ratio INTEGER DEFAULT 0,
+                top10_ratio INTEGER DEFAULT 0,
+                top30_ratio INTEGER DEFAULT 0,
+                gift_efficiency NUMERIC(10,2) DEFAULT 0,
+                interact_efficiency NUMERIC(10,2) DEFAULT 0,
+                account_quality NUMERIC(10,2) DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        // Indexes for fast sorting on pre-aggregated columns
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_daily_avg ON room_stats(valid_daily_avg DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_gift ON room_stats(all_time_gift_value DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_top10 ON room_stats(top10_ratio)`);
+
         // Proxy subscription management tables
         await pool.query(`
             CREATE TABLE IF NOT EXISTS proxy_node_group (
