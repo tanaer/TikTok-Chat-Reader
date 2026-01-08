@@ -1379,63 +1379,38 @@ class Manager {
         // Valid Daily Gift Average - only if sorting by daily average (for performance)
         const needsDailyAvg = sort.includes('daily_avg');
 
-        // TOP1/TOP3/TOP10/TOP30 Gift Concentration - always calculate (displayed in default view)
-        const concentrationStats = await query(`
-            WITH user_gifts AS (
-                SELECT room_id, user_id,
-                       SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as user_total
-                FROM event 
-                WHERE room_id IN (${placeholders}) AND type = 'gift' AND user_id IS NOT NULL
-                GROUP BY room_id, user_id
-            ),
-            ranked_users AS (
-                SELECT room_id, user_id, user_total,
-                       ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY user_total DESC) as rank,
-                       SUM(user_total) OVER (PARTITION BY room_id) as room_total
-                FROM user_gifts
-            )
-            SELECT room_id,
-                   COALESCE(SUM(CASE WHEN rank <= 1 THEN user_total ELSE 0 END), 0) as top1_value,
-                   COALESCE(SUM(CASE WHEN rank <= 3 THEN user_total ELSE 0 END), 0) as top3_value,
-                   COALESCE(SUM(CASE WHEN rank <= 10 THEN user_total ELSE 0 END), 0) as top10_value,
-                   COALESCE(SUM(CASE WHEN rank <= 30 THEN user_total ELSE 0 END), 0) as top30_value,
-                   MAX(room_total) as total_value
-            FROM ranked_users
-            GROUP BY room_id
+        // OPTIMIZED: Use pre-aggregated room_stats table for concentration and daily avg
+        // This avoids expensive real-time calculations on the event table
+        const cachedStats = await query(`
+            SELECT * FROM room_stats WHERE room_id IN (${placeholders})
         `, roomIds);
-        const concentrationMap = Object.fromEntries(concentrationStats.map(r => [r.roomId, {
-            top1: parseInt(r.top1Value) || 0,
-            top3: parseInt(r.top3Value) || 0,
-            top10: parseInt(r.top10Value) || 0,
-            top30: parseInt(r.top30Value) || 0,
-            total: parseInt(r.totalValue) || 0
-        }]));
+        const cachedStatsMap = Object.fromEntries(cachedStats.map(r => [r.roomId, r]));
 
-        // Valid Daily Gift Average - only if sorting by daily average
+        // Build concentration map from cached stats (fallback to 0 if no cache yet)
+        const concentrationMap = {};
+        for (const roomId of roomIds) {
+            const cached = cachedStatsMap[roomId];
+            concentrationMap[roomId] = {
+                top1: parseInt(cached?.top1Ratio) || 0,
+                top3: parseInt(cached?.top3Ratio) || 0,
+                top10: parseInt(cached?.top10Ratio) || 0,
+                top30: parseInt(cached?.top30Ratio) || 0,
+                total: parseInt(cached?.allTimeGiftValue) || 0
+            };
+        }
+
+        // Build validDailyMap from cached stats
         let validDailyMap = {};
         if (needsDailyAvg) {
-            const validDailyStats = await query(`
-                WITH daily_stats AS (
-                    SELECT 
-                        room_id,
-                        DATE(timestamp) as day,
-                        SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as gift_value,
-                        EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 as hours
-                    FROM event 
-                    WHERE room_id IN (${placeholders})
-                    GROUP BY room_id, DATE(timestamp)
-                    HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 2
-                )
-                SELECT room_id, 
-                       AVG(gift_value) as avg_gift,
-                       COUNT(*) as valid_days
-                FROM daily_stats
-                GROUP BY room_id
-            `, roomIds);
-            validDailyMap = Object.fromEntries(validDailyStats.map(r => [r.roomId, {
-                avgGift: Math.round(parseFloat(r.avgGift)) || 0,
-                validDays: parseInt(r.validDays) || 0
-            }]));
+            for (const roomId of roomIds) {
+                const cached = cachedStatsMap[roomId];
+                if (cached) {
+                    validDailyMap[roomId] = {
+                        avgGift: parseInt(cached.validDailyAvg) || 0,
+                        validDays: parseInt(cached.validDays) || 0
+                    };
+                }
+            }
         }
 
         // 6. Build final stats objects (use roomId after camelCase conversion)
@@ -2032,6 +2007,161 @@ class Manager {
 
         console.log(`[Manager] Language analysis complete. Analyzed ${analyzed} users.`);
         return { analyzed };
+    }
+
+    // Refresh room_stats table with pre-aggregated statistics
+    // This dramatically improves getRoomStats performance for calculated sorts
+    async refreshRoomStats() {
+        await this.ensureDb();
+        console.log('[Manager] Refreshing room_stats cache...');
+        const startTime = Date.now();
+
+        try {
+            // Get all room IDs
+            const rooms = await query(`SELECT room_id FROM room`);
+            if (rooms.length === 0) {
+                console.log('[Manager] No rooms to refresh');
+                return { refreshed: 0 };
+            }
+
+            const roomIds = rooms.map(r => r.roomId);
+            const placeholders = roomIds.map(() => '?').join(',');
+
+            // 1. Basic stats (all-time gift value, visit count, chat count)
+            const basicStats = await query(`
+                SELECT 
+                    room_id,
+                    COALESCE(SUM(CASE WHEN type = 'gift' 
+                        THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as all_gift,
+                    COUNT(*) FILTER (WHERE type = 'member') as all_visits,
+                    COUNT(*) FILTER (WHERE type = 'chat') as all_comments,
+                    EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) as all_time_duration_secs
+                FROM event 
+                WHERE room_id IN (${placeholders})
+                GROUP BY room_id
+            `, roomIds);
+            const basicMap = Object.fromEntries(basicStats.map(r => [r.roomId, r]));
+
+            // 2. Valid daily average (days with >= 2 hours of activity)
+            const dailyStats = await query(`
+                WITH daily_stats AS (
+                    SELECT 
+                        room_id,
+                        DATE(timestamp) as day,
+                        SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as gift_value,
+                        EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 as hours
+                    FROM event 
+                    WHERE room_id IN (${placeholders})
+                    GROUP BY room_id, DATE(timestamp)
+                    HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 2
+                )
+                SELECT room_id, 
+                       AVG(gift_value) as avg_gift,
+                       COUNT(*) as valid_days
+                FROM daily_stats
+                GROUP BY room_id
+            `, roomIds);
+            const dailyMap = Object.fromEntries(dailyStats.map(r => [r.roomId, {
+                avgGift: Math.round(parseFloat(r.avgGift)) || 0,
+                validDays: parseInt(r.validDays) || 0
+            }]));
+
+            // 3. TOP concentration stats
+            const concentrationStats = await query(`
+                WITH user_gifts AS (
+                    SELECT room_id, user_id,
+                           SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as user_total
+                    FROM event 
+                    WHERE room_id IN (${placeholders}) AND type = 'gift' AND user_id IS NOT NULL
+                    GROUP BY room_id, user_id
+                ),
+                ranked_users AS (
+                    SELECT room_id, user_id, user_total,
+                           ROW_NUMBER() OVER (PARTITION BY room_id ORDER BY user_total DESC) as rank,
+                           SUM(user_total) OVER (PARTITION BY room_id) as room_total
+                    FROM user_gifts
+                )
+                SELECT room_id,
+                       COALESCE(SUM(CASE WHEN rank <= 1 THEN user_total ELSE 0 END), 0) as top1_value,
+                       COALESCE(SUM(CASE WHEN rank <= 3 THEN user_total ELSE 0 END), 0) as top3_value,
+                       COALESCE(SUM(CASE WHEN rank <= 10 THEN user_total ELSE 0 END), 0) as top10_value,
+                       COALESCE(SUM(CASE WHEN rank <= 30 THEN user_total ELSE 0 END), 0) as top30_value,
+                       MAX(room_total) as total_value
+                FROM ranked_users
+                GROUP BY room_id
+            `, roomIds);
+            const concentrationMap = Object.fromEntries(concentrationStats.map(r => [r.roomId, {
+                top1: parseInt(r.top1Value) || 0,
+                top3: parseInt(r.top3Value) || 0,
+                top10: parseInt(r.top10Value) || 0,
+                top30: parseInt(r.top30Value) || 0,
+                total: parseInt(r.totalValue) || 0
+            }]));
+
+            // 4. Upsert room_stats for each room
+            let refreshed = 0;
+            for (const roomId of roomIds) {
+                const basic = basicMap[roomId] || {};
+                const daily = dailyMap[roomId] || {};
+                const conc = concentrationMap[roomId] || {};
+
+                const allGift = parseInt(basic.allGift) || 0;
+                const allVisits = parseInt(basic.allVisits) || 0;
+                const allComments = parseInt(basic.allComments) || 0;
+                const durationMins = (parseFloat(basic.allTimeDurationSecs) || 0) / 60;
+
+                const giftEfficiency = allVisits > 0 ? (allGift / allVisits).toFixed(2) : 0;
+                const interactEfficiency = allVisits > 0 ? (allComments / allVisits).toFixed(2) : 0;
+                const accountQuality = durationMins > 0 ? (allVisits / durationMins).toFixed(2) : 0;
+
+                const top1Ratio = conc.total > 0 ? Math.round((conc.top1 / conc.total) * 100) : 0;
+                const top3Ratio = conc.total > 0 ? Math.round((conc.top3 / conc.total) * 100) : 0;
+                const top10Ratio = conc.total > 0 ? Math.round((conc.top10 / conc.total) * 100) : 0;
+                const top30Ratio = conc.total > 0 ? Math.round((conc.top30 / conc.total) * 100) : 0;
+
+                await run(`
+                    INSERT INTO room_stats (
+                        room_id, all_time_gift_value, all_time_visit_count, all_time_chat_count,
+                        valid_daily_avg, valid_days, top1_ratio, top3_ratio, top10_ratio, top30_ratio,
+                        gift_efficiency, interact_efficiency, account_quality, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                    ON CONFLICT (room_id) DO UPDATE SET
+                        all_time_gift_value = EXCLUDED.all_time_gift_value,
+                        all_time_visit_count = EXCLUDED.all_time_visit_count,
+                        all_time_chat_count = EXCLUDED.all_time_chat_count,
+                        valid_daily_avg = EXCLUDED.valid_daily_avg,
+                        valid_days = EXCLUDED.valid_days,
+                        top1_ratio = EXCLUDED.top1_ratio,
+                        top3_ratio = EXCLUDED.top3_ratio,
+                        top10_ratio = EXCLUDED.top10_ratio,
+                        top30_ratio = EXCLUDED.top30_ratio,
+                        gift_efficiency = EXCLUDED.gift_efficiency,
+                        interact_efficiency = EXCLUDED.interact_efficiency,
+                        account_quality = EXCLUDED.account_quality,
+                        updated_at = NOW()
+                `, [
+                    roomId, allGift, allVisits, allComments,
+                    daily.avgGift || 0, daily.validDays || 0,
+                    top1Ratio, top3Ratio, top10Ratio, top30Ratio,
+                    giftEfficiency, interactEfficiency, accountQuality
+                ]);
+                refreshed++;
+            }
+
+            const elapsed = Date.now() - startTime;
+            console.log(`[Manager] Room stats refreshed: ${refreshed} rooms in ${elapsed}ms`);
+            return { refreshed, elapsedMs: elapsed };
+
+        } catch (err) {
+            console.error('[Manager] Error refreshing room_stats:', err);
+            throw err;
+        }
+    }
+
+    // Get pre-aggregated room stats (fast path for calculated sorts)
+    async getRoomStatsFromCache() {
+        await this.ensureDb();
+        return await query(`SELECT * FROM room_stats`);
     }
 }
 
