@@ -169,6 +169,30 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_gift ON room_stats(all_time_gift_value DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_top10 ON room_stats(top10_ratio)`);
 
+        // User statistics cache table (pre-aggregated for performance)
+        // This dramatically improves /api/analysis/users performance
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_stats (
+                user_id TEXT PRIMARY KEY REFERENCES "user"(user_id) ON DELETE CASCADE,
+                total_gift_value BIGINT DEFAULT 0,
+                room_count INTEGER DEFAULT 0,
+                chat_count INTEGER DEFAULT 0,
+                rose_value BIGINT DEFAULT 0,
+                tiktok_value BIGINT DEFAULT 0,
+                rose_count INTEGER DEFAULT 0,
+                tiktok_count INTEGER DEFAULT 0,
+                top_room_id TEXT,
+                top_room_value BIGINT DEFAULT 0,
+                last_active TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        // Indexes for fast sorting on user_stats columns
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_gift ON user_stats(total_gift_value DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_room_count ON user_stats(room_count)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_last_active ON user_stats(last_active DESC)`);
+
+
         // Proxy subscription management tables
         await pool.query(`
             CREATE TABLE IF NOT EXISTS proxy_node_group (
