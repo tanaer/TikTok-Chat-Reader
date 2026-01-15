@@ -862,9 +862,24 @@ class Manager {
         const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '' } = filters;
         const offset = (page - 1) * pageSize;
 
-        // Step 1: Build filter conditions
-        let conditions = ["e.type = 'gift'"];
+        // OPTIMIZED: Use pre-aggregated user_stats table instead of expensive event aggregation
+        // Filters that require real-time event data (activeHour) fall back to slow path
+        const needsRealTimeData = (activeHour !== null && activeHour !== '');
+
+        if (needsRealTimeData) {
+            // Fall back to original slow query for time-based filters
+            return await this._getTopGiftersRealtime(page, pageSize, filters);
+        }
+
+        // Fast path: Query from user_stats cache
+        let conditions = ['us.total_gift_value > 0'];
         let params = [];
+
+        // minRooms filter
+        if (minRooms > 1) {
+            conditions.push('us.room_count >= ?');
+            params.push(parseInt(minRooms));
+        }
 
         // Language filter from old lang parameter (for backward compatibility)
         if (langFilter) {
@@ -878,35 +893,185 @@ class Manager {
             params.push(languageFilter, languageFilter, `%${languageFilter}%`);
         }
 
-        // Time range filter: if both startHour and endHour are set, filter by range
+        // Search filter for nickname or uniqueId
+        if (search) {
+            if (searchExact === true || searchExact === 'true') {
+                conditions.push(`(u.nickname = ? OR u.unique_id = ?)`);
+                params.push(search, search);
+            } else {
+                conditions.push(`(u.nickname LIKE ? OR u.unique_id LIKE ?)`);
+                params.push(`%${search}%`, `%${search}%`);
+            }
+        }
+
+        // Gift preference filter: Rose > TikTok or TikTok > Rose
+        if (giftPreference === 'true_love') {
+            conditions.push('us.rose_value > us.tiktok_value');
+        } else if (giftPreference === 'knife') {
+            conditions.push('us.tiktok_value > us.rose_value');
+        }
+
+        const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+        // Build ORDER BY based on giftPreference
+        let orderByClause = 'ORDER BY us.total_gift_value DESC';
+        if (giftPreference === 'true_love') {
+            orderByClause = 'ORDER BY (us.rose_value - us.tiktok_value) DESC';
+        } else if (giftPreference === 'knife') {
+            orderByClause = 'ORDER BY (us.tiktok_value - us.rose_value) DESC';
+        }
+
+        // Get total count
+        const countSql = `
+            SELECT COUNT(*) as total 
+            FROM user_stats us
+            JOIN "user" u ON us.user_id = u.user_id
+            ${whereClause}
+        `;
+        const countResult = await get(countSql, params);
+        const totalCount = countResult ? parseInt(countResult.total) : 0;
+
+        // Main query from cache
+        const mainParams = [...params, pageSize, offset];
+        const rows = await query(`
+            SELECT 
+                u.user_id as userId,
+                u.unique_id as uniqueId,
+                u.nickname as nickname,
+                u.common_language as commonLanguage,
+                u.mastered_languages as masteredLanguages,
+                u.region as region,
+                us.total_gift_value as totalValue,
+                us.room_count as roomCount,
+                us.last_active as lastActive,
+                us.rose_value as rose_value,
+                us.tiktok_value as tiktok_value,
+                us.chat_count as chatCount,
+                us.top_room_id as topRoom,
+                us.rose_count,
+                us.tiktok_count
+            FROM user_stats us
+            JOIN "user" u ON us.user_id = u.user_id
+            ${whereClause}
+            ${orderByClause}
+            LIMIT ? OFFSET ?
+        `, mainParams);
+
+        if (rows.length === 0) {
+            return { users: [], totalCount, page, pageSize };
+        }
+
+        // Get room names for topRoom
+        const roomIds = rows.filter(r => r.topRoom).map(r => r.topRoom);
+        let roomNameMap = {};
+        if (roomIds.length > 0) {
+            const uniqueRoomIds = [...new Set(roomIds)];
+            const placeholders = uniqueRoomIds.map(() => '?').join(',');
+            const roomNames = await query(`SELECT room_id, name FROM room WHERE room_id IN (${placeholders})`, uniqueRoomIds);
+            roomNameMap = Object.fromEntries(roomNames.map(r => [r.roomId, r.name || r.roomId]));
+        }
+
+        // Get top 6 gifts for displayed users (still needs event table, but only for current page)
+        const userIds = rows.map(r => r.userId);
+        const placeholders = userIds.map(() => '?').join(',');
+
+        const topGiftStats = await query(`
+            SELECT 
+                user_id,
+                (data_json::json->>'giftName') as gift_name,
+                (data_json::json->>'giftPictureUrl') as gift_icon,
+                MAX(COALESCE(diamond_count, 0)) as unit_price,
+                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                SUM(COALESCE(repeat_count, 1)) as gift_count
+            FROM event
+            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL
+            GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
+            ORDER BY user_id, total_value DESC
+        `, userIds);
+
+        const topGiftsMap = {};
+        for (const g of topGiftStats) {
+            if (!topGiftsMap[g.userId]) {
+                topGiftsMap[g.userId] = [];
+            }
+            if (topGiftsMap[g.userId].length < 6) {
+                topGiftsMap[g.userId].push({
+                    name: g.giftName || '礼物',
+                    icon: g.giftIcon || '',
+                    unitPrice: parseInt(g.unitPrice) || 0,
+                    totalValue: parseInt(g.totalValue) || 0,
+                    count: parseInt(g.giftCount) || 0
+                });
+            }
+        }
+
+        // Enrich rows
+        for (const user of rows) {
+            user.topRoomName = roomNameMap[user.topRoom] || user.topRoom;
+            user.topGifts = topGiftsMap[user.userId] || [];
+            user.roseStats = user.roseCount > 0 ? {
+                totalValue: parseInt(user.roseValue) || 0,
+                count: parseInt(user.roseCount) || 0
+            } : null;
+            user.tiktokStats = user.tiktokCount > 0 ? {
+                totalValue: parseInt(user.tiktokValue) || 0,
+                count: parseInt(user.tiktokCount) || 0
+            } : null;
+            user.isTopRoomModerator = false;
+            user.isAdmin = 0;
+            user.isSuperAdmin = 0;
+            user.isModerator = 0;
+            user.fanLevel = 0;
+            user.fanClubName = null;
+
+            // Clean up internal fields
+            delete user.roseCount;
+            delete user.tiktokCount;
+        }
+
+        return { users: rows, totalCount, page, pageSize };
+    }
+
+    // Original slow path for time-based filters (activeHour)
+    async _getTopGiftersRealtime(page = 1, pageSize = 50, filters = {}) {
+        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '' } = filters;
+        const offset = (page - 1) * pageSize;
+
+        let conditions = ["e.type = 'gift'"];
+        let params = [];
+
+        if (langFilter) {
+            conditions.push(`(u.common_language = ? OR u.mastered_languages = ? OR u.mastered_languages LIKE ?)`);
+            params.push(langFilter, langFilter, `%${langFilter}%`);
+        }
+
+        if (languageFilter) {
+            conditions.push(`(u.common_language = ? OR u.mastered_languages = ? OR u.mastered_languages LIKE ?)`);
+            params.push(languageFilter, languageFilter, `%${languageFilter}%`);
+        }
+
         if (activeHour !== null && activeHour !== '') {
             if (activeHourEnd !== null && activeHourEnd !== '') {
-                // Range filter
                 const startH = parseInt(activeHour);
                 const endH = parseInt(activeHourEnd);
                 if (startH <= endH) {
                     conditions.push(`EXTRACT(HOUR FROM e.timestamp) BETWEEN ? AND ?`);
                     params.push(startH, endH);
                 } else {
-                    // Wrap around midnight (e.g., 22:00 to 02:00)
                     conditions.push(`(EXTRACT(HOUR FROM e.timestamp) >= ? OR EXTRACT(HOUR FROM e.timestamp) <= ?)`);
                     params.push(startH, endH);
                 }
             } else {
-                // Single hour filter
                 conditions.push(`EXTRACT(HOUR FROM e.timestamp) = ?`);
                 params.push(parseInt(activeHour));
             }
         }
 
-        // Search filter for nickname or uniqueId - support exact vs fuzzy mode
         if (search) {
             if (searchExact === true || searchExact === 'true') {
-                // Exact match
                 conditions.push(`(u.nickname = ? OR u.unique_id = ?)`);
                 params.push(search, search);
             } else {
-                // Fuzzy match (default)
                 conditions.push(`(u.nickname LIKE ? OR u.unique_id LIKE ?)`);
                 params.push(`%${search}%`, `%${search}%`);
             }
@@ -914,14 +1079,11 @@ class Manager {
 
         const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
 
-        // Build HAVING clause with gift preference filter (Rose vs TikTok)
         let havingConditions = [
             `SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) > 0`,
             `COUNT(DISTINCT e.room_id) >= ?`
         ];
 
-        // Gift preference filter: compare Rose vs TikTok gift totals
-        // true_love = Rose > TikTok, knife = TikTok > Rose
         if (giftPreference === 'true_love') {
             havingConditions.push(`
                 COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose' 
@@ -940,7 +1102,6 @@ class Manager {
 
         const havingClause = `HAVING ${havingConditions.join(' AND ')}`;
 
-        // Get total count with filters
         const countSql = `
             SELECT COUNT(*) as total FROM (
                 SELECT e.user_id
@@ -954,17 +1115,13 @@ class Manager {
         const countResult = await get(countSql, [...params, parseInt(minRooms)]);
         const totalCount = countResult ? countResult.total : 0;
 
-        // Build ORDER BY based on giftPreference
         let orderByClause = 'ORDER BY totalValue DESC';
         if (giftPreference === 'true_love') {
-            // Sort by Rose - TikTok difference (descending)
             orderByClause = 'ORDER BY (rose_value - tiktok_value) DESC';
         } else if (giftPreference === 'knife') {
-            // Sort by TikTok - Rose difference (descending)
             orderByClause = 'ORDER BY (tiktok_value - rose_value) DESC';
         }
 
-        // Main query
         const mainParams = [...params, parseInt(minRooms), pageSize, offset];
         const rows = await query(`
             SELECT 
@@ -990,7 +1147,6 @@ class Manager {
             LIMIT ? OFFSET ?
         `, mainParams);
 
-        // Step 2: Get additional data in batch for the returned users
         if (rows.length === 0) {
             return { users: [], totalCount, page, pageSize };
         }
@@ -998,7 +1154,6 @@ class Manager {
         const userIds = rows.map(r => r.userId);
         const placeholders = userIds.map(() => '?').join(',');
 
-        // Batch: chat counts
         const chatStats = await query(`
             SELECT user_id, COUNT(*) as chatCount
             FROM event
@@ -1007,7 +1162,6 @@ class Manager {
         `, userIds);
         const chatMap = Object.fromEntries(chatStats.map(r => [r.userId, r.chatCount]));
 
-        // Batch: top room per user (with room name)
         const topRoomStats = await query(`
             SELECT e.user_id, e.room_id, r.name as room_name, 
                    SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as roomValue
@@ -1028,7 +1182,6 @@ class Manager {
             }
         }
 
-        // Batch: top 6 gifts per user (with gift icon from data_json)
         const topGiftStats = await query(`
             SELECT 
                 user_id,
@@ -1043,7 +1196,6 @@ class Manager {
             ORDER BY user_id, total_value DESC
         `, userIds);
 
-        // Group by user, keep top 6 per user
         const topGiftsMap = {};
         for (const g of topGiftStats) {
             if (!topGiftsMap[g.userId]) {
@@ -1060,26 +1212,22 @@ class Manager {
             }
         }
 
-        // Separate query for Rose and TikTok gifts (not in TOP 6 because low value)
         const roseTikTokStats = await query(`
             SELECT user_id,
                 LOWER(data_json::json->>'giftName') as gift_type,
-                (data_json::json->>'giftPictureUrl') as gift_icon,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
             WHERE type = 'gift' 
               AND user_id IN (${placeholders}) 
               AND LOWER(data_json::json->>'giftName') IN ('rose', 'tiktok')
-            GROUP BY user_id, LOWER(data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
+            GROUP BY user_id, LOWER(data_json::json->>'giftName')
         `, userIds);
 
-        // Build maps for Rose and TikTok
         const roseMap = {};
         const tiktokMap = {};
         for (const g of roseTikTokStats) {
             const stats = {
-                icon: g.giftIcon || '',
                 totalValue: parseInt(g.totalValue) || 0,
                 count: parseInt(g.giftCount) || 0
             };
@@ -1090,7 +1238,6 @@ class Manager {
             }
         }
 
-        // Enrich rows
         for (const user of rows) {
             user.chatCount = parseInt(chatMap[user.userId]) || 0;
             const topRoomInfo = topRoomMap[user.userId] || { roomId: null, roomName: null };
@@ -2162,6 +2309,156 @@ class Manager {
     async getRoomStatsFromCache() {
         await this.ensureDb();
         return await query(`SELECT * FROM room_stats`);
+    }
+
+    // Refresh user_stats table with pre-aggregated statistics
+    // This dramatically improves getTopGifters performance
+    async refreshUserStats() {
+        await this.ensureDb();
+        console.log('[Manager] Refreshing user_stats cache...');
+        const startTime = Date.now();
+
+        try {
+            // 1. Get all users who have gifted (only users with gifts matter)
+            const users = await query(`
+                SELECT DISTINCT user_id FROM event WHERE type = 'gift' AND user_id IS NOT NULL
+            `);
+            if (users.length === 0) {
+                console.log('[Manager] No gifting users to refresh');
+                return { refreshed: 0 };
+            }
+
+            const userIds = users.map(u => u.userId);
+            console.log(`[Manager] Refreshing stats for ${userIds.length} users...`);
+
+            // Process in batches of 500 to avoid memory issues
+            const BATCH_SIZE = 500;
+            let totalRefreshed = 0;
+
+            for (let i = 0; i < userIds.length; i += BATCH_SIZE) {
+                const batchIds = userIds.slice(i, i + BATCH_SIZE);
+                const placeholders = batchIds.map(() => '?').join(',');
+
+                // 2. Basic gift stats per user
+                const basicStats = await query(`
+                    SELECT 
+                        user_id,
+                        SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_gift,
+                        COUNT(DISTINCT room_id) as room_count,
+                        MAX(timestamp) as last_active
+                    FROM event 
+                    WHERE type = 'gift' AND user_id IN (${placeholders})
+                    GROUP BY user_id
+                `, batchIds);
+                const basicMap = Object.fromEntries(basicStats.map(r => [r.userId, r]));
+
+                // 3. Chat counts per user
+                const chatStats = await query(`
+                    SELECT user_id, COUNT(*) as chat_count
+                    FROM event
+                    WHERE type = 'chat' AND user_id IN (${placeholders})
+                    GROUP BY user_id
+                `, batchIds);
+                const chatMap = Object.fromEntries(chatStats.map(r => [r.userId, parseInt(r.chatCount) || 0]));
+
+                // 4. Rose and TikTok gift stats
+                const roseTiktokStats = await query(`
+                    SELECT 
+                        user_id,
+                        LOWER(data_json::json->>'giftName') as gift_type,
+                        SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                        SUM(COALESCE(repeat_count, 1)) as gift_count
+                    FROM event
+                    WHERE type = 'gift' 
+                      AND user_id IN (${placeholders}) 
+                      AND LOWER(data_json::json->>'giftName') IN ('rose', 'tiktok')
+                    GROUP BY user_id, LOWER(data_json::json->>'giftName')
+                `, batchIds);
+
+                const roseMap = {};
+                const tiktokMap = {};
+                for (const r of roseTiktokStats) {
+                    if (r.giftType === 'rose') {
+                        roseMap[r.userId] = { value: parseInt(r.totalValue) || 0, count: parseInt(r.giftCount) || 0 };
+                    } else if (r.giftType === 'tiktok') {
+                        tiktokMap[r.userId] = { value: parseInt(r.totalValue) || 0, count: parseInt(r.giftCount) || 0 };
+                    }
+                }
+
+                // 5. Top room per user (highest contribution)
+                const topRoomStats = await query(`
+                    WITH user_room_gifts AS (
+                        SELECT user_id, room_id,
+                               SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as room_value
+                        FROM event
+                        WHERE type = 'gift' AND user_id IN (${placeholders})
+                        GROUP BY user_id, room_id
+                    ),
+                    ranked AS (
+                        SELECT user_id, room_id, room_value,
+                               ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY room_value DESC) as rn
+                        FROM user_room_gifts
+                    )
+                    SELECT user_id, room_id, room_value
+                    FROM ranked WHERE rn = 1
+                `, batchIds);
+                const topRoomMap = Object.fromEntries(topRoomStats.map(r => [r.userId, {
+                    roomId: r.roomId,
+                    value: parseInt(r.roomValue) || 0
+                }]));
+
+                // 6. Upsert user_stats for each user in batch
+                for (const userId of batchIds) {
+                    const basic = basicMap[userId] || {};
+                    const rose = roseMap[userId] || { value: 0, count: 0 };
+                    const tiktok = tiktokMap[userId] || { value: 0, count: 0 };
+                    const topRoom = topRoomMap[userId] || { roomId: null, value: 0 };
+
+                    await run(`
+                        INSERT INTO user_stats (
+                            user_id, total_gift_value, room_count, chat_count,
+                            rose_value, tiktok_value, rose_count, tiktok_count,
+                            top_room_id, top_room_value, last_active, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                        ON CONFLICT (user_id) DO UPDATE SET
+                            total_gift_value = EXCLUDED.total_gift_value,
+                            room_count = EXCLUDED.room_count,
+                            chat_count = EXCLUDED.chat_count,
+                            rose_value = EXCLUDED.rose_value,
+                            tiktok_value = EXCLUDED.tiktok_value,
+                            rose_count = EXCLUDED.rose_count,
+                            tiktok_count = EXCLUDED.tiktok_count,
+                            top_room_id = EXCLUDED.top_room_id,
+                            top_room_value = EXCLUDED.top_room_value,
+                            last_active = EXCLUDED.last_active,
+                            updated_at = NOW()
+                    `, [
+                        userId,
+                        parseInt(basic.totalGift) || 0,
+                        parseInt(basic.roomCount) || 0,
+                        chatMap[userId] || 0,
+                        rose.value,
+                        tiktok.value,
+                        rose.count,
+                        tiktok.count,
+                        topRoom.roomId,
+                        topRoom.value,
+                        basic.lastActive || null
+                    ]);
+                    totalRefreshed++;
+                }
+
+                console.log(`[Manager] Processed batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(userIds.length / BATCH_SIZE)}`);
+            }
+
+            const elapsed = Date.now() - startTime;
+            console.log(`[Manager] User stats refreshed: ${totalRefreshed} users in ${elapsed}ms`);
+            return { refreshed: totalRefreshed, elapsedMs: elapsed };
+
+        } catch (err) {
+            console.error('[Manager] Error refreshing user_stats:', err);
+            throw err;
+        }
     }
 }
 
