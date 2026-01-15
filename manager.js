@@ -205,8 +205,8 @@ class Manager {
         // Fuzzy search on room_id and name
         if (search && search.trim()) {
             const likePattern = `%${search.trim()}%`;
-            sql += ' WHERE room_id LIKE ? OR name LIKE ?';
-            countSql += ' WHERE room_id LIKE ? OR name LIKE ?';
+            sql += ' WHERE room_id ILIKE ? OR name ILIKE ?';
+            countSql += ' WHERE room_id ILIKE ? OR name ILIKE ?';
             params.push(likePattern, likePattern);
             countParams.push(likePattern, likePattern);
         }
@@ -896,10 +896,10 @@ class Manager {
         // Search filter for nickname or uniqueId
         if (search) {
             if (searchExact === true || searchExact === 'true') {
-                conditions.push(`(u.nickname = ? OR u.unique_id = ?)`);
+                conditions.push(`(LOWER(u.nickname) = LOWER(?) OR LOWER(u.unique_id) = LOWER(?))`);
                 params.push(search, search);
             } else {
-                conditions.push(`(u.nickname LIKE ? OR u.unique_id LIKE ?)`);
+                conditions.push(`(u.nickname ILIKE ? OR u.unique_id ILIKE ?)`);
                 params.push(`%${search}%`, `%${search}%`);
             }
         }
@@ -1069,10 +1069,10 @@ class Manager {
 
         if (search) {
             if (searchExact === true || searchExact === 'true') {
-                conditions.push(`(u.nickname = ? OR u.unique_id = ?)`);
+                conditions.push(`(LOWER(u.nickname) = LOWER(?) OR LOWER(u.unique_id) = LOWER(?))`);
                 params.push(search, search);
             } else {
-                conditions.push(`(u.nickname LIKE ? OR u.unique_id LIKE ?)`);
+                conditions.push(`(u.nickname ILIKE ? OR u.unique_id ILIKE ?)`);
                 params.push(`%${search}%`, `%${search}%`);
             }
         }
@@ -1397,8 +1397,8 @@ class Manager {
         // 1. Apply Search Filter
         if (search && search.trim()) {
             const likePattern = `%${search.trim()}%`;
-            roomSql += ' WHERE (r.room_id LIKE ? OR r.name LIKE ?)';
-            countSql += ' WHERE (room_id LIKE ? OR name LIKE ?)';
+            roomSql += ' WHERE (r.room_id ILIKE ? OR r.name ILIKE ?)';
+            countSql += ' WHERE (room_id ILIKE ? OR name ILIKE ?)';
             params.push(likePattern, likePattern);
             countParams.push(likePattern, likePattern);
         }
