@@ -546,9 +546,19 @@ function renderAlltimeTable(selector, data, icon, valueKey) {
     });
 }
 
-// Search user with exact match in new window
+// Search user with exact match - navigate to User Analysis section
 function searchUserExact(uniqueId) {
-    window.open(`/index.html?section=userAnalysis&search=${encodeURIComponent(uniqueId)}&searchExact=true`, '_blank');
+    // Switch to user analysis section
+    switchSection('userAnalysis');
+
+    // Fill in the search box with the uniqueId
+    $('#userSearch').val(uniqueId);
+    $('#userSearchMode').val('exact'); // Set to exact match
+
+    // Trigger the search
+    if (typeof renderUserList === 'function') {
+        renderUserList();
+    }
 }
 window.searchUserExact = searchUserExact;
 
