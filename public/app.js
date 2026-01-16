@@ -547,20 +547,66 @@ function renderAlltimeTable(selector, data, icon, valueKey) {
 }
 
 // Search user with exact match - navigate to User Analysis section
+// Track source room for "back" functionality
+let userAnalysisSourceRoom = null;
+
 function searchUserExact(uniqueId) {
+    // Remember the source room for "back" button
+    userAnalysisSourceRoom = currentDetailRoomId;
+
     // Switch to user analysis section
     switchSection('userAnalysis');
+
+    // Reset page to 1 to avoid showing stale results
+    if (typeof userListPage !== 'undefined') {
+        userListPage = 1;
+    }
+
+    // Clear any existing filters that might affect search
+    $('#userLangFilter').val('');
+    $('#userLanguageFilter').val('');
+    $('#userMinRooms').val('1');
+    $('#userActiveHour').val('');
+    $('#userActiveHourEnd').val('');
+    $('#userGiftPreference').val('');
 
     // Fill in the search box with the uniqueId
     $('#userSearch').val(uniqueId);
     $('#userSearchMode').val('exact'); // Set to exact match
+
+    // Show back button if we came from a room
+    if (userAnalysisSourceRoom) {
+        showBackToRoomButton(userAnalysisSourceRoom);
+    }
 
     // Trigger the search
     if (typeof renderUserList === 'function') {
         renderUserList();
     }
 }
+
+function showBackToRoomButton(roomId) {
+    // Remove existing back button if any
+    $('#backToRoomBtn').remove();
+
+    // Add back button before user analysis section title
+    const backBtn = $(`<button id="backToRoomBtn" class="btn btn-sm btn-ghost gap-1 mb-2" onclick="backToRoom('${roomId}')">
+        ← 返回房间
+    </button>`);
+    $('#section-userAnalysis').prepend(backBtn);
+}
+
+function backToRoom(roomId) {
+    userAnalysisSourceRoom = null;
+    $('#backToRoomBtn').remove();
+    // Clear search
+    $('#userSearch').val('');
+    // Switch to room detail and load the room
+    switchSection('roomDetail');
+    loadRoom(roomId);
+}
 window.searchUserExact = searchUserExact;
+window.backToRoom = backToRoom;
 
 function switchAlltimeTab(tabId, btnElement) {
     // Toggle tabs
