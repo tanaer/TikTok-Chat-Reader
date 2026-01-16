@@ -262,63 +262,10 @@
                         </div>
 
                         <!-- Leaderboards with Outer Tabs (本场/历史) -->
-                        <div class="divider my-2">排行榜</div>
+                        <div class="divider my-2">历史排行榜</div>
 
-                        <!-- Outer Tab Selector: 本场榜 vs 历史榜 -->
-                        <div role="tablist" class="tabs tabs-boxed tabs-sm mb-2 bg-base-300">
-                            <a role="tab" class="tab tab-active leaderboard-outer-tab"
-                                onclick="switchLeaderboardOuterTab('current', this)">📊 本场榜</a>
-                            <a role="tab" class="tab leaderboard-outer-tab"
-                                onclick="switchLeaderboardOuterTab('alltime', this)">📈 历史榜 TOP50</a>
-                        </div>
-
-                        <!-- Current Session Leaderboards (uses existing leaderboards from room detail) -->
-                        <div id="leaderboard-current" class="leaderboard-outer-content">
-                            <div role="tablist" class="tabs tabs-boxed tabs-xs mb-2">
-                                <a role="tab" class="tab tab-active current-tab"
-                                    onclick="switchCurrentTab('gifters', this)">💎送礼</a>
-                                <a role="tab" class="tab current-tab"
-                                    onclick="switchCurrentTab('chatters', this)">💬发言</a>
-                                <a role="tab" class="tab current-tab"
-                                    onclick="switchCurrentTab('likers', this)">❤️点赞</a>
-                            </div>
-                            <div id="current-gifters" class="current-tab-content">
-                                <table class="table table-xs table-compact w-full" id="currentGiftersTable">
-                                    <thead>
-                                        <tr>
-                                            <th>昵称</th>
-                                            <th class="text-right">💎</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
-                            </div>
-                            <div id="current-chatters" class="current-tab-content hidden">
-                                <table class="table table-xs table-compact w-full" id="currentChattersTable">
-                                    <thead>
-                                        <tr>
-                                            <th>昵称</th>
-                                            <th class="text-right">💬</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
-                            </div>
-                            <div id="current-likers" class="current-tab-content hidden">
-                                <table class="table table-xs table-compact w-full" id="currentLikersTable">
-                                    <thead>
-                                        <tr>
-                                            <th>昵称</th>
-                                            <th class="text-right">❤️</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody></tbody>
-                                </table>
-                            </div>
-                        </div>
-
-                        <!-- All-Time TOP50 Leaderboards (hidden by default) -->
-                        <div id="leaderboard-alltime" class="leaderboard-outer-content hidden">
+                        <!-- All-Time TOP50 Leaderboards -->
+                        <div id="leaderboard-alltime" class="leaderboard-outer-content">
                             <div role="tablist" class="tabs tabs-boxed tabs-xs mb-2">
                                 <a role="tab" class="tab tab-active alltime-tab"
                                     onclick="switchAlltimeTab('gifters', this)">💎送礼</a>
