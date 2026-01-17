@@ -38,7 +38,100 @@ class AutoRecorder {
         // Start heartbeat check every 60 seconds
         this.startHeartbeat();
 
+        // Restore any saved connection state from previous run
+        this.restoreConnectionState();
+
+        // Register shutdown handler to save state
+        this.registerShutdownHandler();
+
         console.log(`[AutoRecorder] Service started.`);
+    }
+
+    // Save active connection state before shutdown
+    async saveConnectionState() {
+        const state = [];
+        for (const [uniqueId, conn] of this.activeConnections.entries()) {
+            state.push({
+                uniqueId,
+                startTime: conn.startTime?.toISOString(),
+                roomId: conn.roomId,
+                lastEventTime: conn.lastEventTime
+            });
+        }
+
+        if (state.length > 0) {
+            try {
+                await manager.setSetting('_connection_state', JSON.stringify(state));
+                console.log(`[AutoRecorder] Saved ${state.length} active connections for restart`);
+            } catch (err) {
+                console.error('[AutoRecorder] Failed to save connection state:', err.message);
+            }
+        }
+    }
+
+    // Restore connection state from previous run
+    async restoreConnectionState() {
+        try {
+            const stateStr = await manager.getSetting('_connection_state', '');
+            if (!stateStr) return;
+
+            const state = JSON.parse(stateStr);
+            if (!Array.isArray(state) || state.length === 0) return;
+
+            console.log(`[AutoRecorder] Found ${state.length} saved connections from previous run`);
+
+            // Store restored state for later processing after rooms are loaded
+            this.restoredConnections = state;
+
+            // Clear the saved state (one-time restore)
+            await manager.setSetting('_connection_state', '');
+        } catch (err) {
+            console.error('[AutoRecorder] Failed to restore connection state:', err.message);
+        }
+    }
+
+    // Process restored connections - call this after monitor() first run
+    async processRestoredConnections() {
+        if (!this.restoredConnections || this.restoredConnections.length === 0) return;
+
+        const restored = this.restoredConnections;
+        this.restoredConnections = null;
+
+        console.log(`[AutoRecorder] Processing ${restored.length} restored connections...`);
+
+        for (const saved of restored) {
+            // Skip if already connected
+            if (this.activeConnections.has(saved.uniqueId)) continue;
+            if (this.connectingRooms.has(saved.uniqueId)) continue;
+
+            // Restore the startTime for session continuity
+            const restoredStartTime = saved.startTime ? new Date(saved.startTime) : null;
+
+            // Check if room is actually live and connect if so
+            try {
+                const room = { roomId: saved.uniqueId, name: saved.uniqueId };
+
+                // Set the restored startTime before connecting
+                this._restoredStartTime = restoredStartTime;
+                await this.checkAndConnect(room);
+                this._restoredStartTime = null;
+
+            } catch (err) {
+                console.log(`[AutoRecorder] Could not restore ${saved.uniqueId}: ${err.message}`);
+            }
+        }
+    }
+
+    // Register shutdown handler
+    registerShutdownHandler() {
+        const shutdown = async (signal) => {
+            console.log(`\n[AutoRecorder] Received ${signal}, saving connection state...`);
+            await this.saveConnectionState();
+            process.exit(0);
+        };
+
+        process.on('SIGINT', () => shutdown('SIGINT'));
+        process.on('SIGTERM', () => shutdown('SIGTERM'));
     }
 
     // Get list of VALIDATED live room IDs (only rooms with actual events or passed 65s validation)
@@ -231,10 +324,17 @@ class AutoRecorder {
         }, 60 * 60 * 1000);
 
         // Dynamic Loop
+        let firstRun = true;
         const run = async () => {
             if (!this.monitoring) return;
             try {
                 await this.monitor();
+
+                // After first monitor run, process any restored connections
+                if (firstRun) {
+                    firstRun = false;
+                    await this.processRestoredConnections();
+                }
             } catch (e) { console.error('[AutoRecorder] monitor error:', e); }
 
             // Get interval from DB

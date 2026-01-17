@@ -12,6 +12,12 @@ function setUserPageSize(size) {
     fetchUserAnalysis();
 }
 
+// Reset page to 1 (called from app.js searchUserExact)
+function resetUserListPage() {
+    userListPage = 1;
+}
+window.resetUserListPage = resetUserListPage;
+
 function renderUserList() {
     fetchUserAnalysis();
 }

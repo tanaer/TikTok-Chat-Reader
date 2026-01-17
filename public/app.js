@@ -85,7 +85,10 @@ function switchSection(sectionId) {
     if (sectionId === 'roomList') {
         renderRoomList();
     } else if (sectionId === 'userAnalysis') {
-        if (typeof renderUserList === 'function') renderUserList();
+        // Only auto-render if not coming from searchUserExact (which handles its own render)
+        if (!window._pendingUserSearch && typeof renderUserList === 'function') {
+            renderUserList();
+        }
     } else if (sectionId === 'systemConfig') {
         if (typeof loadConfig === 'function') loadConfig();
     }
@@ -554,32 +557,36 @@ function searchUserExact(uniqueId) {
     // Remember the source room for "back" button
     userAnalysisSourceRoom = currentDetailRoomId;
 
-    // Switch to user analysis section
-    switchSection('userAnalysis');
+    // Set flag to prevent auto-render in switchSection
+    window._pendingUserSearch = true;
 
-    // Reset page to 1 to avoid showing stale results
-    if (typeof userListPage !== 'undefined') {
-        userListPage = 1;
-    }
-
-    // Clear any existing filters that might affect search
+    // Clear any existing filters BEFORE switching section
     $('#userLangFilter').val('');
     $('#userLanguageFilter').val('');
     $('#userMinRooms').val('1');
     $('#userActiveHour').val('');
     $('#userActiveHourEnd').val('');
     $('#userGiftPreference').val('');
-
-    // Fill in the search box with the uniqueId
     $('#userSearch').val(uniqueId);
-    $('#userSearchMode').val('exact'); // Set to exact match
+    $('#userSearchMode').val('exact');
+
+    // Reset page via global setter
+    if (typeof window.resetUserListPage === 'function') {
+        window.resetUserListPage();
+    }
+
+    // Now switch section (won't trigger auto-render due to flag)
+    switchSection('userAnalysis');
+
+    // Clear the flag
+    window._pendingUserSearch = false;
 
     // Show back button if we came from a room
     if (userAnalysisSourceRoom) {
         showBackToRoomButton(userAnalysisSourceRoom);
     }
 
-    // Trigger the search
+    // Trigger the search with new params
     if (typeof renderUserList === 'function') {
         renderUserList();
     }
@@ -589,11 +596,13 @@ function showBackToRoomButton(roomId) {
     // Remove existing back button if any
     $('#backToRoomBtn').remove();
 
-    // Add back button before user analysis section title
-    const backBtn = $(`<button id="backToRoomBtn" class="btn btn-sm btn-ghost gap-1 mb-2" onclick="backToRoom('${roomId}')">
-        ← 返回房间
+    // Add back button at the top of user analysis section
+    const backBtn = $(`<button id="backToRoomBtn" class="btn btn-sm btn-outline btn-primary gap-1 mb-4" onclick="backToRoom('${roomId}')">
+        ← 返回房间 ${roomId}
     </button>`);
-    $('#section-userAnalysis').prepend(backBtn);
+
+    // Insert before the sub-nav buttons
+    $('#section-userAnalysis .flex.gap-2.mb-4').before(backBtn);
 }
 
 function backToRoom(roomId) {
