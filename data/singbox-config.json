@@ -1,0 +1,132 @@
+{
+  "log": {
+    "level": "info",
+    "timestamp": true
+  },
+  "experimental": {
+    "clash_api": {
+      "external_controller": "127.0.0.1:9090",
+      "external_ui": "",
+      "default_mode": "rule"
+    }
+  },
+  "inbounds": [
+    {
+      "type": "socks",
+      "tag": "socks-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1090,
+      "sniff": true
+    },
+    {
+      "type": "http",
+      "tag": "http-in",
+      "listen": "127.0.0.1",
+      "listen_port": 1091,
+      "sniff": true
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "anytls",
+      "tag": "日本01[软银]0.5x-6",
+      "server": "jp01.shanhai.click",
+      "server_port": 18888,
+      "password": "5e547e10-0b7d-4dd5-9be7-f2fcc4858cde",
+      "tls": {
+        "enabled": true,
+        "server_name": "jp01.shanhai.click",
+        "insecure": false,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "type": "anytls",
+      "tag": "日本02[软银]0.5x-7",
+      "server": "jp02.shanhai.click",
+      "server_port": 18888,
+      "password": "5e547e10-0b7d-4dd5-9be7-f2fcc4858cde",
+      "tls": {
+        "enabled": true,
+        "server_name": "jp02.shanhai.click",
+        "insecure": false,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "type": "anytls",
+      "tag": "美国01[CN2]1.0x-8",
+      "server": "us01.shanhai.click",
+      "server_port": 18888,
+      "password": "5e547e10-0b7d-4dd5-9be7-f2fcc4858cde",
+      "tls": {
+        "enabled": true,
+        "server_name": "us01.shanhai.click",
+        "insecure": false,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "utls": {
+          "enabled": true,
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "type": "selector",
+      "tag": "manual",
+      "outbounds": [
+        "日本01[软银]0.5x-6",
+        "日本02[软银]0.5x-7",
+        "美国01[CN2]1.0x-8"
+      ],
+      "default": "日本01[软银]0.5x-6"
+    },
+    {
+      "type": "urltest",
+      "tag": "auto",
+      "outbounds": [
+        "日本01[软银]0.5x-6",
+        "日本02[软银]0.5x-7",
+        "美国01[CN2]1.0x-8"
+      ],
+      "url": "https://www.gstatic.com/generate_204",
+      "interval": "5m"
+    },
+    {
+      "type": "direct",
+      "tag": "direct"
+    },
+    {
+      "type": "block",
+      "tag": "block"
+    }
+  ],
+  "route": {
+    "rules": [
+      {
+        "protocol": [
+          "dns"
+        ],
+        "outbound": "direct"
+      }
+    ],
+    "final": "manual",
+    "auto_detect_interface": true
+  }
+}

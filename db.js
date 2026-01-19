@@ -4,6 +4,7 @@
  */
 const { Pool } = require('pg');
 const path = require('path');
+const fs = require('fs');
 
 // PostgreSQL connection configuration
 const pool = new Pool({
@@ -18,6 +19,55 @@ const pool = new Pool({
 });
 
 let isInitialized = false;
+
+/**
+ * Run pending database migrations from the migrations folder
+ */
+async function runMigrations() {
+    const migrationsDir = path.join(__dirname, 'migrations');
+
+    if (!fs.existsSync(migrationsDir)) {
+        console.log('[DB] No migrations directory found, skipping migrations');
+        return;
+    }
+
+    // First ensure schema_migrations table exists
+    await pool.query(`
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version VARCHAR(50) PRIMARY KEY,
+            applied_at TIMESTAMP DEFAULT NOW()
+        )
+    `);
+
+    // Get list of applied migrations
+    const applied = await pool.query('SELECT version FROM schema_migrations');
+    const appliedVersions = new Set(applied.rows.map(r => r.version));
+
+    // Get migration files
+    const files = fs.readdirSync(migrationsDir)
+        .filter(f => f.endsWith('.sql'))
+        .sort();
+
+    for (const file of files) {
+        const version = file.replace('.sql', '');
+
+        if (appliedVersions.has(version)) {
+            continue; // Already applied
+        }
+
+        console.log(`[DB] Running migration: ${file}`);
+
+        try {
+            const sql = fs.readFileSync(path.join(migrationsDir, file), 'utf8');
+            await pool.query(sql);
+            console.log(`[DB] Migration ${file} completed successfully`);
+        } catch (err) {
+            console.error(`[DB] Migration ${file} failed:`, err.message);
+            throw err;
+        }
+    }
+}
+
 
 /**
  * Initialize the database - create tables if needed
@@ -260,6 +310,10 @@ async function initDb() {
         }
 
         console.log('[DB] Tables and indexes created.');
+
+        // Run any pending migrations
+        await runMigrations();
+
         isInitialized = true;
 
         // Setup graceful shutdown

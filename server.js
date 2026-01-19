@@ -14,6 +14,12 @@ const { AutoRecorder } = require('./auto_recorder');
 const app = express();
 const httpServer = createServer(app);
 
+// Import SaaS modules
+const { authRoutes, optionalAuth, loadSubscription } = require('./auth');
+const subscriptionRoutes = require('./api/subscriptions');
+const paymentRoutes = require('./api/payments');
+
+
 // Start Auto Recorder (Dynamic interval from DB)
 const autoRecorder = new AutoRecorder();
 
@@ -212,6 +218,15 @@ setInterval(() => {
 // ========================
 // REST API - Data Management
 // ========================
+
+// SaaS API Routes
+app.use('/api/auth', authRoutes);
+app.use('/api', subscriptionRoutes);
+app.use('/api/payment', paymentRoutes);
+
+// Serve landing pages (public routes - no auth required)
+app.use('/landing', express.static('public/landing'));
+
 
 // Config API
 app.get('/api/config', async (req, res) => {

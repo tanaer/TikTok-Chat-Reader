@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册 - TikTok Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="landing.css">
+    <link rel="stylesheet" href="auth.css">
+</head>
+
+<body>
+    <div class="auth-container">
+        <div class="auth-bg">
+            <div class="gradient-orb orb-1"></div>
+            <div class="gradient-orb orb-2"></div>
+        </div>
+
+        <div class="auth-card">
+            <a href="/landing/" class="auth-logo">
+                <span class="logo-icon">📊</span>
+                <span class="logo-text">TikTok Monitor</span>
+            </a>
+
+            <h1>创建账户</h1>
+            <p class="auth-subtitle">开始您的免费试用</p>
+
+            <form id="registerForm" class="auth-form">
+                <div class="form-group">
+                    <label for="email">邮箱</label>
+                    <input type="email" id="email" name="email" required placeholder="your@email.com">
+                </div>
+
+                <div class="form-group">
+                    <label for="nickname">昵称 <span class="optional">(选填)</span></label>
+                    <input type="text" id="nickname" name="nickname" placeholder="您的昵称">
+                </div>
+
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <input type="password" id="password" name="password" required placeholder="至少6个字符" minlength="6">
+                </div>
+
+                <div class="form-group">
+                    <label for="confirmPassword">确认密码</label>
+                    <input type="password" id="confirmPassword" name="confirmPassword" required placeholder="再次输入密码">
+                </div>
+
+                <div class="form-options">
+                    <label class="checkbox-label">
+                        <input type="checkbox" name="agree" required>
+                        <span>我同意 <a href="#">服务条款</a> 和 <a href="#">隐私政策</a></span>
+                    </label>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block btn-large">
+                    <span>免费注册</span>
+                </button>
+
+                <div class="auth-error" id="authError" style="display: none;"></div>
+            </form>
+
+            <div class="auth-footer">
+                <p>已有账户？<a href="/landing/login.html">立即登录</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('registerForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const errorDiv = document.getElementById('authError');
+            const submitBtn = e.target.querySelector('button[type="submit"]');
+
+            const email = document.getElementById('email').value;
+            const nickname = document.getElementById('nickname').value;
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+
+            // Validation
+            if (password !== confirmPassword) {
+                errorDiv.textContent = '两次输入的密码不一致';
+                errorDiv.style.display = 'block';
+                return;
+            }
+
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<span>注册中...</span>';
+            errorDiv.style.display = 'none';
+
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, nickname })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || '注册失败');
+                }
+
+                // Store tokens
+                localStorage.setItem('accessToken', data.accessToken);
+                localStorage.setItem('refreshToken', data.refreshToken);
+                localStorage.setItem('user', JSON.stringify(data.user));
+
+                // Check if there's a plan parameter
+                const urlParams = new URLSearchParams(window.location.search);
+                const plan = urlParams.get('plan');
+
+                if (plan && plan !== 'free') {
+                    // Redirect to pricing/checkout
+                    window.location.href = `/landing/index.html#pricing`;
+                } else {
+                    // Redirect to dashboard
+                    window.location.href = '/';
+                }
+
+            } catch (err) {
+                errorDiv.textContent = err.message;
+                errorDiv.style.display = 'block';
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = '<span>免费注册</span>';
+            }
+        });
+    </script>
+</body>
+
+</html>
