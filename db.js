@@ -137,6 +137,9 @@ async function initDb() {
         // Performance optimization: index for MAX(timestamp) aggregation in getSessions
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_session_timestamp_desc ON event(session_id, timestamp DESC)`);
 
+        // Performance optimization: functional index for activeHour filtering in getTopGifters
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_timestamp_hour ON event(EXTRACT(HOUR FROM timestamp))`);
+
         // Migrations for new columns
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS language TEXT DEFAULT '中文'`);
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 0`);
