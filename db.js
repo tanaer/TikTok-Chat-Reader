@@ -195,6 +195,23 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_room_count ON user_stats(room_count)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_last_active ON user_stats(last_active DESC)`);
 
+        // Global statistics cache table (pre-aggregated for /api/analysis/stats performance)
+        // Stores hourly and daily aggregations to avoid expensive 4-query JOINs on event table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS global_stats (
+                id INTEGER PRIMARY KEY DEFAULT 1 CHECK (id = 1),
+                hour_stats_json TEXT,
+                day_stats_json TEXT,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        // Insert default row if not exists
+        await pool.query(`
+            INSERT INTO global_stats (id, hour_stats_json, day_stats_json)
+            VALUES (1, '{}', '{}')
+            ON CONFLICT (id) DO NOTHING
+        `);
+
 
         // Proxy subscription management tables
         await pool.query(`

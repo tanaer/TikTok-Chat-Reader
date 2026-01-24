@@ -1288,15 +1288,28 @@ class Manager {
     async getGlobalStats() {
         await this.ensureDb();
 
-        // Limit to last 30 days for practical use and better performance
+        // OPTIMIZED: Read from pre-aggregated global_stats cache table
+        // The cache is refreshed hourly by the cron job
+        const cached = await get(`SELECT hour_stats_json, day_stats_json, updated_at FROM global_stats WHERE id = 1`);
+
+        if (cached && cached.hourStatsJson && cached.dayStatsJson) {
+            try {
+                const hourStats = JSON.parse(cached.hourStatsJson);
+                const dayStats = JSON.parse(cached.dayStatsJson);
+                return { hourStats, dayStats, cachedAt: cached.updatedAt };
+            } catch (e) {
+                console.error('[Manager] Error parsing global_stats cache:', e);
+            }
+        }
+
+        // Fallback: compute in real-time if cache is empty or invalid
+        console.log('[Manager] Global stats cache miss, computing in real-time...');
+
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
             .toISOString().replace('T', ' ').slice(0, 19);
 
-        // Chinese language filter: only include users with Chinese as primary or secondary language
         const chineseFilter = `(u.common_language = '中文' OR u.mastered_languages = '中文')`;
 
-        // 24-Hour Distribution - use PostgreSQL EXTRACT for hour
-        // Filter by Chinese-speaking users only
         const hourChatRows = await query(`
             SELECT to_char(e.timestamp, 'HH24') as hour, COUNT(*) as cnt
             FROM event e
@@ -1316,7 +1329,6 @@ class Manager {
 
         const hourStats = {};
         for (let i = 0; i < 24; i++) hourStats[String(i).padStart(2, '0')] = { gift: 0, chat: 0 };
-
         for (const r of hourChatRows) {
             if (hourStats[r.hour]) hourStats[r.hour].chat = parseInt(r.cnt) || 0;
         }
@@ -1324,8 +1336,6 @@ class Manager {
             if (hourStats[r.hour]) hourStats[r.hour].gift = parseInt(r.val) || 0;
         }
 
-        // Weekly Distribution - use PostgreSQL EXTRACT(DOW) for day of week (0=Sunday)
-        // Filter by Chinese-speaking users only
         const dayChatRows = await query(`
             SELECT EXTRACT(DOW FROM e.timestamp)::int as day, COUNT(*) as cnt
             FROM event e
@@ -1345,7 +1355,6 @@ class Manager {
 
         const dayStats = {};
         for (let i = 0; i < 7; i++) dayStats[i] = { gift: 0, chat: 0 };
-
         for (const r of dayChatRows) {
             const d = parseInt(r.day);
             dayStats[d].chat = parseInt(r.cnt) || 0;
@@ -2418,6 +2427,97 @@ class Manager {
 
         } catch (err) {
             console.error('[Manager] Error refreshing user_stats:', err);
+            throw err;
+        }
+    }
+
+    // Refresh global_stats table with pre-aggregated hourly/daily statistics
+    // This dramatically improves getGlobalStats performance (21s -> instant)
+    async refreshGlobalStats() {
+        await this.ensureDb();
+        console.log('[Manager] Refreshing global_stats cache...');
+        const startTime = Date.now();
+
+        try {
+            // Limit to last 30 days for practical use
+            const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+                .toISOString().replace('T', ' ').slice(0, 19);
+
+            // Chinese language filter
+            const chineseFilter = `(u.common_language = '中文' OR u.mastered_languages = '中文')`;
+
+            // 24-Hour Distribution
+            const hourChatRows = await query(`
+                SELECT to_char(e.timestamp, 'HH24') as hour, COUNT(*) as cnt
+                FROM event e
+                LEFT JOIN "user" u ON e.user_id = u.user_id
+                WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter}
+                GROUP BY hour
+            `, [thirtyDaysAgo]);
+
+            const hourGiftRows = await query(`
+                SELECT to_char(e.timestamp, 'HH24') as hour, 
+                       SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
+                FROM event e
+                LEFT JOIN "user" u ON e.user_id = u.user_id
+                WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter}
+                GROUP BY hour
+            `, [thirtyDaysAgo]);
+
+            const hourStats = {};
+            for (let i = 0; i < 24; i++) hourStats[String(i).padStart(2, '0')] = { gift: 0, chat: 0 };
+            for (const r of hourChatRows) {
+                if (hourStats[r.hour]) hourStats[r.hour].chat = parseInt(r.cnt) || 0;
+            }
+            for (const r of hourGiftRows) {
+                if (hourStats[r.hour]) hourStats[r.hour].gift = parseInt(r.val) || 0;
+            }
+
+            // Weekly Distribution
+            const dayChatRows = await query(`
+                SELECT EXTRACT(DOW FROM e.timestamp)::int as day, COUNT(*) as cnt
+                FROM event e
+                LEFT JOIN "user" u ON e.user_id = u.user_id
+                WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter}
+                GROUP BY day
+            `, [thirtyDaysAgo]);
+
+            const dayGiftRows = await query(`
+                SELECT EXTRACT(DOW FROM e.timestamp)::int as day,
+                       SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
+                FROM event e
+                LEFT JOIN "user" u ON e.user_id = u.user_id
+                WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter}
+                GROUP BY day
+            `, [thirtyDaysAgo]);
+
+            const dayStats = {};
+            for (let i = 0; i < 7; i++) dayStats[i] = { gift: 0, chat: 0 };
+            for (const r of dayChatRows) {
+                const d = parseInt(r.day);
+                dayStats[d].chat = parseInt(r.cnt) || 0;
+            }
+            for (const r of dayGiftRows) {
+                const d = parseInt(r.day);
+                dayStats[d].gift = parseInt(r.val) || 0;
+            }
+
+            // Save to cache table
+            await run(`
+                INSERT INTO global_stats (id, hour_stats_json, day_stats_json, updated_at)
+                VALUES (1, ?, ?, NOW())
+                ON CONFLICT (id) DO UPDATE SET 
+                    hour_stats_json = EXCLUDED.hour_stats_json,
+                    day_stats_json = EXCLUDED.day_stats_json,
+                    updated_at = NOW()
+            `, [JSON.stringify(hourStats), JSON.stringify(dayStats)]);
+
+            const elapsed = Date.now() - startTime;
+            console.log(`[Manager] Global stats refreshed in ${elapsed}ms`);
+            return { success: true, elapsedMs: elapsed };
+
+        } catch (err) {
+            console.error('[Manager] Error refreshing global_stats:', err);
             throw err;
         }
     }

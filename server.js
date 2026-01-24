@@ -928,4 +928,24 @@ httpServer.listen(PORT, () => {
             console.error('[CRON] Initial user stats refresh error:', err.message);
         }
     }, 15000); // 15 seconds after startup
+
+    // Refresh global stats on startup (for /api/analysis/stats performance)
+    setTimeout(async () => {
+        try {
+            console.log('[CRON] Initial global stats refresh...');
+            await manager.refreshGlobalStats();
+        } catch (err) {
+            console.error('[CRON] Initial global stats refresh error:', err.message);
+        }
+    }, 20000); // 20 seconds after startup
+
+    // Refresh global_stats cache every 30 minutes (for fast /api/analysis/stats responses)
+    setInterval(async () => {
+        try {
+            console.log('[CRON] Refreshing global stats cache...');
+            await manager.refreshGlobalStats();
+        } catch (err) {
+            console.error('[CRON] Global stats refresh error:', err.message);
+        }
+    }, 30 * 60 * 1000); // Every 30 minutes
 });
