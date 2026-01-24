@@ -191,6 +191,16 @@ function renderRoomRow(r, index = 0) {
 }
 
 async function renderRoomList() {
+    const container = $('#roomListContainer');
+
+    // Show loading indicator immediately
+    container.html(`
+        <div class="col-span-full flex flex-col items-center justify-center py-20">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+            <p class="mt-4 text-base-content/60">加载中...</p>
+        </div>
+    `);
+
     try {
         // Build query string with pagination and search
         const params = new URLSearchParams({
@@ -204,7 +214,6 @@ async function renderRoomList() {
         const pagination = result.pagination || { page: 1, limit: 20, total: 0, totalPages: 1 };
         roomListTotal = pagination.total;
 
-        const container = $('#roomListContainer');
         container.empty();
 
         // Render search bar with view toggle

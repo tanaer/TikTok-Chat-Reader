@@ -488,8 +488,27 @@ window.setUserPageSize = setUserPageSize;
 
 // Global Charts Logic
 async function renderGlobalCharts() {
+    // Show loading state on all chart canvases
+    const chartIds = ['chart24hGift', 'chart24hChat', 'chartWeeklyGift', 'chartWeeklyChat'];
+    chartIds.forEach(id => {
+        const canvas = $(`#${id}`);
+        const parent = canvas.parent();
+        if (!parent.find('.chart-loading').length) {
+            parent.css('position', 'relative');
+            parent.append(`
+                <div class="chart-loading absolute inset-0 flex flex-col items-center justify-center bg-base-100/80 z-10">
+                    <span class="loading loading-spinner loading-md text-primary"></span>
+                    <p class="mt-2 text-xs text-base-content/60">加载统计数据...</p>
+                </div>
+            `);
+        }
+    });
+
     try {
         const stats = await $.get('/api/analysis/stats');
+
+        // Remove loading states
+        $('.chart-loading').remove();
 
         // IMPORTANT: Sort keys first, then use sorted keys to get corresponding values
         // Object.values() returns in INSERTION ORDER, not sorted order!
@@ -524,7 +543,10 @@ async function renderGlobalCharts() {
             '#36d399'
         );
 
-    } catch (e) { console.error(e); }
+    } catch (e) {
+        console.error(e);
+        $('.chart-loading').html('<p class="text-error text-xs">加载失败</p>');
+    }
 }
 
 function createChart(canvasId, type, label, labels, data, color) {
