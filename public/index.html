@@ -21,6 +21,7 @@
     <script src="config.js"></script>
     <script src="room_list.js"></script>
     <script src="user_analysis.js"></script>
+    <script src="room_analysis.js"></script>
     <script src="gift_config.js"></script>
     <script src="app.js"></script>
 
@@ -38,6 +39,7 @@
             <ul class="menu menu-horizontal px-1 gap-2">
                 <li><a class="nav-btn active" onclick="switchSection('roomList')">📺 房间列表</a></li>
                 <li><a class="nav-btn" onclick="switchSection('userAnalysis')">📊 用户分析</a></li>
+                <li><a class="nav-btn" onclick="switchSection('roomAnalysis')">📈 房间分析</a></li>
                 <li><a class="nav-btn" onclick="switchSection('systemConfig')">⚙️ 系统配置</a></li>
             </ul>
         </div>
@@ -507,6 +509,36 @@
                         onclick="$('#userDetailPanel').addClass('translate-x-full')">✕</button>
                 </div>
                 <div id="userDetailContent">加载中...</div>
+            </div>
+        </section>
+
+        <!-- SECTION: Room Analysis -->
+        <section id="section-roomAnalysis" class="content-section hidden">
+            <div class="card bg-base-100 shadow-xl mb-6">
+                <div class="card-body">
+                    <h2 class="card-title mb-4">房间进场数据对比</h2>
+                    <div class="flex flex-wrap items-end gap-4">
+                        <div class="form-control">
+                            <label class="label"><span class="label-text">开始日期</span></label>
+                            <input type="date" id="ra_startDate" class="input input-bordered input-sm" />
+                        </div>
+                        <div class="form-control">
+                            <label class="label"><span class="label-text">结束日期</span></label>
+                            <input type="date" id="ra_endDate" class="input input-bordered input-sm" />
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="fetchAndRenderRoomStats()">
+                            Start Analysis
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body">
+                    <div class="h-[600px] w-full relative">
+                        <canvas id="roomAnalysisChart"></canvas>
+                    </div>
+                </div>
             </div>
         </section>
 

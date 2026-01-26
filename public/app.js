@@ -91,6 +91,8 @@ function switchSection(sectionId) {
         }
     } else if (sectionId === 'systemConfig') {
         if (typeof loadConfig === 'function') loadConfig();
+    } else if (sectionId === 'roomAnalysis') {
+        if (typeof initRoomAnalysis === 'function') initRoomAnalysis();
     }
 }
 

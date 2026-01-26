@@ -1285,6 +1285,41 @@ class Manager {
         await run('DELETE FROM room WHERE room_id = ?', [roomId]);
     }
 
+
+    // Room Entry Analysis
+    async getRoomEntryStats(startDate, endDate) {
+        await this.ensureDb();
+
+        // Ensure dates are valid
+        const start = startDate ? new Date(startDate) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const end = endDate ? new Date(endDate) : new Date();
+
+        // Adjust end date to include the full day if it's just a date string (e.g. 2024-01-01)
+        if (endDate && endDate.length <= 10) {
+            end.setHours(23, 59, 59, 999);
+        }
+
+        const stats = await query(`
+            SELECT 
+                e.room_id, 
+                MAX(r.name) as room_name, 
+                COUNT(*) as count
+            FROM event e
+            LEFT JOIN room r ON e.room_id = r.room_id
+            WHERE e.type = 'member' 
+            AND e.timestamp >= ? 
+            AND e.timestamp <= ?
+            GROUP BY e.room_id
+            ORDER BY count DESC
+        `, [start.toISOString(), end.toISOString()]);
+
+        return stats.map(s => ({
+            roomId: s.roomId,
+            roomName: s.roomName || s.roomId,
+            count: parseInt(s.count) || 0
+        }));
+    }
+
     async getGlobalStats() {
         await this.ensureDb();
 
