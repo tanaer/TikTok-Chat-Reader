@@ -119,6 +119,7 @@ function renderRoomCard(r, index = 0) {
                 </div>
                 <div class="flex gap-1">
                     <button class="btn btn-xs btn-ghost text-error" onclick="deleteRoom('${safeRoomId}')">删除</button>
+                    <button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>
                     <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn})">编辑</button>
                     <button class="btn btn-sm btn-primary" onclick="enterRoom('${safeRoomId}', '${safeName}')">进入</button>
                 </div>
@@ -183,6 +184,7 @@ function renderRoomRow(r, index = 0) {
         </td>
         <td class="p-2 text-center" onclick="event.stopPropagation()">
             <div class="flex gap-1 justify-center">
+                <button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>
                 <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn})">✏️</button>
                 <button class="btn btn-xs btn-ghost text-error" onclick="deleteRoom('${safeRoomId}')">🗑️</button>
             </div>
@@ -470,4 +472,25 @@ window.saveRoom = async function () {
         closeRoomModal();
         renderRoomList();
     } catch (e) { alert('Save failed: ' + e.statusText); }
+};
+
+window.renameRoom = async function (oldRoomId) {
+    const newRoomId = prompt(`请输入新的房间ID (将迁移 ${oldRoomId} 的所有数据):`);
+    if (!newRoomId || newRoomId === oldRoomId) return;
+
+    if (!confirm(`确定要将 ${oldRoomId} 重命名为 ${newRoomId} 吗?\n此操作将在后台迁移历史数据，请稍候...`)) return;
+
+    try {
+        await $.ajax({
+            url: `/api/rooms/${encodeURIComponent(oldRoomId)}/rename`,
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ newRoomId })
+        });
+        alert('迁移成功!');
+        renderRoomList();
+    } catch (e) {
+        console.error(e);
+        alert('迁移失败: ' + (e.responseJSON?.error || e.statusText));
+    }
 };

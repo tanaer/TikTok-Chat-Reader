@@ -578,6 +578,16 @@ class AutoRecorder {
                     manager.setNumericRoomId(uniqueId, state.roomId).catch(console.error);
                 }
 
+                // Capture owner info for persistent tracking
+                if (state.roomInfo && state.roomInfo.owner) {
+                    const ownerId = state.roomInfo.owner.id_str || state.roomInfo.owner.id;
+                    if (ownerId) {
+                        manager.updateRoomOwner(uniqueId, ownerId.toString()).catch(err =>
+                            console.error(`[AutoRecorder] Failed to update owner for ${uniqueId}:`, err.message)
+                        );
+                    }
+                }
+
                 // Set up event logging - called on EVERY connect/reconnect
                 this.setupLogging(wrapper, uniqueId, state.roomId);
 

@@ -1768,6 +1768,61 @@ class Manager {
     }
 
     // Room Detail Statistics (Header + Leaderboards)
+
+    // Update room owner ID (for tracking persistent upgrades)
+    async updateRoomOwner(roomId, ownerUserId) {
+        if (!ownerUserId) return;
+        await run(`UPDATE room SET owner_user_id = ? WHERE room_id = ?`, [ownerUserId, roomId]);
+    }
+
+    // Rename a room (migrate all data)
+    async migrateRoomId(oldRoomId, newRoomId) {
+        if (!oldRoomId || !newRoomId || oldRoomId === newRoomId) return;
+        await this.ensureDb();
+
+        const oldRoom = await get(`SELECT * FROM room WHERE room_id = ?`, [oldRoomId]);
+        if (!oldRoom) throw new Error(`Room ${oldRoomId} not found`);
+
+        const newRoomExists = await get(`SELECT 1 FROM room WHERE room_id = ?`, [newRoomId]);
+        if (newRoomExists) throw new Error(`Target Room ID ${newRoomId} already exists`);
+
+        console.log(`[Manager] Migrating room ${oldRoomId} -> ${newRoomId}...`);
+
+        // 1. Create new room with same properties
+        await run(`
+            INSERT INTO room (room_id, numeric_room_id, name, address, language, updated_at, is_monitor_enabled, priority, owner_user_id) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+            newRoomId,
+            oldRoom.numericRoomId,
+            oldRoom.name,
+            oldRoom.address,
+            oldRoom.language,
+            new Date(),
+            oldRoom.isMonitorEnabled,
+            oldRoom.priority,
+            oldRoom.ownerUserId
+        ]);
+
+        // 2. Update events (batch update might take time, but referenced via index so should be okay)
+        console.log(`[Manager] Moving events...`);
+        await run(`UPDATE event SET room_id = ? WHERE room_id = ?`, [newRoomId, oldRoomId]);
+
+        // 3. Update sessions
+        console.log(`[Manager] Moving sessions...`);
+        await run(`UPDATE session SET room_id = ? WHERE room_id = ?`, [newRoomId, oldRoomId]);
+
+        // 4. Update room stats (delete old, let it regenerate for new)
+        await run(`DELETE FROM room_stats WHERE room_id = ?`, [oldRoomId]);
+
+        // 5. Delete old room
+        console.log(`[Manager] Deleting old room...`);
+        await run(`DELETE FROM room WHERE room_id = ?`, [oldRoomId]);
+
+        console.log(`[Manager] Migration complete: ${oldRoomId} -> ${newRoomId}`);
+        return true;
+    }
+
     async getRoomDetailStats(roomId, sessionId = null) {
         await this.ensureDb();
 
