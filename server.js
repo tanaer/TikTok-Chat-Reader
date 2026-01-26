@@ -259,16 +259,6 @@ app.get('/api/gifts', async (req, res) => {
     }
 });
 
-app.put('/api/gifts/:id', async (req, res) => {
-    try {
-        const { nameCn } = req.body;
-        await manager.updateGiftChineseName(req.params.id, nameCn);
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
 // Gift display names API (for frontend batch lookup)
 app.get('/api/gifts/display-names', async (req, res) => {
     try {
@@ -725,6 +715,19 @@ app.post('/api/rooms', async (req, res) => {
         }
 
         res.json({ success: true, room });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Rename room (Migrate ID)
+app.post('/api/rooms/:id/rename', async (req, res) => {
+    try {
+        const { newRoomId } = req.body;
+        if (!newRoomId) return res.status(400).json({ error: 'New Room ID is required' });
+
+        await manager.migrateRoomId(req.params.id, newRoomId);
+        res.json({ success: true, oldRoomId: req.params.id, newRoomId });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
