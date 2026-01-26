@@ -1,0 +1,290 @@
+@import "tailwindcss";
+
+/* ========================================
+   TikTok Monitor Design System
+   Colors: Blue Primary, Orange CTA
+   Typography: Fira Sans / Fira Code
+   Style: Data-Dense Dashboard, Professional Analytics
+   ======================================== */
+
+/* Google Fonts */
+@import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap');
+
+@theme {
+  /* Primary Colors - Blue Analytics Theme */
+  --color-primary: #3B82F6;
+  --color-primary-dark: #2563EB;
+  --color-primary-light: #60A5FA;
+
+  /* CTA - Orange for conversion */
+  --color-cta: #F97316;
+  --color-cta-dark: #EA580C;
+
+  /* Neutral Background */
+  --color-bg-light: #F8FAFC;
+  --color-bg-dark: #0F172A;
+  --color-bg-card: rgba(255, 255, 255, 0.05);
+
+  /* Text */
+  --color-text-dark: #1E293B;
+  --color-text-muted: #64748B;
+  --color-text-light: #F1F5F9;
+
+  /* Borders */
+  --color-border-light: #E2E8F0;
+  --color-border-dark: rgba(255, 255, 255, 0.1);
+
+  /* Accent */
+  --color-success: #22C55E;
+  --color-warning: #EAB308;
+  --color-error: #EF4444;
+}
+
+/* ========================================
+   Base Styles
+   ======================================== */
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Fira Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%);
+  color: #F1F5F9;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* Code/Data Font */
+.font-mono,
+code,
+.data-value {
+  font-family: 'Fira Code', monospace;
+}
+
+/* ========================================
+   Gradient Text - Blue/Cyan, No Purple
+   ======================================== */
+.gradient-text {
+  background: linear-gradient(135deg, #3B82F6 0%, #06B6D4 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* Orange Accent Text */
+.gradient-text-cta {
+  background: linear-gradient(135deg, #F97316 0%, #FBBF24 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+/* ========================================
+   Buttons
+   ======================================== */
+.btn-primary {
+  background: linear-gradient(135deg, #3B82F6 0%, #2563EB 100%);
+  color: #ffffff;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-block;
+}
+
+.btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px rgba(59, 130, 246, 0.4);
+}
+
+.btn-cta {
+  background: linear-gradient(135deg, #F97316 0%, #EA580C 100%);
+  color: #ffffff;
+  font-weight: 600;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-block;
+}
+
+.btn-cta:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 30px rgba(249, 115, 22, 0.4);
+}
+
+.btn-outline {
+  background: transparent;
+  color: #3B82F6;
+  font-weight: 600;
+  border: 2px solid #3B82F6;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-outline:hover {
+  background: rgba(59, 130, 246, 0.1);
+}
+
+/* ========================================
+   Glass Effect - Dark Theme
+   ======================================== */
+.glass {
+  background: rgba(15, 23, 42, 0.8);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ========================================
+   Cards
+   ======================================== */
+.card {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  transition: all 0.2s ease;
+  cursor: pointer;
+}
+
+.card:hover {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(59, 130, 246, 0.4);
+  transform: translateY(-2px);
+}
+
+/* Data Card - for KPI display */
+.data-card {
+  background: linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(6, 182, 212, 0.05) 100%);
+  border: 1px solid rgba(59, 130, 246, 0.2);
+  border-radius: 12px;
+}
+
+/* ========================================
+   Orb Backgrounds - Blue/Cyan, No Purple
+   ======================================== */
+.orb {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(120px);
+  opacity: 0.4;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.orb-primary {
+  background: #3B82F6;
+}
+
+.orb-secondary {
+  background: #06B6D4;
+}
+
+.orb-accent {
+  background: #F97316;
+}
+
+/* ========================================
+   Form Styles
+   ======================================== */
+input[type="text"],
+input[type="email"],
+input[type="password"] {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+  padding: 0.875rem 1rem;
+  color: #F1F5F9;
+  font-size: 1rem;
+  font-family: 'Fira Sans', sans-serif;
+  width: 100%;
+  transition: all 0.2s ease;
+}
+
+input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+input:focus {
+  outline: none;
+  border-color: #3B82F6;
+  background: rgba(59, 130, 246, 0.1);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+/* ========================================
+   Stats/KPI Display
+   ======================================== */
+.stat-value {
+  font-family: 'Fira Code', monospace;
+  font-weight: 700;
+  font-size: 2rem;
+  color: #3B82F6;
+}
+
+.stat-label {
+  font-size: 0.875rem;
+  color: #64748B;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* ========================================
+   Navigation
+   ======================================== */
+.nav-link {
+  color: rgba(255, 255, 255, 0.7);
+  transition: color 0.2s ease;
+  cursor: pointer;
+}
+
+.nav-link:hover {
+  color: #3B82F6;
+}
+
+/* ========================================
+   Animations
+   ======================================== */
+@keyframes pulse-blue {
+
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+
+  50% {
+    opacity: 0.7;
+  }
+}
+
+.animate-pulse-slow {
+  animation: pulse-blue 4s ease-in-out infinite;
+}
+
+@keyframes float {
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+.animate-float {
+  animation: float 6s ease-in-out infinite;
+}
+
+/* Respect reduced motion */
+@media (prefers-reduced-motion: reduce) {
+
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

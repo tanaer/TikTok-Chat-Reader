@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我的订阅 - TikTok Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="landing.css">
+    <link rel="stylesheet" href="auth.css">
+    <style>
+        .subscription-container {
+            max-width: 800px;
+            margin: 80px auto;
+            padding: 0 20px;
+        }
+
+        .subscription-card {
+            background: rgba(20, 20, 30, 0.8);
+            backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 32px;
+            margin-bottom: 24px;
+        }
+
+        .subscription-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .plan-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 0.875rem;
+            font-weight: 600;
+        }
+
+        .plan-badge.free {
+            background: rgba(255, 255, 255, 0.1);
+            color: #888;
+        }
+
+        .plan-badge.basic {
+            background: rgba(0, 245, 212, 0.2);
+            color: #00f5d4;
+        }
+
+        .plan-badge.pro {
+            background: rgba(123, 44, 191, 0.2);
+            color: #b57aff;
+        }
+
+        .plan-badge.enterprise {
+            background: rgba(255, 107, 107, 0.2);
+            color: #ff6b6b;
+        }
+
+        .stat-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+            margin-top: 24px;
+        }
+
+        .stat-item {
+            text-align: center;
+            padding: 20px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            color: #00f5d4;
+        }
+
+        .stat-label {
+            font-size: 0.875rem;
+            color: rgba(255, 255, 255, 0.6);
+            margin-top: 4px;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 12px;
+            margin-top: 24px;
+        }
+
+        .btn-outline {
+            padding: 12px 24px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            background: transparent;
+            color: white;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .btn-outline:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .back-link {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            color: rgba(255, 255, 255, 0.6);
+            text-decoration: none;
+            margin-bottom: 24px;
+        }
+
+        .back-link:hover {
+            color: white;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: rgba(255, 255, 255, 0.6);
+        }
+    </style>
+</head>
+
+<body>
+    <div class="subscription-container">
+        <a href="/" class="back-link">← 返回控制台</a>
+
+        <div id="subscriptionContent" class="loading">
+            加载中...
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            const container = document.getElementById('subscriptionContent');
+            const accessToken = localStorage.getItem('accessToken');
+
+            if (!accessToken) {
+                window.location.href = '/landing/login.html';
+                return;
+            }
+
+            try {
+                // Fetch subscription data
+                const subResponse = await fetch('/api/subscription', {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+
+                if (!subResponse.ok) {
+                    if (subResponse.status === 401) {
+                        window.location.href = '/landing/login.html';
+                        return;
+                    }
+                    throw new Error('Failed to load subscription');
+                }
+
+                const subscription = await subResponse.json();
+
+                // Render subscription info
+                container.innerHTML = `
+                    <div class="subscription-card">
+                        <div class="subscription-header">
+                            <div>
+                                <h1 style="margin: 0; font-size: 1.5rem;">我的订阅</h1>
+                                <p style="color: rgba(255,255,255,0.6); margin: 8px 0 0 0;">管理您的订阅计划</p>
+                            </div>
+                            <span class="plan-badge ${subscription.plan?.code || 'free'}">${subscription.plan?.name || '免费版'}</span>
+                        </div>
+
+                        <div class="stat-grid">
+                            <div class="stat-item">
+                                <div class="stat-value">${subscription.plan?.roomLimit === -1 ? '∞' : (subscription.plan?.roomLimit || 1)}</div>
+                                <div class="stat-label">可监控房间</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">${subscription.aiCreditsRemaining || 0}</div>
+                                <div class="stat-label">AI分析剩余</div>
+                            </div>
+                            <div class="stat-item">
+                                <div class="stat-value">${subscription.daysRemaining >= 0 ? subscription.daysRemaining : '∞'}</div>
+                                <div class="stat-label">剩余天数</div>
+                            </div>
+                        </div>
+
+                        ${subscription.endDate ? `
+                            <p style="margin-top: 24px; color: rgba(255,255,255,0.6); font-size: 0.875rem;">
+                                订阅到期日: ${new Date(subscription.endDate).toLocaleDateString('zh-CN')}
+                                ${subscription.autoRenew ? ' · 自动续费已开启' : ''}
+                            </p>
+                        ` : ''}
+
+                        <div class="action-buttons">
+                            <a href="/landing/#pricing" class="btn btn-primary">升级套餐</a>
+                            ${subscription.plan?.code !== 'free' ? `
+                                <button class="btn-outline" onclick="cancelAutoRenew()">取消自动续费</button>
+                            ` : ''}
+                        </div>
+                    </div>
+
+                    <div class="subscription-card">
+                        <h2 style="margin: 0 0 16px 0; font-size: 1.25rem;">AI分析额度</h2>
+                        <p style="color: rgba(255,255,255,0.6);">
+                            本月已使用 ${subscription.aiCreditsUsed || 0} 次分析，剩余 ${subscription.aiCreditsRemaining || 0} 次
+                        </p>
+                        <div class="action-buttons">
+                            <a href="/landing/buy-credits.html" class="btn-outline">购买额外额度</a>
+                        </div>
+                    </div>
+                `;
+            } catch (err) {
+                container.innerHTML = `
+                    <div class="subscription-card">
+                        <p style="color: #ff6b6b;">加载失败: ${err.message}</p>
+                        <div class="action-buttons">
+                            <button class="btn btn-primary" onclick="location.reload()">重试</button>
+                        </div>
+                    </div>
+                `;
+            }
+        });
+
+        async function cancelAutoRenew() {
+            if (!confirm('确定取消自动续费？当前订阅期内仍可正常使用。')) return;
+
+            const accessToken = localStorage.getItem('accessToken');
+            try {
+                const response = await fetch('/api/subscription/cancel', {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                if (response.ok) {
+                    alert('已取消自动续费');
+                    location.reload();
+                } else {
+                    const data = await response.json();
+                    alert(data.error || '操作失败');
+                }
+            } catch (err) {
+                alert('操作失败: ' + err.message);
+            }
+        }
+    </script>
+</body>
+
+</html>
