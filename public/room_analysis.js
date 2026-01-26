@@ -17,6 +17,7 @@ function initRoomAnalysis() {
 async function fetchAndRenderRoomStats() {
     const start = document.getElementById('ra_startDate').value;
     const end = document.getElementById('ra_endDate').value;
+    const limit = document.getElementById('ra_limit').value || 100;
 
     if (!start || !end) {
         alert('Please select both start and end dates');
@@ -24,7 +25,7 @@ async function fetchAndRenderRoomStats() {
     }
 
     try {
-        const response = await fetch(`/api/analysis/rooms/entry?startDate=${start}&endDate=${end}`);
+        const response = await fetch(`/api/analysis/rooms/entry?startDate=${start}&endDate=${end}&limit=${limit}`);
         const data = await response.json();
 
         if (data.error) {
@@ -48,12 +49,15 @@ function renderRoomAnalysisChart(data) {
         roomAnalysisChart.destroy();
     }
 
-    // Prepare data
-    // data is array of { roomId, roomName, count }
-    // Sort by count desc (should already be sorted by API, but double check)
-    // For horizontal bar chart, we usually want top items at top, so index 0 = top.
+    // Adjust container height based on data length
+    // 30px per item + 100px padding, min 600px
+    const newHeight = Math.max(600, data.length * 30 + 100);
+    ctx.parentElement.style.height = `${newHeight}px`;
 
-    const labels = data.map(item => item.roomName || item.roomId);
+    // Prepare data
+    // Sort by count desc (should already be sorted by API, but double check)
+    // Explicitly add room name to label for readability
+    const labels = data.map(item => `${item.roomName} (${item.roomId})`);
     const counts = data.map(item => item.count);
 
     roomAnalysisChart = new Chart(ctx, {
@@ -78,12 +82,17 @@ function renderRoomAnalysisChart(data) {
                 },
                 title: {
                     display: true,
-                    text: 'Room Entry Analysis'
+                    text: `Room Entry Analysis (Top ${data.length})`
                 }
             },
             scales: {
                 x: {
                     beginAtZero: true
+                },
+                y: {
+                    ticks: {
+                        autoSkip: false // Force show all labels
+                    }
                 }
             }
         }

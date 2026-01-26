@@ -605,8 +605,8 @@ app.get('/api/analysis/stats', async (req, res) => {
 
 app.get('/api/analysis/rooms/entry', async (req, res) => {
     try {
-        const { startDate, endDate } = req.query;
-        const stats = await manager.getRoomEntryStats(startDate, endDate);
+        const { startDate, endDate, limit } = req.query;
+        const stats = await manager.getRoomEntryStats(startDate, endDate, limit);
         res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
