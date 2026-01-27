@@ -50,49 +50,86 @@ function renderRoomAnalysisChart(data) {
     }
 
     // Adjust container height based on data length
-    // 30px per item + 100px padding, min 600px
     const newHeight = Math.max(600, data.length * 30 + 100);
     ctx.parentElement.style.height = `${newHeight}px`;
 
     // Prepare data
-    // Sort by count desc (should already be sorted by API, but double check)
-    // Explicitly add room name to label for readability
     const labels = data.map(item => `${item.roomName} (${item.roomId})`);
     const counts = data.map(item => item.count);
+    const dailyRevenues = data.map(item => item.dailyAvg);
 
     roomAnalysisChart = new Chart(ctx, {
         type: 'bar',
         data: {
             labels: labels,
-            datasets: [{
-                label: 'Total Entries (Members)',
-                data: counts,
-                backgroundColor: 'rgba(54, 162, 235, 0.7)',
-                borderColor: 'rgba(54, 162, 235, 1)',
-                borderWidth: 1
-            }]
+            datasets: [
+                {
+                    label: 'Total Entries (Members)',
+                    data: counts,
+                    backgroundColor: 'rgba(54, 162, 235, 0.7)',
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    borderWidth: 1,
+                    xAxisID: 'x',
+                    order: 2
+                },
+                {
+                    label: 'Daily Avg Revenue (Diamonds)',
+                    data: dailyRevenues,
+                    backgroundColor: 'rgba(255, 99, 132, 0.7)',
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    borderWidth: 1,
+                    xAxisID: 'x1',
+                    order: 1
+                }
+            ]
         },
         options: {
             indexAxis: 'y', // Horizontal bar chart
             responsive: true,
             maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false,
+            },
             plugins: {
-                legend: {
-                    position: 'top',
-                },
+                legend: { position: 'top' },
                 title: {
                     display: true,
-                    text: `Room Entry Analysis (Top ${data.length})`
+                    text: `Room Entry Analysis & Revenue (Top ${data.length})`
+                },
+                tooltip: {
+                    callbacks: {
+                        label: function (context) {
+                            let label = context.dataset.label || '';
+                            if (label) {
+                                label += ': ';
+                            }
+                            if (context.parsed.x !== null) {
+                                label += context.parsed.x.toLocaleString();
+                            }
+                            return label;
+                        }
+                    }
                 }
             },
             scales: {
                 x: {
-                    beginAtZero: true
+                    type: 'linear',
+                    display: true,
+                    position: 'bottom',
+                    title: { display: true, text: 'Entries' },
+                    grid: { drawOnChartArea: true }
+                },
+                x1: {
+                    type: 'linear',
+                    display: true,
+                    position: 'top',
+                    title: { display: true, text: 'Revenue (Diamonds)' },
+                    grid: { drawOnChartArea: false }, // Avoid grid clutter
+                    ticks: { color: 'rgba(255, 99, 132, 1)' }
                 },
                 y: {
-                    ticks: {
-                        autoSkip: false // Force show all labels
-                    }
+                    ticks: { autoSkip: false }
                 }
             }
         }
