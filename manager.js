@@ -1287,7 +1287,7 @@ class Manager {
 
 
     // Room Entry Analysis
-    async getRoomEntryStats(startDate, endDate) {
+    async getRoomEntryStats(startDate, endDate, limit = 100) {
         await this.ensureDb();
 
         // Ensure dates are valid
@@ -1303,20 +1303,24 @@ class Manager {
             SELECT 
                 e.room_id, 
                 MAX(r.name) as room_name, 
-                COUNT(*) as count
+                COUNT(*) as count,
+                MAX(rs.valid_daily_avg) as daily_avg
             FROM event e
             LEFT JOIN room r ON e.room_id = r.room_id
+            LEFT JOIN room_stats rs ON e.room_id = rs.room_id
             WHERE e.type = 'member' 
             AND e.timestamp >= ? 
             AND e.timestamp <= ?
             GROUP BY e.room_id
             ORDER BY count DESC
-        `, [start.toISOString(), end.toISOString()]);
+            LIMIT ?
+        `, [start.toISOString(), end.toISOString(), parseInt(limit) || 100]);
 
         return stats.map(s => ({
             roomId: s.roomId,
             roomName: s.roomName || s.roomId,
-            count: parseInt(s.count) || 0
+            count: parseInt(s.count) || 0,
+            dailyAvg: parseInt(s.dailyAvg) || 0
         }));
     }
 
