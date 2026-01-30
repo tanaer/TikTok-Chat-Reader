@@ -1615,6 +1615,22 @@ class Manager {
         `, roomIds);
         const sessionMap = Object.fromEntries(lastSessions.map(r => [r.roomId, r.createdAt]));
 
+        // Fetch monthly gift totals (current month)
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
+        const monthlyGifts = await query(`
+            SELECT 
+                room_id,
+                COALESCE(SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)), 0) as monthly_gift
+            FROM event 
+            WHERE room_id IN (${placeholders})
+            AND type = 'gift'
+            AND timestamp >= ?
+            GROUP BY room_id
+        `, [...roomIds, monthStart.toISOString()]);
+        const monthlyGiftMap = Object.fromEntries(monthlyGifts.map(r => [r.roomId, parseInt(r.monthlyGift) || 0]));
+
         // Build final stats objects
         const stats = rooms.map(r => {
             const curr = currentStatsMap[r.roomId] || {};
@@ -1652,6 +1668,7 @@ class Manager {
                 totalComments: currComments,
                 totalGiftValue: currGift,
                 allTimeGiftValue: allTimeGift,
+                monthlyGiftValue: monthlyGiftMap[r.roomId] || 0,
                 totalLikes: currLikes,
                 lastSessionTime: sessionMap[r.roomId] || null,
                 broadcastDuration: Math.round(durationSecs),
