@@ -15,6 +15,29 @@ const formatMonthlyWithAvg = (total) => {
     return `${total.toLocaleString()}（${avg.toLocaleString()}）`;
 };
 
+// Helper to format time ago in human-readable format (e.g., "3天前", "7天前", "1个月前")
+const formatTimeAgo = (dateStr) => {
+    if (!dateStr) return '';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+    if (diffDays < 1) return '今天';
+    if (diffDays === 1) return '昨天';
+    if (diffDays < 7) return `${diffDays}天前`;
+    if (diffDays < 30) {
+        const weeks = Math.floor(diffDays / 7);
+        return `${weeks}周前`;
+    }
+    if (diffDays < 365) {
+        const months = Math.floor(diffDays / 30);
+        return `${months}个月前`;
+    }
+    const years = Math.floor(diffDays / 365);
+    return `${years}年前`;
+};
+
 // Helper to escape strings for use in HTML attributes
 const escapeHtml = (str) => String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
@@ -66,6 +89,7 @@ function renderRoomCard(r, index = 0) {
                     <div class="flex items-center gap-1 mt-1">
                         <div class="badge badge-outline badge-sm opacity-70 truncate max-w-[150px] cursor-pointer hover:bg-base-300" 
                              title="点击复制: ${r.roomId}" onclick="copyToClipboard('${safeRoomId}', event)">${r.roomId}</div>
+                        ${r.lastSessionTime ? `<span class="text-xs opacity-50">- ${formatTimeAgo(r.lastSessionTime)}</span>` : ''}
                     </div>
                 </div>
                 <div class="flex flex-col items-end gap-1">
@@ -153,7 +177,9 @@ function renderRoomRow(r, index = 0) {
                 <span class="text-lg" title="${isLive ? '直播中' : '未开播'}">${statusText}</span>
                 <div>
                     <div class="font-bold truncate max-w-[120px]" title="${r.name}">${r.name || '未命名'}</div>
-                    <div class="text-xs opacity-50 cursor-pointer hover:opacity-100" onclick="event.stopPropagation();copyToClipboard('${safeRoomId}', event)" title="点击复制">${r.roomId}</div>
+                    <div class="text-xs opacity-50">
+                        <span class="cursor-pointer hover:opacity-100" onclick="event.stopPropagation();copyToClipboard('${safeRoomId}', event)" title="点击复制">${r.roomId}</span>${r.lastSessionTime ? ` - ${formatTimeAgo(r.lastSessionTime)}` : ''}
+                    </div>
                 </div>
             </div>
         </td>
