@@ -78,7 +78,7 @@ function renderRoomCard(r, index = 0) {
     const safeName = escapeHtml(r.name || '');
 
     return `
-    <div class="card bg-base-100 shadow-xl border border-base-200 hover:border-primary transition-colors">
+    <div class="card bg-base-100 shadow-xl border border-base-200 hover:border-primary transition-colors" data-room-id="${safeRoomId}">
         <div class="card-body p-5">
             <div class="flex justify-between items-start">
                 <div>
@@ -170,7 +170,7 @@ function renderRoomRow(r, index = 0) {
     const safeName = escapeHtml(r.name || '');
 
     return `
-    <tr class="hover:bg-base-200 cursor-pointer" onclick="enterRoom('${safeRoomId}', '${safeName}')">
+    <tr class="hover:bg-base-200 cursor-pointer" data-room-id="${safeRoomId}" onclick="enterRoom('${safeRoomId}', '${safeName}')">
         <td class="p-2 text-center font-mono text-sm opacity-60">${index}</td>
         <td class="p-2">
             <div class="flex items-center gap-2">
@@ -256,6 +256,9 @@ async function renderRoomList() {
         <div class="col-span-full mb-4">
             <div class="flex gap-2 items-center justify-between flex-wrap">
                 <div class="flex gap-2 items-center flex-1">
+                    <button class="btn btn-sm btn-ghost" onclick="refreshRoomList()" title="刷新数据">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                    </button>
                     <input type="text" id="roomSearchInput" 
                         class="input input-bordered input-sm flex-1 max-w-xs" 
                         placeholder="搜索房间名或账号..." 
@@ -419,10 +422,16 @@ function stopRoomListAutoRefresh() {
     }
 }
 
-// Auto-start refresh on page load
-$(document).ready(() => {
-    startRoomListAutoRefresh();
-});
+// Auto-refresh is DISABLED - user requested manual refresh only
+// $(document).ready(() => {
+//     startRoomListAutoRefresh();
+// });
+
+// Manual refresh function
+function refreshRoomList() {
+    renderRoomList();
+}
+window.refreshRoomList = refreshRoomList;
 
 async function toggleMonitor(roomId, enabled, name, address) {
     // We reuse the update endpoint - must send as JSON
@@ -484,7 +493,8 @@ window.deleteRoom = async function (id) {
     try {
         // URL-encode room ID to handle special characters like @
         await $.ajax({ url: `/api/rooms/${encodeURIComponent(id)}`, type: 'DELETE' });
-        renderRoomList();
+        // Remove the DOM element instead of refreshing the entire list
+        $(`[data-room-id="${escapeHtml(id)}"]`).fadeOut(300, function () { $(this).remove(); });
     } catch (e) { alert(e.statusText); }
 };
 window.saveRoom = async function () {
@@ -493,6 +503,7 @@ window.saveRoom = async function () {
     const isMonitor = $('#roomMonitorToggle').is(':checked');
     const language = $('#roomLanguage').val();
     const priority = parseInt($('#roomPriority').val()) || 0;
+    const isEdit = $('#editRoomIdRaw').val().trim() !== '';
 
     if (!id) return alert('ID required');
     try {
@@ -503,7 +514,23 @@ window.saveRoom = async function () {
             data: JSON.stringify({ roomId: id, name: name, isMonitorEnabled: isMonitor, language: language, priority: priority })
         });
         closeRoomModal();
-        renderRoomList();
+
+        if (isEdit) {
+            // Update DOM element instead of refreshing the entire list
+            const el = $(`[data-room-id="${escapeHtml(id)}"]`);
+            // Update name in card view
+            el.find('.card-title').text(name || '未命名').attr('title', name);
+            // Update name in list view
+            el.find('.font-bold.truncate').text(name || '未命名').attr('title', name);
+            // Update monitor toggle
+            el.find('.toggle-success').prop('checked', isMonitor);
+            // Flash the element to indicate success
+            el.addClass('ring-2 ring-primary');
+            setTimeout(() => el.removeClass('ring-2 ring-primary'), 1000);
+        } else {
+            // New room - need to refresh to show it
+            renderRoomList();
+        }
     } catch (e) { alert('Save failed: ' + e.statusText); }
 };
 
