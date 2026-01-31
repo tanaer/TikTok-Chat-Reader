@@ -83,7 +83,8 @@ function switchSection(sectionId) {
     $(`.nav-btn[onclick="switchSection('${sectionId}')"]`).addClass('active');
 
     if (sectionId === 'roomList') {
-        renderRoomList();
+        // Don't auto-refresh - user can click refresh button manually
+        // renderRoomList();
     } else if (sectionId === 'userAnalysis') {
         // Only auto-render if not coming from searchUserExact (which handles its own render)
         if (!window._pendingUserSearch && typeof renderUserList === 'function') {
