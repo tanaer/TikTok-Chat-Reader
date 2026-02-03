@@ -251,6 +251,54 @@ async function initDb() {
         // Index for fast node lookup by status
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_proxy_node_status ON proxy_node(euler_status, tiktok_status)`);
 
+        // TikTok Account table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS tiktok_account (
+                id SERIAL PRIMARY KEY,
+                username TEXT,
+                cookie TEXT,
+                proxy_id INTEGER,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        // SOCKS5 Proxy table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS socks5_proxy (
+                id SERIAL PRIMARY KEY,
+                name TEXT,
+                host TEXT NOT NULL,
+                port INTEGER NOT NULL,
+                username TEXT,
+                password TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        // Recording Task table (for history/active tracking)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS recording_task (
+                id SERIAL PRIMARY KEY,
+                room_id TEXT NOT NULL,
+                account_id INTEGER,
+                start_time TIMESTAMP DEFAULT NOW(),
+                end_time TIMESTAMP,
+                file_path TEXT,
+                file_size BIGINT,
+                status TEXT, -- 'recording', 'completed', 'failed'
+                error_msg TEXT
+            )
+        `);
+
+        // Add recording fields to room table
+        await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS is_recording_enabled INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS recording_account_id INTEGER`);
+
+
         // Migration: Add group_id column if proxy_node has subscription_id instead
         try {
             const colCheck = await pool.query(`

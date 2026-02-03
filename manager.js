@@ -126,12 +126,12 @@ class Manager {
     }
 
     // Room Management
-    async updateRoom(roomId, name, address, isMonitorEnabled, language = null, priority = null) {
+    async updateRoom(roomId, name, address, isMonitorEnabled, language = null, priority = null, isRecordingEnabled = null, recordingAccountId = null) {
         await this.ensureDb();
         const now = getNowBeijing();
 
         // Check if room exists to preserve existing values when null is passed
-        const existing = await get('SELECT name, address, is_monitor_enabled, language, priority FROM room WHERE room_id = ?', [roomId]);
+        const existing = await get('SELECT name, address, is_monitor_enabled, language, priority, is_recording_enabled, recording_account_id FROM room WHERE room_id = ?', [roomId]);
 
         // Preserve name if null/undefined passed
         let finalName = name;
@@ -166,7 +166,6 @@ class Manager {
         if (isMonitorEnabled === undefined || isMonitorEnabled === null) {
             if (existing) {
                 monitorVal = existing.is_monitor_enabled;
-                console.log(`[Manager] Preserving existing monitor setting: ${monitorVal}`);
             } else {
                 monitorVal = 1; // Default to enabled for new rooms only
             }
@@ -176,28 +175,58 @@ class Manager {
             monitorVal = 1;
         }
 
-        console.log(`[Manager] updateRoom - monitorVal: ${monitorVal}, language: ${finalLanguage}, priority: ${finalPriority}`);
+        // Handle recording enabled
+        let recordingVal;
+        if (isRecordingEnabled === undefined || isRecordingEnabled === null) {
+            recordingVal = existing ? existing.is_recording_enabled : 0; // Default disabled
+        } else if (isRecordingEnabled === false || isRecordingEnabled === 'false' || isRecordingEnabled === 0 || isRecordingEnabled === '0') {
+            recordingVal = 0;
+        } else {
+            recordingVal = 1;
+        }
+
+        // Handle recording account
+        let recAccountVal = recordingAccountId;
+        if (recAccountVal === undefined) {
+            recAccountVal = existing ? existing.recording_account_id : null;
+        }
+
+
+        // console.log(`[Manager] updateRoom - monitorVal: ${monitorVal}, recVal: ${recordingVal}`);
 
         await run(`
-            INSERT INTO room (room_id, name, address, language, updated_at, is_monitor_enabled, priority) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO room (room_id, name, address, language, updated_at, is_monitor_enabled, priority, is_recording_enabled, recording_account_id) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(room_id) DO UPDATE SET 
                 name = excluded.name, 
                 address = excluded.address,
                 language = excluded.language,
                 updated_at = excluded.updated_at,
                 is_monitor_enabled = excluded.is_monitor_enabled,
-                priority = excluded.priority
-        `, [roomId, finalName, finalAddress, finalLanguage, now, monitorVal, finalPriority]);
-        return { room_id: roomId, name: finalName, address: finalAddress, language: finalLanguage, is_monitor_enabled: monitorVal, priority: finalPriority };
+                priority = excluded.priority,
+                is_recording_enabled = excluded.is_recording_enabled,
+                recording_account_id = excluded.recording_account_id
+        `, [roomId, finalName, finalAddress, finalLanguage, now, monitorVal, finalPriority, recordingVal, recAccountVal]);
+
+        return {
+            room_id: roomId,
+            name: finalName,
+            address: finalAddress,
+            language: finalLanguage,
+            is_monitor_enabled: monitorVal,
+            priority: finalPriority,
+            is_recording_enabled: recordingVal,
+            recording_account_id: recAccountVal
+        };
     }
+
 
     async getRooms(options = {}) {
         await this.ensureDb();
         const { page = 1, limit = 50, search = '' } = options;
         const offset = (page - 1) * limit;
 
-        let sql = 'SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled FROM room';
+        let sql = 'SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled, is_recording_enabled, recording_account_id FROM room';
         let countSql = 'SELECT COUNT(*) as total FROM room';
         const params = [];
         const countParams = [];
@@ -227,6 +256,12 @@ class Manager {
             }
         };
     }
+
+    async getRoom(roomId) {
+        await this.ensureDb();
+        return await get('SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled, is_recording_enabled, recording_account_id FROM room WHERE room_id = ?', [roomId]);
+    }
+
 
     async deleteRoom(roomId) {
         await this.ensureDb();
@@ -1659,8 +1694,11 @@ class Manager {
                 name: r.name,
                 address: r.address,
                 isMonitorEnabled: r.isMonitorEnabled,
+                isRecordingEnabled: r.isRecordingEnabled,
+                recordingAccountId: r.recordingAccountId,
                 language: r.language,
                 priority: r.priority,
+
                 createdAt: r.createdAt,
                 updatedAt: r.updatedAt,
                 isLive: liveRoomIds.includes(r.roomId),

@@ -7,7 +7,9 @@ const dynamicProxyManager = require('./utils/DynamicProxyManager');
 
 class AutoRecorder {
     constructor() {
+        this.recordingManager = null; // Injected via setter
         this.defaultInterval = 300 * 1000;
+
         this.monitoring = true;
         this.activeConnections = new Map(); // roomId -> { wrapper, startTime, lastEventTime }
 
@@ -944,6 +946,10 @@ class AutoRecorder {
             // Create a room entry if it doesn't exist (don't overwrite name or monitor setting)
             await manager.updateRoom(uniqueId, null, null, undefined);
 
+            // Fetch room details (including recording settings)
+            const room = await manager.getRoom(uniqueId);
+
+
             // Use the same connection logic as checkAndConnect
             const dbSettings = await manager.getAllSettings();
 
@@ -1011,12 +1017,28 @@ class AutoRecorder {
 
                             this.setupLogging(wrapper, uniqueId, state.roomId);
 
+                            // Auto-Start Recording if enabled (Manual Start)
+                            if (this.recordingManager && room && room.is_recording_enabled === 1) {
+                                console.log(`[AutoRecorder] 🎥 Auto-starting recording for ${uniqueId} (Account: ${room.recording_account_id || 'None'})`);
+                                this.recordingManager.startRecording(state.roomId, uniqueId, room.recording_account_id)
+                                    .catch(err => console.error(`[AutoRecorder] Failed to start auto-recording: ${err.message}`));
+                            }
+
                             wrapper.once('disconnected', reason => {
+
                                 console.log(`[AutoRecorder] ${uniqueId} disconnected after connection: ${reason}`);
                                 this.handleDisconnect(uniqueId, reason);
                             });
 
+                            // Auto-Start Recording if enabled
+                            if (this.recordingManager && room.is_recording_enabled === 1) {
+                                console.log(`[AutoRecorder] 🎥 Auto-starting recording for ${uniqueId} (Account: ${room.recording_account_id || 'None'})`);
+                                this.recordingManager.startRecording(state.roomId, uniqueId, room.recording_account_id)
+                                    .catch(err => console.error(`[AutoRecorder] Failed to start auto-recording: ${err.message}`));
+                            }
+
                             wrapper.connection.on('streamEnd', () => {
+
                                 console.log(`[AutoRecorder] ${uniqueId} stream ended.`);
                                 this.handleDisconnect(uniqueId, 'streamEnd');
                             });
@@ -1127,7 +1149,18 @@ class AutoRecorder {
 
                 this.activeConnections.delete(uniqueId);
 
+                // Stop Recording if active
+                if (this.recordingManager) {
+                    // We need the numeric roomId to stop recording
+                    // conn.roomId should be available
+                    if (conn.roomId) {
+                        this.recordingManager.stopRecording(conn.roomId)
+                            .catch(err => console.error(`[AutoRecorder] Failed to stop recording for ${uniqueId}: ${err.message}`));
+                    }
+                }
+
                 // Flush any in-flight DB writes (best-effort) so the final events are included in the session.
+
                 try {
                     if (pendingWrites && pendingWrites.size > 0) {
                         const flushTimeoutMs = 1500;
@@ -1245,6 +1278,10 @@ class AutoRecorder {
             console.error(`[AutoRecorder] Error saving session: ${err?.message || err}`);
         }
     }
+    setRecordingManager(rm) {
+        this.recordingManager = rm;
+    }
 }
 
 module.exports = { AutoRecorder };
+

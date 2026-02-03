@@ -39,7 +39,7 @@ const formatTimeAgo = (dateStr) => {
 };
 
 // Helper to escape strings for use in HTML attributes
-const escapeHtml = (str) => String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
+const escapeHtml = (str) => str == null ? '' : String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
 // Helper to format duration in seconds (uses global formatDuration from app.js if available)
 const formatRoomDuration = (seconds) => {
@@ -74,10 +74,20 @@ function renderRoomCard(r, index = 0) {
     const duration = formatRoomDuration(r.broadcastDuration);
     const lastSession = r.lastSessionTime ? new Date(r.lastSessionTime).toLocaleString() : '无记录';
     const isMonitorOn = r.isMonitorEnabled !== 0;
+    const isRecordingEnabled = r.isRecordingEnabled === 1;
+    const recordingAccountId = escapeHtml(r.recordingAccountId || '');
     const safeRoomId = escapeHtml(r.roomId);
     const safeName = escapeHtml(r.name || '');
 
+
+    // Recording status
+    const isRecording = window.activeRecordingSet && window.activeRecordingSet.has(r.roomId);
+    const recoBtnClass = isRecording ? 'btn-error recording-active' : 'btn-ghost';
+    const recoBtnText = isRecording ? '⏹ 停止' : '⏺ 录制';
+    const recoBtnTooltip = isRecording ? '停止录制' : '开始录制';
+
     return `
+
     <div class="card bg-base-100 shadow-xl border border-base-200 hover:border-primary transition-colors" data-room-id="${safeRoomId}">
         <div class="card-body p-5">
             <div class="flex justify-between items-start">
@@ -150,9 +160,11 @@ function renderRoomCard(r, index = 0) {
                 </div>
                 <div class="flex gap-1">
                     <button class="btn btn-xs btn-ghost text-error" onclick="deleteRoom('${safeRoomId}')">删除</button>
-                    <button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>
-                    <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn})">编辑</button>
+                    <button class="btn btn-xs ${recoBtnClass}" onclick="toggleRecording('${safeRoomId}', '${safeRoomId}', this)" title="${recoBtnTooltip}">${recoBtnText}</button>
+                    ${r.lastSessionTime ? `<button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>` : ''}
+                    <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn}, '${r.language || '中文'}', ${r.priority}, ${isRecordingEnabled}, '${recordingAccountId}')">编辑</button>
                     <button class="btn btn-sm btn-primary" onclick="enterRoom('${safeRoomId}', '${safeName}')">进入</button>
+
                 </div>
             </div>
         </div>
@@ -166,10 +178,19 @@ function renderRoomRow(r, index = 0) {
     const statusText = isLive ? '🟢' : '⚫';
     const duration = formatRoomDuration(r.broadcastDuration);
     const isMonitorOn = r.isMonitorEnabled !== 0;
+    const isRecordingEnabled = r.isRecordingEnabled === 1;
+    const recordingAccountId = escapeHtml(r.recordingAccountId || '');
     const safeRoomId = escapeHtml(r.roomId);
+
     const safeName = escapeHtml(r.name || '');
 
+    // Recording status
+    const isRecording = window.activeRecordingSet && window.activeRecordingSet.has(r.roomId);
+    const recoBtnClass = isRecording ? 'btn-error recording-active' : 'btn-ghost';
+    const recoBtnText = isRecording ? '⏹' : '⏺';
+
     return `
+
     <tr class="hover:bg-base-200 cursor-pointer" data-room-id="${safeRoomId}" onclick="enterRoom('${safeRoomId}', '${safeName}')">
         <td class="p-2 text-center font-mono text-sm opacity-60">${index}</td>
         <td class="p-2">
@@ -218,8 +239,10 @@ function renderRoomRow(r, index = 0) {
         <td class="p-2 text-center" onclick="event.stopPropagation()">
             <div class="flex gap-1 justify-center">
                 <button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>
-                <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn})">✏️</button>
+                <button class="btn btn-xs ${recoBtnClass}" onclick="toggleRecording('${safeRoomId}', '${safeRoomId}', this)" title="${isRecording ? '停止录制' : '开始录制'}">${recoBtnText}</button>
+                <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn}, '${r.language || '中文'}', ${r.priority}, ${isRecordingEnabled}, '${recordingAccountId}')">✏️</button>
                 <button class="btn btn-xs btn-ghost text-error" onclick="deleteRoom('${safeRoomId}')">🗑️</button>
+
             </div>
         </td>
     </tr>`;
@@ -245,9 +268,20 @@ async function renderRoomList() {
             sort: roomListSort
         });
         const result = await $.get(`/api/rooms/stats?${params}`);
+
+        // Fetch active recordings
+        try {
+            const activeList = await $.get('/api/recordings/active');
+            window.activeRecordingSet = new Set(activeList);
+        } catch (e) {
+            console.error("Failed to fetch active recordings", e);
+            window.activeRecordingSet = new Set();
+        }
+
         const rooms = result.data || [];
         const pagination = result.pagination || { page: 1, limit: 20, total: 0, totalPages: 1 };
         roomListTotal = pagination.total;
+
 
         container.empty();
 
@@ -453,7 +487,40 @@ async function toggleMonitor(roomId, enabled, name, address) {
     }
 }
 
-function openAddRoomModal(id = null, name = null, isMonitorOn = true, language = '中文', priority = 0) {
+// Fetch accounts for the select dropdown
+window.fetchAccountsForSelect = async function () {
+    try {
+        const res = await $.get('/api/tiktok_accounts');
+        const accounts = res.accounts || [];
+        const select = $('#roomRecordingAccount');
+        const currentVal = select.val();
+
+        select.empty();
+        select.append('<option value="">(无指定 / 匿名)</option>');
+
+        accounts.forEach(acc => {
+            const label = `${acc.username || acc.id} ${acc.isActive ? '🟢' : '🔴'}`; // Use isActive (camelCase from DB wrapper)
+            select.append(new Option(label, acc.id));
+        });
+
+        if (currentVal) select.val(currentVal);
+    } catch (e) {
+        console.error("Failed to load accounts for select", e);
+    }
+};
+
+function openAddRoomModal(id = null, name = null, isMonitorOn = true, language = '中文', priority = 0, isRecordingOn = false, recordingAccount = null) {
+    // Populate account select if not already done (assuming populated on load or demand)
+    // We should probably trigger a refresh of accounts here just in case? Or rely on periodic?
+    // Let's assume fetchAccounts() or similar is available or just call the API.
+    // For now, let's just populate the fields.
+
+    // Reload accounts (from global cache or fetch new)
+    // We'll rely on a global function or direct call.
+    if (window.fetchAccountsForSelect) {
+        window.fetchAccountsForSelect();
+    }
+
     if (id && id !== 'undefined' && id !== 'null') { // check string 'null' if called from template
         $('#editRoomIdRaw').val(id);
         $('#roomUniqueId').val(id).prop('disabled', true);
@@ -461,6 +528,15 @@ function openAddRoomModal(id = null, name = null, isMonitorOn = true, language =
         $('#roomMonitorToggle').prop('checked', isMonitorOn);
         if (language) $('#roomLanguage').val(language);
         $('#roomPriority').val(priority || 0);
+
+        // Recording settings
+        $('#roomAutoRecordToggle').prop('checked', isRecordingOn);
+        // We'll set the value after the select is populated, but since fetch is async, 
+        // we might need a small delay or better architectural approach.
+        // For simplicity, we set it and hope options are there or will be set.
+        setTimeout(() => {
+            $('#roomRecordingAccount').val(recordingAccount || '');
+        }, 100);
     } else {
         $('#editRoomIdRaw').val('');
         $('#roomUniqueId').val('').prop('disabled', false);
@@ -468,9 +544,13 @@ function openAddRoomModal(id = null, name = null, isMonitorOn = true, language =
         $('#roomMonitorToggle').prop('checked', true);
         $('#roomLanguage').val('中文');
         $('#roomPriority').val(0);
+
+        $('#roomAutoRecordToggle').prop('checked', false);
+        $('#roomRecordingAccount').val('');
     }
     document.getElementById('roomModal').showModal();
 }
+
 
 function closeRoomModal() {
     document.getElementById('roomModal').close();
@@ -501,6 +581,8 @@ window.saveRoom = async function () {
     const id = $('#roomUniqueId').val().trim();
     const name = $('#roomNameInput').val().trim();
     const isMonitor = $('#roomMonitorToggle').is(':checked');
+    const isRecording = $('#roomAutoRecordToggle').is(':checked');
+    const recAccount = $('#roomRecordingAccount').val() || null;
     const language = $('#roomLanguage').val();
     const priority = parseInt($('#roomPriority').val()) || 0;
     const isEdit = $('#editRoomIdRaw').val().trim() !== '';
@@ -511,7 +593,15 @@ window.saveRoom = async function () {
             url: '/api/rooms',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ roomId: id, name: name, isMonitorEnabled: isMonitor, language: language, priority: priority })
+            data: JSON.stringify({
+                roomId: id,
+                name: name,
+                isMonitorEnabled: isMonitor,
+                language: language,
+                priority: priority,
+                isRecordingEnabled: isRecording,
+                recordingAccountId: recAccount
+            })
         });
         closeRoomModal();
 

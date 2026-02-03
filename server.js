@@ -10,12 +10,17 @@ const { Server } = require('socket.io');
 const { TikTokConnectionWrapper, getGlobalConnectionCount } = require('./connectionWrapper');
 const { manager } = require('./manager');
 const { AutoRecorder } = require('./auto_recorder');
+const recordingManager = require('./recording_manager');
+const ffmpegManager = require('./utils/ffmpeg_manager');
+
 
 const app = express();
 const httpServer = createServer(app);
 
 // Start Auto Recorder (Dynamic interval from DB)
 const autoRecorder = new AutoRecorder();
+autoRecorder.setRecordingManager(recordingManager);
+recordingManager.startMonitoring(); // Start stall detection for recordings
 
 // Enable CORS & JSON parsing
 // Enable CORS & JSON parsing
@@ -315,6 +320,32 @@ app.post('/api/maintenance/merge_sessions', async (req, res) => {
     }
 });
 
+// FFmpeg Maintenance APIs
+app.get('/api/maintenance/ffmpeg', async (req, res) => {
+    try {
+        const status = await ffmpegManager.checkFFmpegStatus();
+        res.json(status);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/maintenance/ffmpeg/install', async (req, res) => {
+    try {
+        const force = req.body.force === true;
+
+        // Start installation in background or wait?
+        // Let's wait, but user might timeout. Installation is fast (70MB download).
+        // Let's set a long timeout on client or return "started" and poll?
+        // Simple first: await.
+        const result = await ffmpegManager.installFFmpeg(force);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
 // Price API
 app.post('/api/price', (req, res) => {
     const { id, price } = req.body;
@@ -371,17 +402,7 @@ app.get('/api/rooms', async (req, res) => {
 });
 
 // Room Management API
-app.post('/api/rooms', async (req, res) => {
-    try {
-        const { roomId, name, isMonitorEnabled, language, priority } = req.body;
-        if (!roomId) return res.status(400).json({ error: 'roomId required' });
 
-        const result = await manager.updateRoom(roomId, name, null, isMonitorEnabled, language, priority);
-        res.json(result);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
 
 app.delete('/api/rooms/:id', async (req, res) => {
     try {
@@ -692,7 +713,8 @@ app.post('/api/analysis/ai', async (req, res) => {
 
 app.post('/api/rooms', async (req, res) => {
     try {
-        let { roomId, name, address, isMonitorEnabled, language, priority } = req.body;
+        let { roomId, name, address, isMonitorEnabled, language, priority, isRecordingEnabled, recordingAccountId } = req.body;
+
 
         // Normalize roomId: remove @ prefix to prevent duplicates (e.g. @blooming1881 vs blooming1881)
         if (roomId && roomId.startsWith('@')) {
@@ -705,8 +727,9 @@ app.post('/api/rooms', async (req, res) => {
         // If isMonitorEnabled is undefined, default to 1 (true) for new rooms, or preserve existing?
         // Manager handles upsert. We should pass what we have.
         // Frontend "saveRoom" sends all fields.
-        const room = await manager.updateRoom(roomId, name, address, isMonitorEnabled, language, priority);
+        const room = await manager.updateRoom(roomId, name, address, isMonitorEnabled, language, priority, isRecordingEnabled, recordingAccountId);
         console.log(`[API] Room updated:`, room);
+
 
         // If monitor was just disabled, disconnect immediately and save session
         if (isMonitorEnabled === false || isMonitorEnabled === 0 || isMonitorEnabled === '0') {
@@ -756,12 +779,396 @@ app.get('/api/rooms/:id/stats_detail', async (req, res) => {
 app.post('/api/rooms/:id/stop', async (req, res) => {
     try {
         const roomId = req.params.id;
+        // Stop monitoring
         const result = await autoRecorder.disconnectRoom(roomId);
+        // Stop recording if active
+        if (recordingManager.isRecording(roomId)) {
+            await recordingManager.stopRecording(roomId);
+        }
         res.json({ success: true, stopped: result });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
+
+// Recording API
+app.post('/api/rooms/:id/recording/start', async (req, res) => {
+    try {
+        const roomIdFromUrl = req.params.id;
+        let { roomId, uniqueId, accountId } = req.body;
+
+        // Use URL param if body doesn't have roomId
+        roomId = roomId || roomIdFromUrl;
+
+        // If uniqueId not provided, look it up from the room record
+        if (!uniqueId) {
+            const room = await manager.getRoom(roomId);
+            console.log(`[Recording API] Looking up room ${roomId}:`, room);
+            if (room) {
+                // Database returns snake_case column names
+                uniqueId = room.room_id;
+                console.log(`[Recording API] Resolved uniqueId: ${uniqueId}`);
+            }
+        }
+
+        if (!uniqueId) {
+            return res.status(400).json({ success: false, error: 'uniqueId is required' });
+        }
+
+        const result = await recordingManager.startRecording(roomId, uniqueId, accountId || null);
+        res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+app.post('/api/rooms/:id/recording/stop', async (req, res) => {
+    try {
+        const roomId = req.params.id;
+        const result = await recordingManager.stopRecording(roomId);
+        res.json({ success: result });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/rooms/:id/recording/status', (req, res) => {
+    const roomId = req.params.id;
+    res.json({ isRecording: recordingManager.isRecording(roomId) });
+});
+
+app.get('/api/recordings/active', (req, res) => {
+    // Return array of roomIds
+    const activeRooms = Array.from(recordingManager.activeRecordings.keys());
+    res.json(activeRooms);
+});
+
+// Recording Task Management API
+app.get('/api/recording_tasks', async (req, res) => {
+    try {
+        const db = require('./db');
+        const { roomId, status, dateFrom, dateTo, page = 1, limit = 20 } = req.query;
+        const offset = (parseInt(page) - 1) * parseInt(limit);
+
+        let whereClause = [];
+        let params = [];
+        let paramNum = 1;
+
+        if (roomId) {
+            whereClause.push(`room_id = $${paramNum++}`);
+            params.push(roomId);
+        }
+        if (status) {
+            whereClause.push(`status = $${paramNum++}`);
+            params.push(status);
+        }
+        if (dateFrom) {
+            whereClause.push(`start_time >= $${paramNum++}`);
+            params.push(dateFrom);
+        }
+        if (dateTo) {
+            whereClause.push(`start_time <= $${paramNum++}`);
+            params.push(dateTo + ' 23:59:59');
+        }
+
+        const whereStr = whereClause.length > 0 ? 'WHERE ' + whereClause.join(' AND ') : '';
+
+        // Get total count
+        const countResult = await db.get(`SELECT COUNT(*) as total FROM recording_task ${whereStr}`, params);
+        const total = parseInt(countResult.total);
+
+        // Get paginated results
+        params.push(parseInt(limit));
+        params.push(offset);
+        const tasks = await db.query(`
+            SELECT * FROM recording_task 
+            ${whereStr}
+            ORDER BY start_time DESC
+            LIMIT $${paramNum++} OFFSET $${paramNum}
+        `, params);
+
+        res.json({
+            tasks,
+            pagination: {
+                page: parseInt(page),
+                limit: parseInt(limit),
+                total,
+                totalPages: Math.ceil(total / parseInt(limit))
+            }
+        });
+    } catch (err) {
+        console.error('[API] Error fetching recording tasks:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get rooms with recording history (for dropdown)
+app.get('/api/recording_tasks/rooms', async (req, res) => {
+    try {
+        const db = require('./db');
+        const rooms = await db.query(`
+            SELECT room_id, COUNT(*) as task_count, MAX(start_time) as last_recorded
+            FROM recording_task
+            GROUP BY room_id
+            ORDER BY last_recorded DESC
+        `);
+        res.json(rooms);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get single task detail
+app.get('/api/recording_tasks/:id', async (req, res) => {
+    try {
+        const db = require('./db');
+        const task = await db.get('SELECT * FROM recording_task WHERE id = $1', [req.params.id]);
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+        res.json(task);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete recording task
+app.delete('/api/recording_tasks/:id', async (req, res) => {
+    try {
+        const db = require('./db');
+        const { deleteFile } = req.query;
+        const task = await db.get('SELECT * FROM recording_task WHERE id = $1', [req.params.id]);
+
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+
+        // Optionally delete the file
+        if (deleteFile === 'true' && task.file_path) {
+            const fs = require('fs');
+            if (fs.existsSync(task.file_path)) {
+                fs.unlinkSync(task.file_path);
+                console.log(`[Recorder] Deleted file: ${task.file_path}`);
+            }
+        }
+
+        await db.run('DELETE FROM recording_task WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Download recording file
+app.get('/api/recording_tasks/:id/download', async (req, res) => {
+    try {
+        const db = require('./db');
+        const task = await db.get('SELECT * FROM recording_task WHERE id = $1', [req.params.id]);
+        if (!task || !task.file_path) {
+            return res.status(404).json({ error: 'File not found' });
+        }
+
+        const fs = require('fs');
+        const path = require('path');
+
+        if (!fs.existsSync(task.file_path)) {
+            return res.status(404).json({ error: 'File does not exist on disk' });
+        }
+
+        const fileName = path.basename(task.file_path);
+        res.download(task.file_path, fileName);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+
+// TikTok Account API
+app.get('/api/tiktok_accounts', async (req, res) => {
+    try {
+        const accounts = await manager.getTikTokAccounts();
+        res.json({ accounts });
+    } catch (err) {
+        // Fallback if manager method not exists yet
+        try {
+            const db = require('./db');
+            const accounts = await db.query('SELECT * FROM tiktok_account ORDER BY id DESC');
+            res.json({ accounts });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    }
+});
+
+app.post('/api/tiktok_accounts', async (req, res) => {
+    try {
+        const { username, cookie, proxyId, isActive } = req.body;
+        const db = require('./db');
+        await db.run('INSERT INTO tiktok_account (username, cookie, proxy_id, is_active) VALUES ($1, $2, $3, $4)',
+            [username, cookie, proxyId, isActive]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/tiktok_accounts/:id', async (req, res) => {
+    try {
+        const db = require('./db');
+        await db.run('DELETE FROM tiktok_account WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/tiktok_accounts/:id', async (req, res) => {
+    try {
+        const db = require('./db');
+        const { username, cookie, proxyId, isActive } = req.body;
+        console.log(`[API] PUT /api/tiktok_accounts/${req.params.id}`, req.body);
+
+        // Build dynamic update query
+        const updates = [];
+        const params = [];
+        let paramNum = 1;
+
+        if (username !== undefined) { updates.push(`username = $${paramNum++}`); params.push(username); }
+        if (cookie !== undefined) { updates.push(`cookie = $${paramNum++}`); params.push(cookie); }
+        if (proxyId !== undefined) { updates.push(`proxy_id = $${paramNum++}`); params.push(proxyId); }
+        if (isActive !== undefined) { updates.push(`is_active = $${paramNum++}`); params.push(isActive); }
+
+        if (updates.length > 0) {
+            updates.push(`updated_at = NOW()`);
+            const query = `UPDATE tiktok_account SET ${updates.join(', ')} WHERE id = $${paramNum} RETURNING *`;
+            params.push(req.params.id);
+            console.log(`[API] Executing update: ${query} params:`, params);
+            // Use pool.query directly to get rowCount and rows
+            const result = await db.pool.query(query, params);
+
+            if (result.rowCount === 0) {
+                return res.status(404).json({ error: 'Account not found' });
+            }
+            const updatedAccount = result.rows[0];
+            res.json(updatedAccount);
+        } else {
+            res.status(400).json({ error: 'No fields to update' });
+        }
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
+// Socks5 Proxy API
+app.get('/api/socks5_proxies', async (req, res) => {
+    try {
+        const db = require('./db');
+        const proxies = await db.query('SELECT * FROM socks5_proxy ORDER BY id DESC');
+        res.json(proxies);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/socks5_proxies', async (req, res) => {
+    try {
+        const { name, host, port, username, password, isActive } = req.body;
+        const db = require('./db');
+        await db.run('INSERT INTO socks5_proxy (name, host, port, username, password, is_active) VALUES ($1, $2, $3, $4, $5, $6)',
+            [name, host, port, username, password, isActive]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/socks5_proxies/:id', async (req, res) => {
+    try {
+        const db = require('./db');
+        await db.run('DELETE FROM socks5_proxy WHERE id = $1', [req.params.id]);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/socks5_proxies/:id', async (req, res) => {
+    try {
+        const db = require('./db');
+        const { name, host, port, username, password, isActive } = req.body;
+
+        // Build dynamic update query
+        const updates = [];
+        const params = [];
+        let paramNum = 1;
+
+        if (name !== undefined) { updates.push(`name = $${paramNum++}`); params.push(name); }
+        if (host !== undefined) { updates.push(`host = $${paramNum++}`); params.push(host); }
+        if (port !== undefined) { updates.push(`port = $${paramNum++}`); params.push(port); }
+        if (username !== undefined) { updates.push(`username = $${paramNum++}`); params.push(username); }
+        if (password !== undefined) { updates.push(`password = $${paramNum++}`); params.push(password); }
+        if (isActive !== undefined) { updates.push(`is_active = $${paramNum++}`); params.push(isActive); }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: 'No fields to update' });
+        }
+
+        params.push(req.params.id);
+        await db.run(`UPDATE socks5_proxy SET ${updates.join(', ')} WHERE id = $${paramNum}`, params);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/socks5_proxies/:id/test', async (req, res) => {
+    try {
+        const db = require('./db');
+        const { SocksProxyAgent } = require('socks-proxy-agent');
+        const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
+        const proxy = await db.get('SELECT * FROM socks5_proxy WHERE id = $1', [req.params.id]);
+        if (!proxy) {
+            return res.status(404).json({ error: 'Proxy not found' });
+        }
+
+        const proxyUrl = `socks5://${proxy.username}:${proxy.password}@${proxy.host}:${proxy.port}`;
+        const agent = new SocksProxyAgent(proxyUrl, {
+            rejectUnauthorized: false,
+            timeout: 15000,
+            keepAlive: true
+        });
+
+        // Allow custom test URL (for CDN testing)
+        const testUrl = req.body.testUrl || 'https://pull-f5-sg01.tiktokcdn.com/';
+        console.log(`[ProxyTest] Testing ${proxy.host}:${proxy.port} -> ${testUrl}`);
+
+        const start = Date.now();
+        const response = await fetch(testUrl, {
+            agent,
+            headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            },
+            timeout: 20000
+        });
+
+        const duration = Date.now() - start;
+        console.log(`[ProxyTest] Result: ${response.status} in ${duration}ms`);
+
+        if (response.ok || response.status < 500) {
+            res.json({ success: true, duration, status: response.status, testedUrl: testUrl });
+        } else {
+            res.json({ success: false, error: `HTTP ${response.status}`, duration, testedUrl: testUrl });
+        }
+    } catch (err) {
+        console.error(`[ProxyTest] Failed: ${err.message}`);
+        res.json({ success: false, error: err.message });
+    }
+});
+
 
 // Debug API - View all active connections
 app.get('/api/debug/connections', (req, res) => {

@@ -23,7 +23,9 @@
     <script src="user_analysis.js"></script>
     <script src="room_analysis.js"></script>
     <script src="gift_config.js"></script>
+    <script src="recording_ui.js"></script>
     <script src="app.js"></script>
+
 
     <link rel="stylesheet" href="style.css"> <!-- Minimal overrides -->
 </head>
@@ -40,7 +42,9 @@
                 <li><a class="nav-btn active" onclick="switchSection('roomList')">📺 房间列表</a></li>
                 <li><a class="nav-btn" onclick="switchSection('userAnalysis')">📊 用户分析</a></li>
                 <li><a class="nav-btn" onclick="switchSection('roomAnalysis')">📈 房间分析</a></li>
+                <li><a class="nav-btn" onclick="switchSection('recording')">🎥 录制管理</a></li>
                 <li><a class="nav-btn" onclick="switchSection('systemConfig')">⚙️ 系统配置</a></li>
+
             </ul>
         </div>
     </div>
@@ -674,6 +678,149 @@
             </div>
         </section>
 
+        <!-- SECTION: Recording Management -->
+        <section id="section-recording" class="content-section hidden">
+            <!-- System Status -->
+            <div
+                class="card bg-base-100 shadow-sm border border-base-200 mb-4 p-3 flex-row justify-between items-center">
+                <div class="flex items-center gap-3">
+                    <span class="font-bold text-sm">FFmpeg Component:</span>
+                    <div class="badge badge-ghost" id="ffmpegStatusBadge">Checking...</div>
+                    <span class="text-xs opacity-50 font-mono" id="ffmpegInfo"></span>
+                </div>
+                <div id="ffmpegActionContainer">
+                    <!-- Buttons injected by JS -->
+                </div>
+            </div>
+
+            <div class="flex gap-2 mb-4">
+
+                <button class="btn btn-sm btn-outline recording-sub-nav-btn active"
+                    onclick="switchRecordingTab('tasks', this)">🔴 录制任务</button>
+                <button class="btn btn-sm btn-outline recording-sub-nav-btn"
+                    onclick="switchRecordingTab('accounts', this)">📱 账号管理</button>
+                <button class="btn btn-sm btn-outline recording-sub-nav-btn"
+                    onclick="switchRecordingTab('proxies', this)">🌐 代理管理</button>
+            </div>
+
+            <!-- Tasks Content -->
+            <div id="recordingTab-tasks" class="recording-tab-content">
+                <!-- Filter Controls -->
+                <div class="flex flex-wrap gap-2 mb-4 items-end">
+                    <div class="form-control">
+                        <label class="label py-0"><span class="label-text text-xs">房间</span></label>
+                        <select id="taskFilterRoom" class="select select-sm select-bordered w-40"
+                            onchange="loadRecordingTasks()">
+                            <option value="">全部房间</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-0"><span class="label-text text-xs">状态</span></label>
+                        <select id="taskFilterStatus" class="select select-sm select-bordered w-28"
+                            onchange="loadRecordingTasks()">
+                            <option value="">全部</option>
+                            <option value="recording">录制中</option>
+                            <option value="completed">已完成</option>
+                            <option value="failed">失败</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-0"><span class="label-text text-xs">开始日期</span></label>
+                        <input type="date" id="taskFilterDateFrom" class="input input-sm input-bordered w-36"
+                            onchange="loadRecordingTasks()">
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-0"><span class="label-text text-xs">结束日期</span></label>
+                        <input type="date" id="taskFilterDateTo" class="input input-sm input-bordered w-36"
+                            onchange="loadRecordingTasks()">
+                    </div>
+                    <button class="btn btn-sm btn-ghost" onclick="clearTaskFilters()">清除筛选</button>
+                </div>
+
+                <!-- Active Recordings Section -->
+                <div id="activeRecordingsSection" class="mb-4">
+                    <h4 class="font-semibold text-success flex items-center gap-2 mb-2">
+                        <span class="loading loading-ring loading-xs"></span> 活动中录制
+                    </h4>
+                    <div id="activeRecordingsList" class="grid gap-2">
+                        <!-- Populated by JS -->
+                    </div>
+                </div>
+
+                <!-- History Table -->
+                <div class="card bg-base-100 shadow-xl overflow-x-auto">
+                    <table class="table table-zebra table-sm w-full" id="taskHistoryTable">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>房间</th>
+                                <th>开始时间</th>
+                                <th>时长</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody id="taskHistoryBody">
+                            <!-- Populated by JS -->
+                        </tbody>
+                    </table>
+                </div>
+
+                <!-- Pagination -->
+                <div class="flex justify-center items-center gap-4 mt-4" id="taskPagination">
+                    <button class="btn btn-sm btn-outline" id="taskPrevBtn" onclick="changeTaskPage(-1)">上一页</button>
+                    <span id="taskPageInfo">1 / 1</span>
+                    <button class="btn btn-sm btn-outline" id="taskNextBtn" onclick="changeTaskPage(1)">下一页</button>
+                </div>
+            </div>
+
+            <!-- Accounts Content -->
+            <div id="recordingTab-accounts" class="recording-tab-content hidden">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-bold text-lg">TikTok 账号列表</h3>
+                    <button class="btn btn-sm btn-primary" onclick="openAddAccountModal()">➕ 添加账号</button>
+                </div>
+                <div class="card bg-base-100 shadow-xl overflow-x-auto">
+                    <table class="table table-zebra table-sm w-full" id="accountTable">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>用户名</th>
+                                <th>Cookie状态</th>
+                                <th>绑定代理</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Proxies Content -->
+            <div id="recordingTab-proxies" class="recording-tab-content hidden">
+                <div class="flex justify-between items-center mb-4">
+                    <h3 class="font-bold text-lg">SOCKS5 代理列表</h3>
+                    <button class="btn btn-sm btn-primary" onclick="openAddProxyModal()">➕ 添加代理</button>
+                </div>
+                <div class="card bg-base-100 shadow-xl overflow-x-auto">
+                    <table class="table table-zebra table-sm w-full" id="proxyTable">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>名称</th>
+                                <th>地址 (Host:Port)</th>
+                                <th>状态</th>
+                                <th>操作</th>
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+
+
     </main>
 
     <!-- Modal: Add Room -->
@@ -694,10 +841,28 @@
 
             <div class="form-control w-full mb-4">
                 <label class="label cursor-pointer justify-start gap-4">
-                    <span class="label-text">自动录制</span>
+                    <span class="label-text">启用监控 (采集数据)</span>
                     <input type="checkbox" id="roomMonitorToggle" class="toggle toggle-success" checked />
                 </label>
             </div>
+
+            <div class="divider text-xs opacity-50">视频录制设置</div>
+
+            <div class="form-control w-full mb-2">
+                <label class="label cursor-pointer justify-start gap-4">
+                    <span class="label-text font-bold">自动录制 (开播即录)</span>
+                    <input type="checkbox" class="toggle toggle-secondary" id="roomAutoRecordToggle" />
+                </label>
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">指定录制账号 (用于拉流)</span></label>
+                <select id="roomRecordingAccount" class="select select-bordered w-full">
+                    <option value="">(无指定 / 匿名)</option>
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+
 
             <div class="form-control w-full mb-4">
                 <label class="label"><span class="label-text">房间语种</span></label>
@@ -730,6 +895,92 @@
             <button onclick="closeRoomModal()">关闭</button>
         </form>
     </dialog>
+
+
+    <!-- Modal: Add/Edit Proxy -->
+    <dialog id="addProxyModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">添加 / 编辑 SOCKS5 代理</h3>
+            <input type="hidden" id="editProxyId">
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">名称 (备注)</span></label>
+                <input type="text" id="proxy_name" class="input input-bordered w-full" placeholder="My Proxy 1" />
+            </div>
+            <div class="flex gap-2 mb-4">
+                <div class="form-control w-2/3">
+                    <label class="label"><span class="label-text">Host / IP</span></label>
+                    <input type="text" id="proxy_host" class="input input-bordered w-full" placeholder="127.0.0.1" />
+                </div>
+                <div class="form-control w-1/3">
+                    <label class="label"><span class="label-text">Port</span></label>
+                    <input type="number" id="proxy_port" class="input input-bordered w-full" placeholder="1080" />
+                </div>
+            </div>
+            <div class="flex gap-2 mb-4">
+                <div class="form-control w-1/2">
+                    <label class="label"><span class="label-text">Username (Optional)</span></label>
+                    <input type="text" id="proxy_user" class="input input-bordered w-full" />
+                </div>
+                <div class="form-control w-1/2">
+                    <label class="label"><span class="label-text">Password (Optional)</span></label>
+                    <input type="text" id="proxy_pass" class="input input-bordered w-full" />
+                </div>
+            </div>
+            <div class="modal-action">
+                <form method="dialog"><button class="btn">取消</button></form>
+                <button class="btn btn-primary" onclick="saveProxy()">保存</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- Modal: Add/Edit Account -->
+    <dialog id="addAccountModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">添加 / 编辑 TikTok 账号</h3>
+            <input type="hidden" id="editAccountId">
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">用户名 (备注)</span></label>
+                <input type="text" id="acc_username" class="input input-bordered w-full" placeholder="my_account" />
+            </div>
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">Cookie (完整 Cookie 字符串)</span></label>
+                <textarea id="acc_cookie" class="textarea textarea-bordered w-full h-24"
+                    placeholder="tt_chain_token=xxx; msToken=xxx; ..."></textarea>
+            </div>
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">绑定代理 (可选)</span></label>
+                <select id="acc_proxy" class="select select-bordered w-full">
+                    <option value="">Direct (No Proxy)</option>
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+            <div class="modal-action">
+                <form method="dialog"><button class="btn">取消</button></form>
+                <button class="btn btn-primary" onclick="saveAccount()">保存</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- Modal: Start Recording -->
+    <dialog id="startRecordingModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg mb-4">开始录制</h3>
+            <div class="form-control w-full mb-4">
+                <label class="label"><span class="label-text">选择录制账号 (用于请求流)</span></label>
+                <select id="rec_account" class="select select-bordered w-full">
+                    <!-- Populated by JS -->
+                </select>
+            </div>
+            <div class="modal-action">
+                <form method="dialog"><button class="btn">取消</button></form>
+                <button class="btn btn-primary" onclick="confirmStartRecording()">开始</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
 
     <!-- Export Modal -->
     <dialog id="exportModal" class="modal">

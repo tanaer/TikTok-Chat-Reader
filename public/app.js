@@ -94,6 +94,8 @@ function switchSection(sectionId) {
         if (typeof loadConfig === 'function') loadConfig();
     } else if (sectionId === 'roomAnalysis') {
         if (typeof initRoomAnalysis === 'function') initRoomAnalysis();
+    } else if (sectionId === 'recording') {
+        if (typeof initRecordingSection === 'function') initRecordingSection();
     }
 }
 
