@@ -558,6 +558,7 @@ function renderTaskHistory(tasks) {
                 <td>${duration}</td>
                 <td>${statusBadge}</td>
                 <td>
+                    ${hasFile ? `<button class="btn btn-xs btn-secondary" onclick="openHighlightModal(${t.id})" title="精彩片段">✂️</button>` : ''}
                     ${hasFile ? `<button class="btn btn-xs btn-info" onclick="downloadRecording(${t.id})" title="下载">📥</button>` : ''}
                     <button class="btn btn-xs btn-ghost text-error" onclick="deleteRecordingTask(${t.id})" title="删除">🗑️</button>
                 </td>
@@ -700,3 +701,176 @@ window.installFFmpeg = async function (force) {
     }
 };
 
+// ============= Highlight Extraction =============
+
+let currentHighlightTaskId = null;
+let highlightSegments = [];
+
+async function openHighlightModal(taskId) {
+    currentHighlightTaskId = taskId;
+    highlightSegments = [];
+
+    // Reset UI
+    $('#highlightSegmentsList').html('<div class="text-center py-4 opacity-50">点击"分析"按钮检测精彩片段</div>');
+    $('#highlightClipsList').html('');
+    $('#highlightExtractBtn').prop('disabled', true);
+
+    // Load existing clips
+    await loadExistingClips(taskId);
+
+    // Show modal
+    document.getElementById('highlightModal').showModal();
+}
+
+async function analyzeHighlights() {
+    if (!currentHighlightTaskId) return;
+
+    const minDiamonds = parseInt($('#highlightMinDiamonds').val()) || 5000;
+    const bufferBefore = parseInt($('#highlightBufferBefore').val()) || 15;
+    const bufferAfter = parseInt($('#highlightBufferAfter').val()) || 30;
+    const mergeWindow = parseInt($('#highlightMergeWindow').val()) || 60;
+
+    $('#highlightSegmentsList').html('<div class="text-center py-4"><span class="loading loading-spinner"></span> 分析中...</div>');
+
+    try {
+        const res = await fetch(`/api/recording_tasks/${currentHighlightTaskId}/highlights/analyze?` + new URLSearchParams({
+            minDiamonds, bufferBefore, bufferAfter, mergeWindow
+        }));
+        const data = await res.json();
+
+        if (!data.success) throw new Error(data.error);
+
+        highlightSegments = data.segments;
+        renderHighlightSegments();
+        $('#highlightExtractBtn').prop('disabled', highlightSegments.length === 0);
+
+    } catch (e) {
+        $('#highlightSegmentsList').html(`<div class="alert alert-error">${e.message}</div>`);
+    }
+}
+
+function renderHighlightSegments() {
+    const container = $('#highlightSegmentsList');
+
+    if (highlightSegments.length === 0) {
+        container.html('<div class="alert alert-warning">未找到符合条件的礼物事件</div>');
+        return;
+    }
+
+    let html = `<div class="text-sm mb-2">找到 <strong>${highlightSegments.length}</strong> 个精彩片段:</div>`;
+    html += '<div class="space-y-2 max-h-60 overflow-y-auto">';
+
+    highlightSegments.forEach((seg, idx) => {
+        const startTime = formatSecondsToTime(seg.startSec);
+        const endTime = formatSecondsToTime(seg.endSec);
+        const duration = formatSecondsToTime(seg.durationSec);
+
+        html += `
+            <div class="bg-base-200 p-2 rounded">
+                <div class="flex justify-between items-center">
+                    <span class="badge badge-primary">#${idx + 1}</span>
+                    <span class="text-xs font-mono">${startTime} - ${endTime}</span>
+                </div>
+                <div class="flex justify-between mt-1 text-xs">
+                    <span>时长: ${duration}</span>
+                    <span class="text-warning font-bold">💎 ${seg.totalDiamondValue.toLocaleString()}</span>
+                </div>
+                <div class="text-xs opacity-60 mt-1">${seg.eventCount} 个礼物事件</div>
+            </div>
+        `;
+    });
+
+    html += '</div>';
+    container.html(html);
+}
+
+function formatSecondsToTime(sec) {
+    const h = Math.floor(sec / 3600);
+    const m = Math.floor((sec % 3600) / 60);
+    const s = Math.floor(sec % 60);
+    if (h > 0) {
+        return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+async function extractHighlights() {
+    if (!currentHighlightTaskId || highlightSegments.length === 0) return;
+
+    const btn = $('#highlightExtractBtn');
+    btn.prop('disabled', true).html('<span class="loading loading-spinner loading-xs"></span> 提取中...');
+
+    const minDiamonds = parseInt($('#highlightMinDiamonds').val()) || 5000;
+    const bufferBefore = parseInt($('#highlightBufferBefore').val()) || 15;
+    const bufferAfter = parseInt($('#highlightBufferAfter').val()) || 30;
+    const mergeWindow = parseInt($('#highlightMergeWindow').val()) || 60;
+
+    try {
+        const res = await fetch(`/api/recording_tasks/${currentHighlightTaskId}/highlights/extract`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ minDiamonds, bufferBefore, bufferAfter, mergeWindow })
+        });
+        const data = await res.json();
+
+        if (!data.success) throw new Error(data.error);
+
+        alert(`提取完成！成功: ${data.extracted}, 失败: ${data.failed}`);
+        await loadExistingClips(currentHighlightTaskId);
+
+    } catch (e) {
+        alert('提取失败: ' + e.message);
+    } finally {
+        btn.prop('disabled', false).html('✂️ 开始提取');
+    }
+}
+
+async function loadExistingClips(taskId) {
+    try {
+        const res = await fetch(`/api/recording_tasks/${taskId}/highlights`);
+        const data = await res.json();
+
+        if (!data.success || !data.clips || data.clips.length === 0) {
+            $('#highlightClipsList').html('<div class="text-sm opacity-50">暂无已提取的片段</div>');
+            return;
+        }
+
+        let html = `<div class="text-sm mb-2">已提取 <strong>${data.clips.length}</strong> 个片段:</div>`;
+        html += '<div class="space-y-2 max-h-40 overflow-y-auto">';
+
+        data.clips.forEach(clip => {
+            const fileName = clip.filePath ? clip.filePath.split(/[/\\]/).pop() : 'Unknown';
+            html += `
+                <div class="flex justify-between items-center bg-base-300 p-2 rounded text-xs">
+                    <span class="truncate max-w-xs" title="${fileName}">${fileName}</span>
+                    <div class="flex gap-1">
+                        <button class="btn btn-xs btn-info" onclick="downloadHighlightClip(${clip.id})">📥</button>
+                        <button class="btn btn-xs btn-error" onclick="deleteHighlightClip(${clip.id})">🗑️</button>
+                    </div>
+                </div>
+            `;
+        });
+
+        html += '</div>';
+        $('#highlightClipsList').html(html);
+
+    } catch (e) {
+        console.error('Failed to load clips:', e);
+    }
+}
+
+function downloadHighlightClip(clipId) {
+    window.open(`/api/highlight_clips/${clipId}/download`, '_blank');
+}
+
+async function deleteHighlightClip(clipId) {
+    if (!confirm('确定要删除这个片段吗？')) return;
+
+    try {
+        const res = await fetch(`/api/highlight_clips/${clipId}`, { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        await loadExistingClips(currentHighlightTaskId);
+    } catch (e) {
+        alert('删除失败: ' + e.message);
+    }
+}

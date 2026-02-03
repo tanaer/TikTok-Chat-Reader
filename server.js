@@ -985,6 +985,107 @@ app.get('/api/recording_tasks/:id/download', async (req, res) => {
 
 
 
+// ============= Highlight Clip API =============
+const highlightExtractor = require('./highlight_extractor');
+
+// Analyze recording for potential highlights (preview)
+app.get('/api/recording_tasks/:id/highlights/analyze', async (req, res) => {
+    try {
+        const options = {
+            minDiamonds: parseInt(req.query.minDiamonds) || highlightExtractor.DEFAULT_MIN_DIAMONDS,
+            bufferBefore: parseInt(req.query.bufferBefore) || highlightExtractor.DEFAULT_BUFFER_BEFORE,
+            bufferAfter: parseInt(req.query.bufferAfter) || highlightExtractor.DEFAULT_BUFFER_AFTER,
+            mergeWindow: parseInt(req.query.mergeWindow) || highlightExtractor.DEFAULT_MERGE_WINDOW
+        };
+
+        const segments = await highlightExtractor.analyzeRecordingForHighlights(
+            parseInt(req.params.id),
+            options
+        );
+
+        res.json({
+            success: true,
+            segments,
+            options,
+            count: segments.length
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Start highlight extraction
+app.post('/api/recording_tasks/:id/highlights/extract', async (req, res) => {
+    try {
+        const options = {
+            minDiamonds: parseInt(req.body.minDiamonds) || highlightExtractor.DEFAULT_MIN_DIAMONDS,
+            bufferBefore: parseInt(req.body.bufferBefore) || highlightExtractor.DEFAULT_BUFFER_BEFORE,
+            bufferAfter: parseInt(req.body.bufferAfter) || highlightExtractor.DEFAULT_BUFFER_AFTER,
+            mergeWindow: parseInt(req.body.mergeWindow) || highlightExtractor.DEFAULT_MERGE_WINDOW
+        };
+
+        const results = await highlightExtractor.extractAllHighlights(
+            parseInt(req.params.id),
+            options
+        );
+
+        res.json({
+            success: true,
+            results,
+            extracted: results.filter(r => r.success).length,
+            failed: results.filter(r => !r.success).length
+        });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Get highlight clips for a recording
+app.get('/api/recording_tasks/:id/highlights', async (req, res) => {
+    try {
+        const clips = await highlightExtractor.getHighlightClips(parseInt(req.params.id));
+        res.json({ success: true, clips });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Download a highlight clip
+app.get('/api/highlight_clips/:id/download', async (req, res) => {
+    try {
+        const db = require('./db');
+        const clip = await db.get('SELECT * FROM highlight_clip WHERE id = $1', [req.params.id]);
+
+        if (!clip || !clip.filePath) {
+            return res.status(404).json({ error: 'Clip not found' });
+        }
+
+        const fs = require('fs');
+        const path = require('path');
+
+        if (!fs.existsSync(clip.filePath)) {
+            return res.status(404).json({ error: 'Clip file does not exist on disk' });
+        }
+
+        const fileName = path.basename(clip.filePath);
+        res.download(clip.filePath, fileName);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Delete a highlight clip
+app.delete('/api/highlight_clips/:id', async (req, res) => {
+    try {
+        const deleteFile = req.query.deleteFile !== 'false';
+        await highlightExtractor.deleteHighlightClip(parseInt(req.params.id), deleteFile);
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+
 // TikTok Account API
 app.get('/api/tiktok_accounts', async (req, res) => {
     try {

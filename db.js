@@ -294,6 +294,22 @@ async function initDb() {
             )
         `);
 
+        // Highlight Clip table (for extracted video clips from recordings)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS highlight_clip (
+                id SERIAL PRIMARY KEY,
+                recording_task_id INTEGER REFERENCES recording_task(id) ON DELETE CASCADE,
+                room_id TEXT NOT NULL,
+                start_offset_sec REAL,
+                end_offset_sec REAL,
+                gift_events_json TEXT,
+                total_diamond_value INTEGER,
+                file_path TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
         // Add recording fields to room table
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS is_recording_enabled INTEGER DEFAULT 0`);
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS recording_account_id INTEGER`);

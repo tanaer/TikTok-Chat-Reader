@@ -1084,6 +1084,65 @@
         </form>
     </dialog>
 
+    <!-- Highlight Extraction Modal -->
+    <dialog id="highlightModal" class="modal">
+        <div class="modal-box w-11/12 max-w-2xl">
+            <h3 class="font-bold text-lg mb-4">✂️ 精彩片段提取</h3>
+
+            <!-- Parameters -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">最低钻石</span></label>
+                    <input type="number" id="highlightMinDiamonds" value="5000" min="100"
+                        class="input input-bordered input-sm">
+                </div>
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">前缓冲(秒)</span></label>
+                    <input type="number" id="highlightBufferBefore" value="15" min="5" max="60"
+                        class="input input-bordered input-sm">
+                </div>
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">后缓冲(秒)</span></label>
+                    <input type="number" id="highlightBufferAfter" value="30" min="5" max="120"
+                        class="input input-bordered input-sm">
+                </div>
+                <div class="form-control">
+                    <label class="label py-0"><span class="label-text text-xs">合并窗口(秒)</span></label>
+                    <input type="number" id="highlightMergeWindow" value="60" min="10" max="300"
+                        class="input input-bordered input-sm">
+                </div>
+            </div>
+
+            <!-- Analyze Button -->
+            <div class="flex gap-2 mb-4">
+                <button class="btn btn-primary btn-sm" onclick="analyzeHighlights()">🔍 分析</button>
+                <button class="btn btn-secondary btn-sm" id="highlightExtractBtn" disabled
+                    onclick="extractHighlights()">✂️ 开始提取</button>
+            </div>
+
+            <!-- Segments Preview -->
+            <div class="divider text-xs">检测到的片段</div>
+            <div id="highlightSegmentsList" class="mb-4">
+                <div class="text-center py-4 opacity-50">点击"分析"按钮检测精彩片段</div>
+            </div>
+
+            <!-- Existing Clips -->
+            <div class="divider text-xs">已提取的片段</div>
+            <div id="highlightClipsList">
+                <div class="text-sm opacity-50">暂无已提取的片段</div>
+            </div>
+
+            <div class="modal-action">
+                <form method="dialog">
+                    <button class="btn">关闭</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>关闭</button>
+        </form>
+    </dialog>
+
     <!-- Batch AI Analysis Modal -->
     <dialog id="batchAIModal" class="modal">
         <div class="modal-box w-11/12 max-w-md">
