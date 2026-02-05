@@ -496,6 +496,36 @@ async function get(sql, params = []) {
 }
 
 /**
+ * Get all rows (Alias for query)
+ */
+async function all(sql, params = []) {
+    return query(sql, params);
+}
+
+/**
+ * Get all system settings as an object
+ */
+async function getSystemSettings() {
+    try {
+        const res = await pool.query('SELECT key, value FROM settings');
+        const settings = {};
+        for (const row of res.rows) {
+            let val = row.value;
+            // Best-effort type conversion
+            if (val === 'true') val = true;
+            else if (val === 'false') val = false;
+            else if (!isNaN(val) && val !== null && val.trim() !== '') val = Number(val);
+
+            settings[row.key] = val;
+        }
+        return settings;
+    } catch (err) {
+        console.error('[DB] Failed to get settings:', err.message);
+        return {};
+    }
+}
+
+/**
  * Backup database (PostgreSQL uses pg_dump externally)
  */
 function backupDb() {
@@ -527,8 +557,10 @@ function getSync(sql, params = []) {
 module.exports = {
     initDb,
     query,
+    all,
     run,
     get,
+    getSystemSettings,
     saveDb,
     backupDb,
     // Expose pool for direct access if needed

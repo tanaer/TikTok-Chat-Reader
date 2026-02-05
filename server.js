@@ -228,6 +228,16 @@ app.get('/api/config', async (req, res) => {
     }
 });
 
+// Settings API - GET to load settings
+app.get('/api/settings', async (req, res) => {
+    try {
+        const settings = await manager.getAllSettings();
+        res.json(settings);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Settings API - POST to save settings
 app.post('/api/settings', async (req, res) => {
     try {
@@ -965,19 +975,19 @@ app.get('/api/recording_tasks/:id/download', async (req, res) => {
     try {
         const db = require('./db');
         const task = await db.get('SELECT * FROM recording_task WHERE id = $1', [req.params.id]);
-        if (!task || !task.file_path) {
+        if (!task || !task.filePath) {
             return res.status(404).json({ error: 'File not found' });
         }
 
         const fs = require('fs');
         const path = require('path');
 
-        if (!fs.existsSync(task.file_path)) {
+        if (!fs.existsSync(task.filePath)) {
             return res.status(404).json({ error: 'File does not exist on disk' });
         }
 
-        const fileName = path.basename(task.file_path);
-        res.download(task.file_path, fileName);
+        const fileName = path.basename(task.filePath);
+        res.download(task.filePath, fileName);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1377,8 +1387,11 @@ app.post('/api/maintenance/refresh_user_stats', async (req, res) => {
 
 // Start Server
 const PORT = process.env.PORT || 8081;
-httpServer.listen(PORT, () => {
+httpServer.listen(PORT, async () => {
     console.log(`Server started on http://localhost:${PORT}`);
+
+    // Cleanup orphaned recording tasks from previous session (crashed or force-closed)
+    await recordingManager.cleanupOrphanedTasks();
 
     // Scheduled jobs
     // Run user language analysis every hour
@@ -1471,3 +1484,32 @@ httpServer.listen(PORT, () => {
         }
     }, 30 * 60 * 1000); // Every 30 minutes
 });
+
+// Graceful shutdown handling - save all active recordings before exit
+async function gracefulShutdown(signal) {
+    console.log(`\n[Server] Received ${signal}, initiating graceful shutdown...`);
+
+    try {
+        // Stop all active recordings and save their state
+        await recordingManager.stopAllRecordings();
+
+        // Close HTTP server
+        httpServer.close(() => {
+            console.log('[Server] HTTP server closed.');
+            process.exit(0);
+        });
+
+        // Force exit after 10 seconds if server doesn't close
+        setTimeout(() => {
+            console.warn('[Server] Forcing exit after timeout.');
+            process.exit(1);
+        }, 10000);
+
+    } catch (err) {
+        console.error('[Server] Error during shutdown:', err.message);
+        process.exit(1);
+    }
+}
+
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));

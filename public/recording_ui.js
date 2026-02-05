@@ -385,15 +385,28 @@ async function toggleRecording(roomId, uniqueId, btn) {
 
     if (isRecording) {
         // Stop
+        const originalText = $(btn).html();
+        $(btn).html('<span class="loading loading-spinner loading-xs"></span>');
+
         try {
             const res = await fetch(`/api/rooms/${roomId}/recording/stop`, { method: 'POST' });
             const data = await res.json();
             if (data.success) {
+                showToast(`停止录制成功: ${uniqueId}`, 'success');
                 $(btn).removeClass('recording-active btn-error').addClass('btn-ghost');
                 $(btn).html('⏺ 录制');
+
+                // Update Active Recordings List if visible
+                if ($('#activeRecordingsSection').is(':visible')) {
+                    loadRecordingTasks();
+                }
+            } else {
+                showToast("停止失败", 'error');
+                $(btn).html(originalText);
             }
         } catch (e) {
-            alert("Stop failed: " + e.message);
+            showToast("Stop failed: " + e.message, 'error');
+            $(btn).html(originalText);
         }
     } else {
         // Start - Open Modal to select options? Or quick start?
@@ -420,11 +433,29 @@ function openStartRecordingModal() {
     });
 }
 
+
+function showToast(msg, type = 'info') {
+    const alertClass = type === 'success' ? 'alert-success' : (type === 'error' ? 'alert-error' : 'alert-info');
+    const html = `
+    <div class="alert ${alertClass} shadow-lg mb-2 animate-bounce-in">
+        <span>${msg}</span>
+    </div>`;
+    const $el = $(html).appendTo('#toast-container');
+    setTimeout(() => {
+        $el.fadeOut(300, function () { $(this).remove(); });
+    }, 3000);
+}
+
 async function confirmStartRecording() {
     if (!currentRecordingRoom) return;
 
     const accountId = $('#rec_account').val();
     const { roomId, uniqueId, btn } = currentRecordingRoom;
+
+    // UI Feedback
+    const modalBtn = $('#btnConfirmStartRec');
+    const originalText = modalBtn.text();
+    modalBtn.prop('disabled', true).html('<span class="loading loading-spinner loading-xs"></span> 启动中...');
 
     try {
         const res = await fetch(`/api/rooms/${roomId}/recording/start`, {
@@ -435,14 +466,27 @@ async function confirmStartRecording() {
         const data = await res.json();
 
         if (data.success) {
+            showToast(`录制已启动: ${uniqueId}`, 'success');
+
+            // Update Room List Button immediately
             $(btn).addClass('recording-active btn-error').removeClass('btn-ghost');
             $(btn).html('⏹ 停止');
+
+            // Update Active Recordings List if visible
+            if ($('#activeRecordingsSection').is(':visible')) {
+                loadRecordingTasks();
+            }
+
             $('#startRecordingModal')[0].close();
         } else {
-            alert("Start failed: " + (data.error || 'Unknown error'));
+            showToast("启动失败: " + (data.error || 'Unknown'), 'error');
+            alert("启动失败:\n" + (data.error || 'Unknown error'));
         }
     } catch (e) {
+        showToast("请求错误", 'error');
         alert("Start failed: " + e.message);
+    } finally {
+        modalBtn.prop('disabled', false).text(originalText);
     }
 }
 
@@ -502,7 +546,7 @@ async function loadRoomDropdown() {
         const select = $('#taskFilterRoom');
         select.find('option:not(:first)').remove();
         rooms.forEach(r => {
-            select.append(`<option value="${r.room_id}">${r.room_id} (${r.task_count})</option>`);
+            select.append(`<option value="${r.roomId}">${r.roomId} (${r.taskCount})</option>`);
         });
     } catch (e) {
         console.error("Failed to load room dropdown", e);
@@ -545,15 +589,15 @@ function renderTaskHistory(tasks) {
     }
 
     tasks.forEach(t => {
-        const startTime = t.start_time ? new Date(t.start_time).toLocaleString('zh-CN') : '-';
-        const duration = calculateDuration(t.start_time, t.end_time);
+        const startTime = t.startTime ? new Date(t.startTime).toLocaleString('zh-CN') : '-';
+        const duration = calculateDuration(t.startTime, t.endTime);
         const statusBadge = getStatusBadge(t.status);
-        const hasFile = t.file_path && t.status === 'completed';
+        const hasFile = t.filePath && t.status === 'completed';
 
         tbody.append(`
             <tr>
                 <td>${t.id}</td>
-                <td class="font-mono text-xs">${t.room_id}</td>
+                <td class="font-mono text-xs">${t.roomId}</td>
                 <td class="text-xs">${startTime}</td>
                 <td>${duration}</td>
                 <td>${statusBadge}</td>
@@ -874,3 +918,63 @@ async function deleteHighlightClip(clipId) {
         alert('删除失败: ' + e.message);
     }
 }
+
+// ============= Highlight Settings =============
+
+async function loadHighlightSettings() {
+    try {
+        const res = await fetch('/api/settings');
+        const settings = await res.json();
+
+        // Update settings tab inputs
+        $('#settingMinDiamonds').val(settings.highlight_min_diamonds || 5000);
+        $('#settingBufferBefore').val(settings.highlight_buffer_before || 15);
+        $('#settingBufferAfter').val(settings.highlight_buffer_after || 30);
+        $('#settingMergeWindow').val(settings.highlight_merge_window || 60);
+
+        // Also update modal defaults
+        $('#highlightMinDiamonds').val(settings.highlight_min_diamonds || 5000);
+        $('#highlightBufferBefore').val(settings.highlight_buffer_before || 15);
+        $('#highlightBufferAfter').val(settings.highlight_buffer_after || 30);
+        $('#highlightMergeWindow').val(settings.highlight_merge_window || 60);
+
+    } catch (e) {
+        console.error('Failed to load highlight settings:', e);
+    }
+}
+
+async function saveHighlightSettings() {
+    const settings = {
+        highlight_min_diamonds: (parseInt($('#settingMinDiamonds').val()) || 5000).toString(),
+        highlight_buffer_before: (parseInt($('#settingBufferBefore').val()) || 15).toString(),
+        highlight_buffer_after: (parseInt($('#settingBufferAfter').val()) || 30).toString(),
+        highlight_merge_window: (parseInt($('#settingMergeWindow').val()) || 60).toString()
+    };
+
+    try {
+        const res = await fetch('/api/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(settings)
+        });
+
+        if (!res.ok) throw new Error(await res.text());
+
+        alert('设置已保存！');
+
+        // Update modal defaults
+        $('#highlightMinDiamonds').val(settings.highlight_min_diamonds);
+        $('#highlightBufferBefore').val(settings.highlight_buffer_before);
+        $('#highlightBufferAfter').val(settings.highlight_buffer_after);
+        $('#highlightMergeWindow').val(settings.highlight_merge_window);
+
+    } catch (e) {
+        alert('保存失败: ' + e.message);
+    }
+}
+
+// Load settings when recording section is initialized
+$(document).ready(function () {
+    // Delay to ensure DOM is ready
+    setTimeout(loadHighlightSettings, 500);
+});
