@@ -1017,11 +1017,15 @@ class AutoRecorder {
 
                             this.setupLogging(wrapper, uniqueId, state.roomId);
 
-                            // Auto-Start Recording if enabled (Manual Start)
+                            // Auto-Start Recording if enabled
                             if (this.recordingManager && room && room.is_recording_enabled === 1) {
-                                console.log(`[AutoRecorder] 🎥 Auto-starting recording for ${uniqueId} (Account: ${room.recording_account_id || 'None'})`);
-                                this.recordingManager.startRecording(state.roomId, uniqueId, room.recording_account_id)
-                                    .catch(err => console.error(`[AutoRecorder] Failed to start auto-recording: ${err.message}`));
+                                if (state.roomId) {
+                                    console.log(`[AutoRecorder] 🎥 Auto-starting recording for ${uniqueId} (Account: ${room.recording_account_id || 'None'})`);
+                                    this.recordingManager.startRecording(state.roomId, uniqueId, room.recording_account_id)
+                                        .catch(err => console.error(`[AutoRecorder] Failed to start auto-recording: ${err.message}`));
+                                } else {
+                                    console.warn(`[AutoRecorder] ⚠️ Connected to ${uniqueId} but no roomId in state, skipping auto-recording.`);
+                                }
                             }
 
                             wrapper.once('disconnected', reason => {
@@ -1029,13 +1033,6 @@ class AutoRecorder {
                                 console.log(`[AutoRecorder] ${uniqueId} disconnected after connection: ${reason}`);
                                 this.handleDisconnect(uniqueId, reason);
                             });
-
-                            // Auto-Start Recording if enabled
-                            if (this.recordingManager && room.is_recording_enabled === 1) {
-                                console.log(`[AutoRecorder] 🎥 Auto-starting recording for ${uniqueId} (Account: ${room.recording_account_id || 'None'})`);
-                                this.recordingManager.startRecording(state.roomId, uniqueId, room.recording_account_id)
-                                    .catch(err => console.error(`[AutoRecorder] Failed to start auto-recording: ${err.message}`));
-                            }
 
                             wrapper.connection.on('streamEnd', () => {
 

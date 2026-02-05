@@ -1,5 +1,5 @@
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-const { SocksProxyAgent } = require('socks-proxy-agent');
+const { spawn } = require('child_process');
+const { SocksProxyAgent } = require('socks-proxy-agent'); // Kept for compatibility if used elsewhere, but not used here anymore
 
 /**
  * Get TikTok Stream URL
@@ -36,70 +36,55 @@ async function _fetchStreamUrl(uniqueId, proxyUrl = null, cookie = null) {
 
         const url = `https://www.tiktok.com/@${uniqueId}/live`;
 
-        // More realistic browser headers to avoid 403
-        const headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Referer': 'https://www.tiktok.com/',
-            'sec-ch-ua': '"Not A(Brand";v="99", "Google Chrome";v="121", "Chromium";v="121"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"Windows"',
-            'sec-fetch-dest': 'document',
-            'sec-fetch-mode': 'navigate',
-            'sec-fetch-site': 'same-origin',
-            'sec-fetch-user': '?1',
-            'upgrade-insecure-requests': '1',
-            'Cache-Control': 'max-age=0',
-        };
+        console.log(`[Spider] Fetching ${url} with proxy ${proxyUrl ? 'YES' : 'NO'} via Curl`);
 
-        if (cookie) {
-            headers['Cookie'] = cookie;
-        }
+        // Use Curl to fetch HTML (bypasses Node.js TLS issues)
+        const html = await new Promise((resolve, reject) => {
+            const curlArgs = [
+                '-4', // FORCE IPv4
+                '-s',
+                '-L',
+                '-H', 'User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
+                '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+                '-H', 'Referer: https://www.tiktok.com/',
+                '-H', 'Cache-Control: max-age=0'
+            ];
 
-        const options = {
-            headers: headers,
-            redirect: 'follow',
-            timeout: 15000
-        };
-
-        if (proxyUrl) {
-            options.agent = new SocksProxyAgent(proxyUrl, {
-                rejectUnauthorized: false,
-                timeout: 15000,
-                keepAlive: true // Try to keep socket open
-            });
-        }
-
-        console.log(`[Spider] Fetching ${url} with proxy ${proxyUrl ? 'YES' : 'NO'}`);
-
-        // Manual redirect handling
-        let currentUrl = url;
-        let response = null;
-        const maxRedirects = 5;
-
-        for (let i = 0; i < maxRedirects; i++) {
-            options.redirect = 'manual'; // Disable auto-follow
-            response = await fetch(currentUrl, options);
-
-            if (response.status >= 300 && response.status < 400) {
-                const location = response.headers.get('location');
-                if (location) {
-                    // Resolve relative URLs
-                    currentUrl = new URL(location, currentUrl).toString();
-                    console.log(`[Spider] Redirecting to ${currentUrl}`);
-                    continue;
-                }
+            if (cookie) {
+                curlArgs.push('--cookie', cookie);
             }
-            break; // Not a redirect or no location
-        }
 
-        if (!response.ok) {
-            throw new Error(`Failed to fetch TikTok page: ${response.status} ${response.statusText}`);
-        }
+            if (proxyUrl) {
+                // Force remote DNS resolution
+                const curlProxy = proxyUrl.replace('socks5://', 'socks5h://');
+                curlArgs.push('-x', curlProxy);
+            }
 
-        const html = await response.text();
+            curlArgs.push(url);
+
+            const curl = spawn('curl', curlArgs);
+            let stdoutChunks = [];
+            let stderrChunks = [];
+
+            curl.stdout.on('data', chunk => stdoutChunks.push(chunk));
+            curl.stderr.on('data', chunk => stderrChunks.push(chunk));
+
+            curl.on('close', (code) => {
+                if (code !== 0) {
+                    const errorMsg = Buffer.concat(stderrChunks).toString('utf8');
+                    reject(new Error(`Curl exited with code ${code}: ${errorMsg}`));
+                } else {
+                    const body = Buffer.concat(stdoutChunks).toString('utf8');
+                    resolve(body);
+                }
+            });
+
+            curl.on('error', (err) => {
+                reject(err);
+            });
+        });
+
+
         console.log(`[Spider] Page fetched, HTML length: ${html.length}`);
 
         // Check if page is too small (likely anti-bot page or error)
