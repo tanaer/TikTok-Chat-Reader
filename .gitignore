@@ -114,3 +114,14 @@ recovered.sql
 doc/TikTokDownloader-master
 downloads
 doc/DouyinLiveRecorder-main
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+*.db-wal
+*.db-shm
+bin/*.exe
