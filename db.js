@@ -165,9 +165,14 @@ async function initDb() {
                 gift_efficiency NUMERIC(10,2) DEFAULT 0,
                 interact_efficiency NUMERIC(10,2) DEFAULT 0,
                 account_quality NUMERIC(10,2) DEFAULT 0,
+                monthly_gift_value BIGINT DEFAULT 0,
+                last_session_time TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         `);
+        // Migration: Add new columns if they don't exist
+        await pool.query(`ALTER TABLE room_stats ADD COLUMN IF NOT EXISTS monthly_gift_value BIGINT DEFAULT 0`);
+        await pool.query(`ALTER TABLE room_stats ADD COLUMN IF NOT EXISTS last_session_time TIMESTAMP`);
         // Indexes for fast sorting on pre-aggregated columns
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_daily_avg ON room_stats(valid_daily_avg DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_gift ON room_stats(all_time_gift_value DESC)`);

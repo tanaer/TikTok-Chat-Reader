@@ -1571,7 +1571,8 @@ class Manager {
                        rs.all_time_gift_value, rs.all_time_visit_count, rs.all_time_chat_count,
                        rs.valid_daily_avg, rs.valid_days, 
                        rs.top1_ratio, rs.top3_ratio, rs.top10_ratio, rs.top30_ratio,
-                       rs.gift_efficiency, rs.interact_efficiency, rs.account_quality
+                       rs.gift_efficiency, rs.interact_efficiency, rs.account_quality,
+                       rs.monthly_gift_value, rs.last_session_time
                 FROM room r
                 LEFT JOIN room_stats rs ON r.room_id = rs.room_id
                 ${whereClause}
@@ -1637,34 +1638,8 @@ class Manager {
             cachedStatsMap = Object.fromEntries(cachedStats.map(r => [r.roomId, r]));
         }
 
-        // Fetch last session times
-        const lastSessions = await query(`
-            SELECT s1.room_id, s1.created_at 
-            FROM session s1
-            INNER JOIN (
-                SELECT room_id, MAX(created_at) as max_created
-                FROM session
-                WHERE room_id IN (${placeholders})
-                GROUP BY room_id
-            ) s2 ON s1.room_id = s2.room_id AND s1.created_at = s2.max_created
-        `, roomIds);
-        const sessionMap = Object.fromEntries(lastSessions.map(r => [r.roomId, r.createdAt]));
-
-        // Fetch monthly gift totals (current month)
-        const monthStart = new Date();
-        monthStart.setDate(1);
-        monthStart.setHours(0, 0, 0, 0);
-        const monthlyGifts = await query(`
-            SELECT 
-                room_id,
-                COALESCE(SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)), 0) as monthly_gift
-            FROM event 
-            WHERE room_id IN (${placeholders})
-            AND type = 'gift'
-            AND timestamp >= ?
-            GROUP BY room_id
-        `, [...roomIds, monthStart.toISOString()]);
-        const monthlyGiftMap = Object.fromEntries(monthlyGifts.map(r => [r.roomId, parseInt(r.monthlyGift) || 0]));
+        // NOTE: monthlyGifts and lastSessionTimes are now cached in room_stats table
+        // No need for these expensive real-time queries anymore!
 
         // Build final stats objects
         const stats = rooms.map(r => {
@@ -1688,6 +1663,9 @@ class Manager {
             const top30Ratio = parseInt(cached.top30Ratio) || 0;
             const validDailyAvg = parseInt(cached.validDailyAvg) || 0;
             const validDays = parseInt(cached.validDays) || 0;
+            // Use cached monthly gift and last session time (no more slow queries!)
+            const monthlyGift = parseInt(cached.monthlyGiftValue) || 0;
+            const lastSession = cached.lastSessionTime || null;
 
             return {
                 roomId: r.roomId,
@@ -1706,9 +1684,9 @@ class Manager {
                 totalComments: currComments,
                 totalGiftValue: currGift,
                 allTimeGiftValue: allTimeGift,
-                monthlyGiftValue: monthlyGiftMap[r.roomId] || 0,
+                monthlyGiftValue: monthlyGift,
                 totalLikes: currLikes,
-                lastSessionTime: sessionMap[r.roomId] || null,
+                lastSessionTime: lastSession,
                 broadcastDuration: Math.round(durationSecs),
                 startTime: curr.startTime || null,
                 giftEfficiency: giftEfficiency,
@@ -2364,7 +2342,35 @@ class Manager {
                 total: parseInt(r.totalValue) || 0
             }]));
 
-            // 4. Upsert room_stats for each room
+            // 4. Monthly gift values (current month)
+            const monthStart = new Date();
+            monthStart.setDate(1);
+            monthStart.setHours(0, 0, 0, 0);
+            const monthlyStats = await query(`
+                SELECT room_id,
+                       COALESCE(SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)), 0) as monthly_gift
+                FROM event 
+                WHERE room_id IN (${placeholders})
+                AND type = 'gift'
+                AND timestamp >= ?
+                GROUP BY room_id
+            `, [...roomIds, monthStart.toISOString()]);
+            const monthlyMap = Object.fromEntries(monthlyStats.map(r => [r.roomId, parseInt(r.monthlyGift) || 0]));
+
+            // 5. Last session times
+            const lastSessionStats = await query(`
+                SELECT s1.room_id, s1.created_at as last_session
+                FROM session s1
+                INNER JOIN (
+                    SELECT room_id, MAX(created_at) as max_created
+                    FROM session
+                    WHERE room_id IN (${placeholders})
+                    GROUP BY room_id
+                ) s2 ON s1.room_id = s2.room_id AND s1.created_at = s2.max_created
+            `, roomIds);
+            const sessionMap = Object.fromEntries(lastSessionStats.map(r => [r.roomId, r.lastSession]));
+
+            // 6. Upsert room_stats for each room
             let refreshed = 0;
             for (const roomId of roomIds) {
                 const basic = basicMap[roomId] || {};
@@ -2385,12 +2391,16 @@ class Manager {
                 const top10Ratio = conc.total > 0 ? Math.round((conc.top10 / conc.total) * 100) : 0;
                 const top30Ratio = conc.total > 0 ? Math.round((conc.top30 / conc.total) * 100) : 0;
 
+                const monthlyGift = monthlyMap[roomId] || 0;
+                const lastSession = sessionMap[roomId] || null;
+
                 await run(`
                     INSERT INTO room_stats (
                         room_id, all_time_gift_value, all_time_visit_count, all_time_chat_count,
                         valid_daily_avg, valid_days, top1_ratio, top3_ratio, top10_ratio, top30_ratio,
-                        gift_efficiency, interact_efficiency, account_quality, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                        gift_efficiency, interact_efficiency, account_quality, 
+                        monthly_gift_value, last_session_time, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                     ON CONFLICT (room_id) DO UPDATE SET
                         all_time_gift_value = EXCLUDED.all_time_gift_value,
                         all_time_visit_count = EXCLUDED.all_time_visit_count,
@@ -2404,12 +2414,15 @@ class Manager {
                         gift_efficiency = EXCLUDED.gift_efficiency,
                         interact_efficiency = EXCLUDED.interact_efficiency,
                         account_quality = EXCLUDED.account_quality,
+                        monthly_gift_value = EXCLUDED.monthly_gift_value,
+                        last_session_time = EXCLUDED.last_session_time,
                         updated_at = NOW()
                 `, [
                     roomId, allGift, allVisits, allComments,
                     daily.avgGift || 0, daily.validDays || 0,
                     top1Ratio, top3Ratio, top10Ratio, top30Ratio,
-                    giftEfficiency, interactEfficiency, accountQuality
+                    giftEfficiency, interactEfficiency, accountQuality,
+                    monthlyGift, lastSession
                 ]);
                 refreshed++;
             }
