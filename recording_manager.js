@@ -59,8 +59,30 @@ class RecordingManager {
             // Get Stream URL via Spider (Curl-based)
             const settings = await db.getSystemSettings();
             const proxyUrl = settings.proxyEnabled ? settings.proxyUrl : null;
-            // TODO: Retrieve cookie from settings if needed
-            const cookie = null;
+
+            // Read TikTok cookie: prefer account-level cookie, fallback to system settings
+            let cookie = null;
+            if (accountId) {
+                try {
+                    const account = await db.get('SELECT cookie FROM tiktok_account WHERE id = $1', [accountId]);
+                    if (account && account.cookie) {
+                        cookie = account.cookie;
+                        console.log(`[Recorder] Using cookie from account #${accountId}`);
+                    }
+                } catch (e) {
+                    console.warn(`[Recorder] Failed to read account cookie: ${e.message}`);
+                }
+            }
+            if (!cookie) {
+                // Fallback: try any active account's cookie
+                try {
+                    const anyAccount = await db.get('SELECT cookie FROM tiktok_account WHERE is_active = true AND cookie IS NOT NULL AND cookie != $1 LIMIT 1', ['']);
+                    if (anyAccount && anyAccount.cookie) {
+                        cookie = anyAccount.cookie;
+                        console.log(`[Recorder] Using cookie from active account (fallback)`);
+                    }
+                } catch (e) { /* ignore */ }
+            }
 
             const streamUrl = await getStreamUrl(uniqueId, proxyUrl, cookie);
 
