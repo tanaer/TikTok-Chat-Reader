@@ -134,6 +134,8 @@ async function initDb() {
 
         // Performance optimization: partial index for orphaned events (session_id IS NULL)
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_room_null_session ON event(room_id, timestamp) WHERE session_id IS NULL`);
+        // Composite partial index for getRoomStats currentStats query (room_id + type filter on untagged events)
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_room_null_session_type ON event(room_id, type) WHERE session_id IS NULL`);
         // Performance optimization: index for MAX(timestamp) aggregation in getSessions
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_session_timestamp_desc ON event(session_id, timestamp DESC)`);
 

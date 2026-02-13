@@ -602,7 +602,7 @@ function renderTaskHistory(tasks) {
                 <td>${duration}</td>
                 <td>${statusBadge}</td>
                 <td>
-                    ${hasFile ? `<button class="btn btn-xs btn-secondary" onclick="openHighlightModal(${t.id})" title="精彩片段">✂️</button>` : ''}
+                    ${hasFile ? `<button class="btn btn-xs btn-success" onclick="openHighlightModal(${t.id})" title="精彩片段">✂️</button>` : ''}
                     ${hasFile ? `<button class="btn btn-xs btn-info" onclick="downloadRecording(${t.id})" title="下载">📥</button>` : ''}
                     <button class="btn btn-xs btn-ghost text-error" onclick="deleteRecordingTask(${t.id})" title="删除">🗑️</button>
                 </td>

@@ -1608,23 +1608,21 @@ class Manager {
         const roomIds = rooms.map(r => r.roomId);
         const placeholders = roomIds.map(() => '?').join(',');
 
-        // Fetch current session stats (live stats - these need real-time from event table)
+        // Fetch current session stats (live stats - only untagged events)
+        // PERF: session_id IS NULL in WHERE clause enables partial index usage
         const currentStats = await query(`
             SELECT 
                 room_id,
-                COUNT(*) FILTER (WHERE type = 'member' AND session_id IS NULL) as curr_visits,
-                COUNT(*) FILTER (WHERE type = 'chat' AND session_id IS NULL) as curr_comments,
-                COALESCE(SUM(CASE WHEN type = 'gift' AND session_id IS NULL 
+                COUNT(*) FILTER (WHERE type = 'member') as curr_visits,
+                COUNT(*) FILTER (WHERE type = 'chat') as curr_comments,
+                COALESCE(SUM(CASE WHEN type = 'gift'
                     THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as curr_gift,
-                MAX(CASE WHEN type = 'like' AND session_id IS NULL 
+                MAX(CASE WHEN type = 'like'
                     THEN COALESCE(total_like_count, 0) ELSE 0 END) as curr_likes,
-                EXTRACT(EPOCH FROM (
-                    MAX(CASE WHEN session_id IS NULL THEN timestamp END) - 
-                    MIN(CASE WHEN session_id IS NULL THEN timestamp END)
-                )) as duration_secs,
-                MIN(CASE WHEN session_id IS NULL THEN timestamp END) as start_time
+                EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) as duration_secs,
+                MIN(timestamp) as start_time
             FROM event 
-            WHERE room_id IN (${placeholders})
+            WHERE room_id IN (${placeholders}) AND session_id IS NULL
             GROUP BY room_id
         `, roomIds);
         const currentStatsMap = Object.fromEntries(currentStats.map(r => [r.roomId, r]));

@@ -104,7 +104,7 @@ async function analyzeRecordingForHighlights(recordingTaskId, options = {}) {
  * @returns {Array} Merged segments
  */
 function mergeOverlappingSegments(segments, mergeWindow) {
-    if (segments.length <= 1) return segments;
+    if (segments.length === 0) return [];
 
     const merged = [];
     let current = { ...segments[0], events: [segments[0]] };
@@ -174,14 +174,50 @@ function generateClipFilename(beijingTime, offsetSec, totalDiamonds) {
 }
 
 /**
+ * Build FFmpeg drawtext filter for gift event overlays
+ * Each gift event shows a banner at the bottom with sender nickname and diamond value
+ * @param {Array} giftEvents - Array of gift event objects with offsetSec, nickname, diamondValue
+ * @param {number} clipStartSec - The clip's start time in recording (for relative time calc)
+ * @returns {string} FFmpeg filter_complex string
+ */
+function buildGiftOverlayFilter(giftEvents, clipStartSec) {
+    if (!giftEvents || giftEvents.length === 0) return '';
+
+    const filters = [];
+
+    giftEvents.forEach((event, idx) => {
+        // Calculate when this event occurs relative to the clip start
+        const relativeTime = event.offsetSec - clipStartSec;
+        const showStart = Math.max(0, relativeTime - 1); // Show 1s before event
+        const showEnd = relativeTime + 5; // Show for 5s after event
+        const diamondValue = event.diamondValue || 0;
+        // Sanitize text for FFmpeg (escape special chars)
+        const nickname = (event.nickname || 'Anonymous').replace(/[':]/g, '').replace(/\\/g, '');
+        const text = `${nickname}  ${diamondValue.toLocaleString()} diamonds`;
+
+        // Semi-transparent background banner with white text at bottom
+        // Using enable='between(t,start,end)' for timed display
+        filters.push(
+            `drawtext=text='${text}':fontsize=28:fontcolor=white:` +
+            `x=(w-text_w)/2:y=h-60-${idx * 45}:` +
+            `box=1:boxcolor=black@0.6:boxborderw=8:` +
+            `enable='between(t,${showStart.toFixed(1)},${showEnd.toFixed(1)})'`
+        );
+    });
+
+    return filters.join(',');
+}
+
+/**
  * Extract a clip from a video file using FFmpeg
  * @param {string} inputPath - Path to source video
  * @param {number} startSec - Start time in seconds
  * @param {number} durationSec - Duration in seconds
  * @param {string} outputPath - Path for output video
+ * @param {Array} [giftEvents] - Optional gift events for overlay (enables re-encoding)
  * @returns {Promise<object>} Result with success status
  */
-async function extractClip(inputPath, startSec, durationSec, outputPath) {
+async function extractClip(inputPath, startSec, durationSec, outputPath, giftEvents = []) {
     const ffmpegPath = await ffmpegManager.getFFmpegPath();
 
     if (!ffmpegPath) {
@@ -199,16 +235,37 @@ async function extractClip(inputPath, startSec, durationSec, outputPath) {
     }
 
     return new Promise((resolve, reject) => {
-        // Use -ss before -i for faster seeking, -c copy for fast extraction without re-encoding
-        const args = [
-            '-y',                    // Overwrite output
-            '-ss', startSec.toString(),
-            '-i', inputPath,
-            '-t', durationSec.toString(),
-            '-c', 'copy',            // Copy without re-encoding (fast)
-            '-movflags', '+faststart', // Web-friendly MP4
-            outputPath
-        ];
+        let args;
+        const overlayFilter = buildGiftOverlayFilter(giftEvents, startSec);
+
+        if (overlayFilter) {
+            // Re-encode with gift overlay (slower but adds text)
+            args = [
+                '-y',
+                '-ss', startSec.toString(),
+                '-i', inputPath,
+                '-t', durationSec.toString(),
+                '-vf', overlayFilter,
+                '-c:v', 'libx264',
+                '-preset', 'fast',
+                '-crf', '23',
+                '-c:a', 'aac',
+                '-b:a', '128k',
+                '-movflags', '+faststart',
+                outputPath
+            ];
+        } else {
+            // Fast stream-copy (no re-encoding)
+            args = [
+                '-y',
+                '-ss', startSec.toString(),
+                '-i', inputPath,
+                '-t', durationSec.toString(),
+                '-c', 'copy',
+                '-movflags', '+faststart',
+                outputPath
+            ];
+        }
 
         console.log(`[HighlightExtractor] Running: ffmpeg ${args.join(' ')}`);
 
@@ -291,8 +348,8 @@ async function extractAllHighlights(recordingTaskId, options = {}) {
                 outputPath
             ]);
 
-            // Extract clip
-            const result = await extractClip(inputPath, segment.startSec, segment.durationSec, outputPath);
+            // Extract clip with gift overlay
+            const result = await extractClip(inputPath, segment.startSec, segment.durationSec, outputPath, segment.events);
 
             // Update status to completed
             await db.run(`
