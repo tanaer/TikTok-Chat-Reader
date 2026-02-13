@@ -174,8 +174,47 @@ function generateClipFilename(beijingTime, offsetSec, totalDiamonds) {
 }
 
 /**
+ * Find a system font that supports CJK characters
+ * @returns {string} Font file path or empty string
+ */
+function findCJKFont() {
+    const candidates = process.platform === 'win32'
+        ? [
+            'C:/Windows/Fonts/msyh.ttc',     // Microsoft YaHei
+            'C:/Windows/Fonts/msyhbd.ttc',    // Microsoft YaHei Bold
+            'C:/Windows/Fonts/simhei.ttf',    // SimHei
+            'C:/Windows/Fonts/simsun.ttc',    // SimSun
+        ]
+        : [
+            '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
+            '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
+            '/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc',
+            '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc',
+            '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
+            '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
+            '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
+        ];
+
+    for (const fontPath of candidates) {
+        if (fs.existsSync(fontPath)) {
+            console.log(`[HighlightExtractor] Using CJK font: ${fontPath}`);
+            return fontPath;
+        }
+    }
+
+    console.warn('[HighlightExtractor] No CJK font found, text may render as boxes');
+    return '';
+}
+
+// Cache the font path so we only probe once
+let cachedCJKFont = null;
+
+/**
  * Build FFmpeg drawtext filter for gift event overlays
- * Each gift event shows a banner at the bottom with sender nickname and diamond value
+ * - CJK-compatible font
+ * - Each event fades in from bottom, displays 3s, then fades out
+ * - New events push earlier visible events upward (stacking)
+ * - Gold text with semi-transparent dark background
  * @param {Array} giftEvents - Array of gift event objects with offsetSec, nickname, diamondValue
  * @param {number} clipStartSec - The clip's start time in recording (for relative time calc)
  * @returns {string} FFmpeg filter_complex string
@@ -183,25 +222,90 @@ function generateClipFilename(beijingTime, offsetSec, totalDiamonds) {
 function buildGiftOverlayFilter(giftEvents, clipStartSec) {
     if (!giftEvents || giftEvents.length === 0) return '';
 
-    const filters = [];
+    // Resolve CJK font (cached)
+    if (cachedCJKFont === null) {
+        cachedCJKFont = findCJKFont();
+    }
+    const fontOption = cachedCJKFont
+        ? `fontfile='${cachedCJKFont.replace(/\\/g, '/')}':`
+        : '';
 
-    giftEvents.forEach((event, idx) => {
-        // Calculate when this event occurs relative to the clip start
-        const relativeTime = event.offsetSec - clipStartSec;
-        const showStart = Math.max(0, relativeTime - 1); // Show 1s before event
-        const showEnd = relativeTime + 5; // Show for 5s after event
-        const diamondValue = event.diamondValue || 0;
-        // Sanitize text for FFmpeg (escape special chars)
-        const nickname = (event.nickname || 'Anonymous').replace(/[':]/g, '').replace(/\\/g, '');
-        const text = `${nickname}  ${diamondValue.toLocaleString()} diamonds`;
+    // Timing constants
+    const FADE_IN = 0.4;   // seconds
+    const DISPLAY = 3.0;   // seconds visible at full opacity
+    const FADE_OUT = 0.6;  // seconds
+    const TOTAL_DURATION = FADE_IN + DISPLAY + FADE_OUT; // 4.0s total
 
-        // Semi-transparent background banner with white text at bottom
-        // Using enable='between(t,start,end)' for timed display
-        filters.push(
-            `drawtext=text='${text}':fontsize=28:fontcolor=white:` +
-            `x=(w-text_w)/2:y=h-60-${idx * 45}:` +
-            `box=1:boxcolor=black@0.6:boxborderw=8:` +
-            `enable='between(t,${showStart.toFixed(1)},${showEnd.toFixed(1)})'`
+    // Layout constants
+    const FONT_SIZE = 36;
+    const ROW_HEIGHT = 55;   // vertical spacing between stacked items
+    const BOTTOM_MARGIN = 50; // distance from bottom of video
+
+    // Calculate event timings (relative to clip)
+    const events = giftEvents.map(event => {
+        const relTime = event.offsetSec - clipStartSec;
+        return {
+            showStart: Math.max(0, relTime - 0.5), // slightly before event
+            showEnd: Math.max(0, relTime - 0.5) + TOTAL_DURATION,
+            nickname: event.nickname || 'Anonymous',
+            diamondValue: event.diamondValue || 0,
+        };
+    });
+
+    // Assign vertical slots: count how many earlier events are still visible when this one starts
+    events.forEach((evt, i) => {
+        let slot = 0;
+        for (let j = 0; j < i; j++) {
+            // If event j is still visible when event i starts
+            if (events[j].showEnd > evt.showStart) {
+                slot++;
+            }
+        }
+        evt.slot = slot;
+    });
+
+    // Build drawtext filters
+    const filters = events.map(evt => {
+        // Sanitize text for FFmpeg: escape single quotes, backslashes, colons
+        const safeName = evt.nickname
+            .replace(/\\/g, '')
+            .replace(/'/g, '\u2019')  // replace ' with unicode right single quote
+            .replace(/:/g, '\uFF1A') // replace : with fullwidth colon
+            .replace(/;/g, '\uFF1B') // replace ; with fullwidth semicolon
+            .replace(/%/g, '%%');     // escape % for FFmpeg
+
+        const text = `\u2728 ${safeName}  \u{1F48E} ${evt.diamondValue.toLocaleString()}`;
+
+        // Y position: bottom-up stacking, slot 0 is at bottom
+        const yExpr = `h-${BOTTOM_MARGIN}-${(evt.slot + 1) * ROW_HEIGHT}`;
+
+        // Alpha expression for fade-in/fade-out:
+        //   t < showStart                          => 0 (hidden)
+        //   showStart <= t < showStart + FADE_IN   => linear fade in
+        //   showStart + FADE_IN <= t < showEnd - FADE_OUT => 1 (fully visible)
+        //   showEnd - FADE_OUT <= t < showEnd      => linear fade out
+        //   t >= showEnd                           => 0 (hidden)
+        const s = evt.showStart.toFixed(2);
+        const fadeInEnd = (evt.showStart + FADE_IN).toFixed(2);
+        const fadeOutStart = (evt.showEnd - FADE_OUT).toFixed(2);
+        const e = evt.showEnd.toFixed(2);
+        const alphaExpr =
+            `if(lt(t\,${s})\,0\,` +
+            `if(lt(t\,${fadeInEnd})\,(t-${s})/${FADE_IN}\,` +
+            `if(lt(t\,${fadeOutStart})\,1\,` +
+            `if(lt(t\,${e})\,1-(t-${fadeOutStart})/${FADE_OUT}\,` +
+            `0))))`;
+
+        return (
+            `drawtext=${fontOption}` +
+            `text='${text}':` +
+            `fontsize=${FONT_SIZE}:` +
+            `fontcolor=0xFFD700:` +  // Gold color
+            `x=(w-text_w)/2:` +
+            `y=${yExpr}:` +
+            `box=1:boxcolor=black@0.55:boxborderw=12:` +
+            `alpha='${alphaExpr}':` +
+            `enable='between(t,${s},${e})'`
         );
     });
 
