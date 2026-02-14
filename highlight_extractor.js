@@ -173,45 +173,12 @@ function generateClipFilename(beijingTime, offsetSec, totalDiamonds) {
     return `${dateStr}-${durationStr}-${totalDiamonds}.mp4`;
 }
 
-/**
- * Find a system font that supports CJK characters
- * @returns {string} Font file path or empty string
- */
-function findCJKFont() {
-    const candidates = process.platform === 'win32'
-        ? [
-            'C:/Windows/Fonts/msyh.ttc',     // Microsoft YaHei
-            'C:/Windows/Fonts/msyhbd.ttc',    // Microsoft YaHei Bold
-            'C:/Windows/Fonts/simhei.ttf',    // SimHei
-            'C:/Windows/Fonts/simsun.ttc',    // SimSun
-        ]
-        : [
-            '/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc',
-            '/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc',
-            '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
-            '/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf',
-        ];
-
-    for (const fontPath of candidates) {
-        if (fs.existsSync(fontPath)) {
-            console.log(`[HighlightExtractor] Using CJK font: ${fontPath}`);
-            return fontPath;
-        }
-    }
-
-    console.warn('[HighlightExtractor] No CJK font found, text may render as boxes');
-    return '';
-}
-
-// Cache the font path so we only probe once
-let cachedCJKFont = null;
+// Project-bundled CJK font path
+const FONT_PATH = path.join(__dirname, 'fonts', 'AlibabaPuHuiTi-3-55-Regular.ttf').replace(/\\/g, '/');
 
 /**
  * Build FFmpeg drawtext filter for gift event overlays
- * - CJK-compatible font
+ * - Uses bundled AlibabaPuHuiTi CJK font
  * - Each event fades in from bottom, displays 3s, then fades out
  * - New events push earlier visible events upward (stacking)
  * - Gold text with semi-transparent dark background
@@ -222,13 +189,7 @@ let cachedCJKFont = null;
 function buildGiftOverlayFilter(giftEvents, clipStartSec) {
     if (!giftEvents || giftEvents.length === 0) return '';
 
-    // Resolve CJK font (cached)
-    if (cachedCJKFont === null) {
-        cachedCJKFont = findCJKFont();
-    }
-    const fontOption = cachedCJKFont
-        ? `fontfile='${cachedCJKFont.replace(/\\/g, '/')}':`
-        : '';
+    const fontOption = `fontfile='${FONT_PATH}':`;
 
     // Timing constants
     const FADE_IN = 0.4;   // seconds
@@ -274,7 +235,7 @@ function buildGiftOverlayFilter(giftEvents, clipStartSec) {
             .replace(/;/g, '\uFF1B') // replace ; with fullwidth semicolon
             .replace(/%/g, '%%');     // escape % for FFmpeg
 
-        const text = `\u2728 ${safeName}  \u{1F48E} ${evt.diamondValue.toLocaleString()}`;
+        const text = `${safeName} 赠送礼物 价值 ${evt.diamondValue.toLocaleString()} 钻`;
 
         // Y position: bottom-up stacking, slot 0 is at bottom
         const yExpr = `h-${BOTTOM_MARGIN}-${(evt.slot + 1) * ROW_HEIGHT}`;
