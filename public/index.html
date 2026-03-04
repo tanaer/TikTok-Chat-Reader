@@ -6,9 +6,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>TikTok Live Monitor</title>
 
+    <!-- Auth Gate: MUST be first to block page content until authenticated -->
+    <script src="auth_check.js"></script>
+
     <!-- Tailwind + DaisyUI -->
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
 
     <!-- Third Party Libs -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
@@ -28,9 +37,10 @@
 
 
     <link rel="stylesheet" href="style.css"> <!-- Minimal overrides -->
-</head>
 
-<body class="min-h-screen flex flex-col relative text-base-content">
+
+<body class="min-h-screen flex flex-col relative text-base-content"
+    style="display:none; font-family: 'Inter', system-ui, sans-serif;">
     <style>
         body::before {
             content: '';
@@ -564,7 +574,7 @@
                     <button class="btn btn-square btn-sm btn-ghost"
                         onclick="$('#userDetailPanel').addClass('translate-x-full')">✕</button>
                 </div>
-                <div id="userDetailContent">加载中...</div>
+                <div id="userDetailContent"></div>
             </div>
         </section>
 

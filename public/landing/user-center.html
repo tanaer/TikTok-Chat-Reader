@@ -5,8 +5,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>用户中心 - TikTok Monitor</title>
-    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <script src="/nav_shared.js"></script>
     <style>
         body::before {
             content: '';
@@ -44,46 +49,9 @@
     </style>
 </head>
 
-<body class="min-h-screen text-base-content relative">
+<body class="min-h-screen text-base-content relative" style="font-family: 'Inter', system-ui, sans-serif;">
+    <div id="app-navbar"></div>
     <div class="max-w-6xl mx-auto px-4 py-8">
-
-        <!-- Top bar -->
-        <div
-            class="navbar bg-base-100/60 backdrop-blur-md rounded-2xl shadow-sm border border-base-content/5 mb-8 px-6">
-            <div class="flex-1">
-                <h1 class="text-xl font-bold flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24"
-                        stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                    </svg>
-                    用户中心
-                </h1>
-            </div>
-            <div class="flex-none gap-2 hidden sm:flex">
-                <a href="/" class="btn btn-ghost btn-sm hover:text-primary transition-colors">📺 监控中心</a>
-                <a href="pricing.html" class="btn btn-ghost btn-sm hover:text-primary transition-colors">套餐</a>
-                <a href="profile.html" class="btn btn-ghost btn-sm hover:text-primary transition-colors">设置</a>
-                <button onclick="doLogout()" class="btn btn-ghost btn-sm text-error hover:bg-error/20">退出</button>
-            </div>
-            <!-- Mobile Menu -->
-            <div class="flex-none sm:hidden dropdown dropdown-end">
-                <label tabindex="0" class="btn btn-ghost btn-circle">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
-                        stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                            d="M4 6h16M4 12h16M4 18h16" />
-                    </svg>
-                </label>
-                <ul tabindex="0"
-                    class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52 border border-base-content/10">
-                    <li><a href="/">📺 监控中心</a></li>
-                    <li><a href="pricing.html">套餐</a></li>
-                    <li><a href="profile.html">设置</a></li>
-                    <li><a onclick="doLogout()" class="text-error">退出</a></li>
-                </ul>
-            </div>
-        </div>
 
         <div id="alertBox" class="alert shadow-lg mb-6 hidden font-medium transition-all"></div>
 

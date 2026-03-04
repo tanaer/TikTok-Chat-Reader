@@ -25,9 +25,22 @@ recordingManager.startMonitoring(); // Start stall detection for recordings
 startCronJobs(); // Start background cron jobs (expiry, auto-renew, warnings)
 
 // Enable CORS & JSON parsing
-// Enable CORS & JSON parsing
 app.use(express.json());
 app.use(express.static('public')); // Serve static files first for performance
+
+// Auth middleware for protecting API routes
+const { requireAuth } = require('./auth/middleware');
+
+// Global auth middleware: protect ALL /api/* routes except public ones
+app.use('/api', (req, res, next) => {
+    // Public routes that don't require auth
+    const publicPaths = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout'];
+    // Also allow GET /subscription/plans (public pricing page)
+    if (publicPaths.some(p => req.path.startsWith(p))) return next();
+    if (req.method === 'GET' && req.path === '/subscription/plans') return next();
+    // Everything else requires auth
+    return requireAuth(req, res, next);
+});
 
 // ========================
 // API Route Modules
@@ -230,7 +243,7 @@ setInterval(() => {
 // ========================
 
 // Config API
-app.get('/api/config', async (req, res) => {
+app.get('/api/config', requireAuth, async (req, res) => {
     try {
         const settings = await manager.getAllSettings();
         res.json(settings);
@@ -240,7 +253,7 @@ app.get('/api/config', async (req, res) => {
 });
 
 // Settings API - GET to load settings
-app.get('/api/settings', async (req, res) => {
+app.get('/api/settings', requireAuth, async (req, res) => {
     try {
         const settings = await manager.getAllSettings();
         res.json(settings);
@@ -250,7 +263,7 @@ app.get('/api/settings', async (req, res) => {
 });
 
 // Settings API - POST to save settings
-app.post('/api/settings', async (req, res) => {
+app.post('/api/settings', requireAuth, async (req, res) => {
     try {
         const settings = req.body;
         for (const [key, value] of Object.entries(settings)) {
@@ -263,7 +276,7 @@ app.post('/api/settings', async (req, res) => {
 });
 
 // Alias: POST /api/config also saves settings
-app.post('/api/config', async (req, res) => {
+app.post('/api/config', requireAuth, async (req, res) => {
     try {
         const settings = req.body;
         for (const [key, value] of Object.entries(settings)) {
@@ -276,7 +289,7 @@ app.post('/api/config', async (req, res) => {
 });
 
 // Gift Management API
-app.get('/api/gifts', async (req, res) => {
+app.get('/api/gifts', requireAuth, async (req, res) => {
     try {
         const gifts = await manager.getGifts();
         res.json(gifts);
@@ -286,7 +299,7 @@ app.get('/api/gifts', async (req, res) => {
 });
 
 // Gift display names API (for frontend batch lookup)
-app.get('/api/gifts/display-names', async (req, res) => {
+app.get('/api/gifts/display-names', requireAuth, async (req, res) => {
     try {
         const names = await manager.getGiftDisplayNames();
         res.json(names);
@@ -296,7 +309,7 @@ app.get('/api/gifts/display-names', async (req, res) => {
 });
 
 // Room Sessions API
-app.get('/api/rooms/:id/sessions', async (req, res) => {
+app.get('/api/rooms/:id/sessions', requireAuth, async (req, res) => {
     try {
         const sessions = await manager.getSessions(req.params.id);
         res.json(sessions);
@@ -306,7 +319,7 @@ app.get('/api/rooms/:id/sessions', async (req, res) => {
 });
 
 // Archive Stale Live Events API (Fix for long sessions)
-app.post('/api/rooms/:id/archive_stale', async (req, res) => {
+app.post('/api/rooms/:id/archive_stale', requireAuth, async (req, res) => {
     try {
         console.log(`[API] Archiving stale events for room ${req.params.id}`);
         const result = await manager.archiveStaleLiveEvents(req.params.id);
@@ -318,7 +331,7 @@ app.post('/api/rooms/:id/archive_stale', async (req, res) => {
 });
 
 // Maintenance API: Rebuild missing session records from events
-app.post('/api/maintenance/rebuild_sessions', async (req, res) => {
+app.post('/api/maintenance/rebuild_sessions', requireAuth, async (req, res) => {
     try {
         console.log('[API] Rebuilding missing sessions...');
         const result = await manager.rebuildMissingSessions();
@@ -330,7 +343,7 @@ app.post('/api/maintenance/rebuild_sessions', async (req, res) => {
 });
 
 // Maintenance API: Merge Short Sessions
-app.post('/api/maintenance/merge_sessions', async (req, res) => {
+app.post('/api/maintenance/merge_sessions', requireAuth, async (req, res) => {
     try {
         console.log('[API] Merging short sessions...');
         const result = await manager.mergeContinuitySessions();
@@ -342,7 +355,7 @@ app.post('/api/maintenance/merge_sessions', async (req, res) => {
 });
 
 // FFmpeg Maintenance APIs
-app.get('/api/maintenance/ffmpeg', async (req, res) => {
+app.get('/api/maintenance/ffmpeg', requireAuth, async (req, res) => {
     try {
         const status = await ffmpegManager.checkFFmpegStatus();
         res.json(status);
@@ -351,7 +364,7 @@ app.get('/api/maintenance/ffmpeg', async (req, res) => {
     }
 });
 
-app.post('/api/maintenance/ffmpeg/install', async (req, res) => {
+app.post('/api/maintenance/ffmpeg/install', requireAuth, async (req, res) => {
     try {
         const force = req.body.force === true;
 
@@ -368,14 +381,14 @@ app.post('/api/maintenance/ffmpeg/install', async (req, res) => {
 
 
 // Price API
-app.post('/api/price', (req, res) => {
+app.post('/api/price', requireAuth, (req, res) => {
     const { id, price } = req.body;
     manager.savePrice(id, parseFloat(price));
     res.json({ success: true });
 });
 
 // Room API
-app.get('/api/rooms/stats', async (req, res) => {
+app.get('/api/rooms/stats', requireAuth, async (req, res) => {
     try {
         const liveRoomIds = autoRecorder.getLiveRoomIds();
         const page = parseInt(req.query.page) || 1;
@@ -390,7 +403,7 @@ app.get('/api/rooms/stats', async (req, res) => {
 });
 
 // Debug API for connection diagnostics
-app.get('/api/debug/connections', (req, res) => {
+app.get('/api/debug/connections', requireAuth, (req, res) => {
     try {
         const stats = autoRecorder.getConnectionStats();
         res.json({
@@ -402,7 +415,7 @@ app.get('/api/debug/connections', (req, res) => {
     }
 });
 
-app.get('/api/rooms', async (req, res) => {
+app.get('/api/rooms', requireAuth, async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
@@ -425,7 +438,7 @@ app.get('/api/rooms', async (req, res) => {
 // Room Management API
 
 
-app.delete('/api/rooms/:id', async (req, res) => {
+app.delete('/api/rooms/:id', requireAuth, async (req, res) => {
     try {
         const roomId = req.params.id;
         await manager.deleteRoom(roomId);
@@ -435,7 +448,7 @@ app.delete('/api/rooms/:id', async (req, res) => {
     }
 });
 
-app.get('/api/rooms/:id/stats_detail', async (req, res) => {
+app.get('/api/rooms/:id/stats_detail', requireAuth, async (req, res) => {
     try {
         const roomId = req.params.id;
         const sessionId = req.query.sessionId || null;
@@ -471,7 +484,7 @@ app.get('/api/rooms/:id/stats_detail', async (req, res) => {
 });
 
 // All-Time TOP30 Leaderboards API (for room detail sidebar)
-app.get('/api/rooms/:id/alltime-leaderboards', async (req, res) => {
+app.get('/api/rooms/:id/alltime-leaderboards', requireAuth, async (req, res) => {
     try {
         const roomId = req.params.id;
         const data = await manager.getAllTimeLeaderboards(roomId);
@@ -483,7 +496,7 @@ app.get('/api/rooms/:id/alltime-leaderboards', async (req, res) => {
 });
 
 // Session API
-app.post('/api/sessions/end', async (req, res) => {
+app.post('/api/sessions/end', requireAuth, async (req, res) => {
     try {
         const { roomId, snapshot, startTime } = req.body;
 
@@ -500,7 +513,7 @@ app.post('/api/sessions/end', async (req, res) => {
     }
 });
 
-app.get('/api/sessions', async (req, res) => {
+app.get('/api/sessions', requireAuth, async (req, res) => {
     try {
         const roomId = req.query.roomId;
         const sessions = await manager.getSessions(roomId);
@@ -510,7 +523,7 @@ app.get('/api/sessions', async (req, res) => {
     }
 });
 
-app.get('/api/sessions/:id', async (req, res) => {
+app.get('/api/sessions/:id', requireAuth, async (req, res) => {
     try {
         const data = await manager.getSession(req.params.id);
         if (data) {
@@ -524,7 +537,7 @@ app.get('/api/sessions/:id', async (req, res) => {
 });
 
 // History API
-app.get('/api/history', async (req, res) => {
+app.get('/api/history', requireAuth, async (req, res) => {
     try {
         const roomId = req.query.roomId;
         const stats = await manager.getTimeStats(roomId);
@@ -535,7 +548,7 @@ app.get('/api/history', async (req, res) => {
 });
 
 // User Analysis API
-app.get('/api/analysis/users', async (req, res) => {
+app.get('/api/analysis/users', requireAuth, async (req, res) => {
     try {
         const filters = {
             lang: req.query.lang || '',
@@ -556,7 +569,7 @@ app.get('/api/analysis/users', async (req, res) => {
     }
 });
 
-app.get('/api/analysis/user/:userId', async (req, res) => {
+app.get('/api/analysis/user/:userId', requireAuth, async (req, res) => {
     try {
         const data = await manager.getUserAnalysis(req.params.userId);
         res.json(data);
@@ -566,7 +579,7 @@ app.get('/api/analysis/user/:userId', async (req, res) => {
 });
 
 // Export API - fetch user list with full details for export
-app.get('/api/analysis/users/export', async (req, res) => {
+app.get('/api/analysis/users/export', requireAuth, async (req, res) => {
     try {
         const filters = {
             lang: req.query.lang || '',
@@ -625,7 +638,7 @@ function formatPeakDays(dayStats) {
 
 
 
-app.get('/api/analysis/stats', async (req, res) => {
+app.get('/api/analysis/stats', requireAuth, async (req, res) => {
     try {
         const stats = await manager.getGlobalStats();
         res.json(stats);
@@ -635,7 +648,7 @@ app.get('/api/analysis/stats', async (req, res) => {
     }
 });
 
-app.get('/api/analysis/rooms/entry', async (req, res) => {
+app.get('/api/analysis/rooms/entry', requireAuth, async (req, res) => {
     try {
         const { startDate, endDate, limit } = req.query;
         const stats = await manager.getRoomEntryStats(startDate, endDate, limit);
@@ -645,7 +658,7 @@ app.get('/api/analysis/rooms/entry', async (req, res) => {
     }
 });
 
-app.post('/api/analysis/ai', async (req, res) => {
+app.post('/api/analysis/ai', requireAuth, async (req, res) => {
     try {
         const { userId, force = false } = req.body;
 
@@ -732,7 +745,7 @@ app.post('/api/analysis/ai', async (req, res) => {
 
 
 
-app.post('/api/rooms', async (req, res) => {
+app.post('/api/rooms', requireAuth, async (req, res) => {
     try {
         let { roomId, name, address, isMonitorEnabled, language, priority, isRecordingEnabled, recordingAccountId } = req.body;
 
@@ -765,7 +778,7 @@ app.post('/api/rooms', async (req, res) => {
 });
 
 // Rename room (Migrate ID)
-app.post('/api/rooms/:id/rename', async (req, res) => {
+app.post('/api/rooms/:id/rename', requireAuth, async (req, res) => {
     try {
         const { newRoomId } = req.body;
         if (!newRoomId) return res.status(400).json({ error: 'New Room ID is required' });
@@ -777,7 +790,7 @@ app.post('/api/rooms/:id/rename', async (req, res) => {
     }
 });
 
-app.delete('/api/rooms/:id', async (req, res) => {
+app.delete('/api/rooms/:id', requireAuth, async (req, res) => {
     try {
         await manager.deleteRoom(req.params.id);
         res.json({ success: true });
@@ -786,7 +799,7 @@ app.delete('/api/rooms/:id', async (req, res) => {
     }
 });
 
-app.get('/api/rooms/:id/stats_detail', async (req, res) => {
+app.get('/api/rooms/:id/stats_detail', requireAuth, async (req, res) => {
     try {
         const roomId = req.params.id;
         const sessionId = req.query.sessionId || null;
@@ -797,7 +810,7 @@ app.get('/api/rooms/:id/stats_detail', async (req, res) => {
     }
 });
 
-app.post('/api/rooms/:id/stop', async (req, res) => {
+app.post('/api/rooms/:id/stop', requireAuth, async (req, res) => {
     try {
         const roomId = req.params.id;
         // Stop monitoring
@@ -813,7 +826,7 @@ app.post('/api/rooms/:id/stop', async (req, res) => {
 });
 
 // Recording API
-app.post('/api/rooms/:id/recording/start', async (req, res) => {
+app.post('/api/rooms/:id/recording/start', requireAuth, async (req, res) => {
     try {
         const roomIdFromUrl = req.params.id;
         let { roomId, uniqueId, accountId } = req.body;
@@ -844,7 +857,7 @@ app.post('/api/rooms/:id/recording/start', async (req, res) => {
 });
 
 
-app.post('/api/rooms/:id/recording/stop', async (req, res) => {
+app.post('/api/rooms/:id/recording/stop', requireAuth, async (req, res) => {
     try {
         const roomId = req.params.id;
         const result = await recordingManager.stopRecording(roomId);
@@ -854,12 +867,12 @@ app.post('/api/rooms/:id/recording/stop', async (req, res) => {
     }
 });
 
-app.get('/api/rooms/:id/recording/status', (req, res) => {
+app.get('/api/rooms/:id/recording/status', requireAuth, (req, res) => {
     const roomId = req.params.id;
     res.json({ isRecording: recordingManager.isRecording(roomId) });
 });
 
-app.get('/api/recordings/active', (req, res) => {
+app.get('/api/recordings/active', requireAuth, (req, res) => {
     // Return array of roomIds
     const activeRooms = Array.from(recordingManager.activeRecordings.keys());
     res.json(activeRooms);
