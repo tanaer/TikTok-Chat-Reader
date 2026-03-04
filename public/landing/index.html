@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="luxury">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TikTok Live Monitor - 实时直播数据分析平台</title>
+    <meta name="description" content="专业的TikTok直播监控与数据分析平台，实时追踪礼物、弹幕、观众数据，助力MCN机构和主播运营决策。">
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                radial-gradient(ellipse at 30% 20%, rgba(212, 175, 55, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 70% 80%, rgba(184, 134, 11, 0.05) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
+        }
+
+        .glass-panel {
+            background: rgba(20, 20, 30, 0.5);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .hero-glow {
+            background: radial-gradient(circle at center, rgba(212, 175, 55, 0.15), transparent 50%);
+        }
+
+        .feature-card {
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .feature-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 20px 60px -15px rgba(212, 175, 55, 0.15);
+        }
+
+        @keyframes float {
+
+            0%,
+            100% {
+                transform: translateY(0);
+            }
+
+            50% {
+                transform: translateY(-8px);
+            }
+        }
+
+        .animate-float {
+            animation: float 4s ease-in-out infinite;
+        }
+
+        .animate-float-delay {
+            animation: float 4s ease-in-out 1s infinite;
+        }
+    </style>
+</head>
+
+<body class="min-h-screen flex flex-col text-base-content">
+
+    <!-- Navbar -->
+    <div class="navbar glass-panel sticky top-0 z-50 px-6">
+        <div class="flex-1">
+            <a class="btn btn-ghost text-xl font-bold tracking-tight">
+                <span class="bg-gradient-to-r from-primary to-warning bg-clip-text text-transparent">TikTok
+                    Monitor</span>
+            </a>
+        </div>
+        <div class="flex-none gap-2">
+            <a href="/landing/pricing.html" class="btn btn-ghost btn-sm">💎 定价</a>
+            <a href="/landing/login.html" class="btn btn-ghost btn-sm">登录</a>
+            <a href="/landing/register.html" class="btn btn-primary btn-sm">立即注册</a>
+        </div>
+    </div>
+
+    <!-- Hero Section -->
+    <section class="hero min-h-[80vh] relative overflow-hidden">
+        <div class="hero-glow absolute inset-0"></div>
+        <div class="hero-content text-center py-20">
+            <div class="max-w-3xl">
+                <div class="mb-8 animate-float">
+                    <span class="text-7xl">📺</span>
+                </div>
+                <h1 class="text-5xl md:text-6xl font-extrabold mb-6 leading-tight">
+                    <span class="bg-gradient-to-r from-primary via-warning to-secondary bg-clip-text text-transparent">
+                        TikTok 直播数据分析
+                    </span>
+                    <br>
+                    <span class="text-base-content/80 text-3xl md:text-4xl">实时监控 · 智能洞察 · 数据驱动</span>
+                </h1>
+                <p class="text-lg text-base-content/60 mb-10 max-w-2xl mx-auto">
+                    专业的TikTok直播监控平台，实时追踪礼物收入、弹幕互动、观众行为。
+                    帮助MCN机构和主播做出更精准的运营决策。
+                </p>
+                <div class="flex gap-4 justify-center flex-wrap">
+                    <a href="/landing/register.html"
+                        class="btn btn-lg border-none bg-gradient-to-r from-primary to-warning text-white hover:scale-105 active:scale-95 transition-all shadow-lg shadow-primary/20">
+                        🚀 免费开始
+                    </a>
+                    <a href="/landing/login.html" class="btn btn-lg btn-outline border-primary/40 hover:bg-primary/10">
+                        登录监控中心 →
+                    </a>
+                </div>
+                <p class="text-sm text-base-content/40 mt-4">免费版包含 1 个房间监控 · 无需信用卡</p>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features Section -->
+    <section class="py-20 px-6">
+        <div class="max-w-6xl mx-auto">
+            <h2 class="text-3xl font-bold text-center mb-4">
+                <span class="bg-gradient-to-r from-primary to-warning bg-clip-text text-transparent">核心功能</span>
+            </h2>
+            <p class="text-center text-base-content/50 mb-16 max-w-xl mx-auto">全方位的直播数据监控与分析能力</p>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <!-- Feature 1 -->
+                <div class="card glass-panel feature-card">
+                    <div class="card-body">
+                        <div class="text-4xl mb-4 animate-float">📊</div>
+                        <h3 class="card-title text-primary">实时数据追踪</h3>
+                        <p class="text-base-content/60">实时监控直播间弹幕、礼物、进场、点赞等数据，毫秒级延迟推送。</p>
+                    </div>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="card glass-panel feature-card">
+                    <div class="card-body">
+                        <div class="text-4xl mb-4 animate-float-delay">💎</div>
+                        <h3 class="card-title text-warning">礼物收入分析</h3>
+                        <p class="text-base-content/60">自动统计礼物价值、用户贡献排行、赚钱效率等核心指标，一目了然。</p>
+                    </div>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="card glass-panel feature-card">
+                    <div class="card-body">
+                        <div class="text-4xl mb-4 animate-float">👥</div>
+                        <h3 class="card-title text-secondary">用户画像分析</h3>
+                        <p class="text-base-content/60">跨房间用户追踪，语言分析，活跃时段统计，发现高价值潜在用户。</p>
+                    </div>
+                </div>
+
+                <!-- Feature 4 -->
+                <div class="card glass-panel feature-card">
+                    <div class="card-body">
+                        <div class="text-4xl mb-4 animate-float-delay">📈</div>
+                        <h3 class="card-title text-accent">多房间对比</h3>
+                        <p class="text-base-content/60">同时监控多个直播间，进行数据对比分析，发现最具潜力的主播。</p>
+                    </div>
+                </div>
+
+                <!-- Feature 5 -->
+                <div class="card glass-panel feature-card">
+                    <div class="card-body">
+                        <div class="text-4xl mb-4 animate-float">🤖</div>
+                        <h3 class="card-title text-info">AI 智能分析</h3>
+                        <p class="text-base-content/60">基于大语言模型的用户分析，自动生成用户画像和运营建议。</p>
+                    </div>
+                </div>
+
+                <!-- Feature 6 -->
+                <div class="card glass-panel feature-card">
+                    <div class="card-body">
+                        <div class="text-4xl mb-4 animate-float-delay">🎥</div>
+                        <h3 class="card-title text-error">直播录制</h3>
+                        <p class="text-base-content/60">支持自动录制直播内容，重要时刻不遗漏，方便后续回顾分析。</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Stats Section -->
+    <section class="py-16 px-6">
+        <div class="max-w-4xl mx-auto glass-panel rounded-3xl p-10">
+            <div class="stats stats-vertical md:stats-horizontal w-full bg-transparent">
+                <div class="stat place-items-center">
+                    <div class="stat-title">支持房间</div>
+                    <div class="stat-value text-primary">∞</div>
+                    <div class="stat-desc">无限制监控</div>
+                </div>
+                <div class="stat place-items-center">
+                    <div class="stat-title">数据延迟</div>
+                    <div class="stat-value text-warning">&lt;1s</div>
+                    <div class="stat-desc">毫秒级推送</div>
+                </div>
+                <div class="stat place-items-center">
+                    <div class="stat-title">数据维度</div>
+                    <div class="stat-value text-secondary">50+</div>
+                    <div class="stat-desc">全方位指标</div>
+                </div>
+                <div class="stat place-items-center">
+                    <div class="stat-title">历史数据</div>
+                    <div class="stat-value text-accent">永久</div>
+                    <div class="stat-desc">企业版支持</div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- CTA Section -->
+    <section class="py-20 px-6 text-center">
+        <div class="max-w-2xl mx-auto">
+            <h2 class="text-3xl font-bold mb-4">准备好了吗？</h2>
+            <p class="text-base-content/60 mb-8">立即注册，免费体验基础监控功能。</p>
+            <div class="flex gap-4 justify-center flex-wrap">
+                <a href="/landing/register.html"
+                    class="btn btn-lg border-none bg-gradient-to-r from-primary to-warning text-white hover:scale-105 transition-all shadow-lg">
+                    立即注册
+                </a>
+                <a href="/landing/pricing.html" class="btn btn-lg btn-outline border-primary/40 hover:bg-primary/10">
+                    查看定价
+                </a>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer footer-center p-10 text-base-content/40">
+        <div>
+            <p class="font-bold text-base-content/60">TikTok Live Monitor</p>
+            <p>专业的直播数据分析平台</p>
+            <p class="text-sm mt-2">© 2024 TikTok Monitor. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        // If already logged in, redirect to dashboard
+        if (localStorage.getItem('accessToken')) {
+            // Optionally redirect, but landing page is for marketing
+            // Only redirect if user explicitly navigates here
+        }
+    </script>
+</body>
+
+</html>

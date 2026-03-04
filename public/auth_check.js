@@ -5,10 +5,10 @@
 (function () {
     const accessToken = localStorage.getItem('accessToken');
 
-    // If no access token, redirect to landing/login
+    // If no access token, redirect to landing page
     if (!accessToken) {
-        console.log('[Auth] No access token found, redirecting to login...');
-        window.location.href = '/landing/login.html';
+        console.log('[Auth] No access token found, redirecting to landing...');
+        window.location.href = '/landing/';
         return;
     }
 
@@ -78,6 +78,15 @@
 
         const isAdmin = user.role === 'admin';
 
+        // Build admin menu items
+        const adminMenuItems = isAdmin ? `
+                <li class="divider"></li>
+                <li class="menu-title"><span>管理</span></li>
+                <li><a href="/landing/admin.html#users">👥 用户管理</a></li>
+                <li><a href="/landing/admin.html#orders">📋 充值订单</a></li>
+                <li><a href="/landing/admin.html#plans">💎 套餐管理</a></li>
+        ` : '';
+
         // Add user dropdown to navbar
         const userMenu = document.createElement('li');
         userMenu.className = 'dropdown dropdown-end';
@@ -96,7 +105,7 @@
                 <li><a href="/landing/user-center.html">🏠 用户中心</a></li>
                 <li><a href="/landing/pricing.html">💎 套餐定价</a></li>
                 <li><a href="/landing/profile.html">👤 个人设置</a></li>
-                ${isAdmin ? '<li class="divider"></li><li class="menu-title"><span>管理</span></li><li><a href="/landing/admin.html">⚙️ 管理后台</a></li>' : ''}
+                ${adminMenuItems}
                 <li class="divider"></li>
                 <li><a onclick="logout()" class="text-error">🚪 退出登录</a></li>
             </ul>
@@ -106,20 +115,24 @@
 
     /**
      * Setup role-based UI visibility
-     * Hides system config for non-admin users
+     * Hides system config and recording tabs for non-admin users
      */
     function setupRoleBasedUI(user) {
         const isAdmin = user.role === 'admin';
 
         // Hide system config nav button for non-admins
         const systemConfigBtn = document.querySelector('.nav-btn[onclick*="systemConfig"]');
-        if (systemConfigBtn) {
-            if (!isAdmin) {
-                systemConfigBtn.parentElement.style.display = 'none';
-            }
+        if (systemConfigBtn && !isAdmin) {
+            systemConfigBtn.parentElement.style.display = 'none';
         }
 
-        // Hide system config section content
+        // Hide recording management nav button for non-admins
+        const recordingBtn = document.querySelector('.nav-btn[onclick*="recording"]');
+        if (recordingBtn && !isAdmin) {
+            recordingBtn.parentElement.style.display = 'none';
+        }
+
+        // Hide system config section content for non-admins
         const systemConfigSection = document.getElementById('section-systemConfig');
         if (systemConfigSection && !isAdmin) {
             systemConfigSection.innerHTML = `
@@ -128,6 +141,19 @@
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                     </svg>
                     <span>系统配置仅限管理员访问</span>
+                </div>
+            `;
+        }
+
+        // Hide recording section content for non-admins
+        const recordingSection = document.getElementById('section-recording');
+        if (recordingSection && !isAdmin) {
+            recordingSection.innerHTML = `
+                <div class="alert alert-warning">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                    </svg>
+                    <span>录制管理仅限管理员访问</span>
                 </div>
             `;
         }
@@ -172,3 +198,4 @@
         console.log('[Auth] jQuery AJAX auth header injection enabled');
     }
 })();
+

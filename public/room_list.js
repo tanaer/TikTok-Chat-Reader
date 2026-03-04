@@ -267,7 +267,9 @@ async function renderRoomList() {
             search: roomListSearch,
             sort: roomListSort
         });
-        const result = await $.get(`/api/rooms/stats?${params}`);
+        // Use scoped API for regular users, admin sees all rooms
+        const apiBase = window.isAdmin ? '/api/rooms/stats' : '/api/user/rooms/stats';
+        const result = await $.get(`${apiBase}?${params}`);
 
         // Fetch active recordings
         try {
@@ -468,19 +470,29 @@ function refreshRoomList() {
 window.refreshRoomList = refreshRoomList;
 
 async function toggleMonitor(roomId, enabled, name, address) {
-    // We reuse the update endpoint - must send as JSON
+    // Admin uses global endpoint, regular users use user-scoped endpoint
+    const url = window.isAdmin ? '/api/rooms' : '/api/user/rooms';
     try {
-        await $.ajax({
-            url: '/api/rooms',
-            type: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({
-                roomId: roomId,
-                name: name,
-                address: address,
-                isMonitorEnabled: enabled
-            })
-        });
+        if (window.isAdmin) {
+            await $.ajax({
+                url: url,
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    roomId: roomId,
+                    name: name,
+                    address: address,
+                    isMonitorEnabled: enabled
+                })
+            });
+        } else {
+            await $.ajax({
+                url: `/api/user/rooms/${encodeURIComponent(roomId)}`,
+                type: 'PUT',
+                contentType: 'application/json',
+                data: JSON.stringify({ isEnabled: enabled })
+            });
+        }
         console.log(`Updated monitor for ${roomId} to ${enabled}`);
     } catch (e) {
         alert('Update failed: ' + (e.responseText || e.statusText));
@@ -571,8 +583,10 @@ window.enterRoom = enterRoom;
 window.deleteRoom = async function (id) {
     if (!confirm('确定要删除该房间吗?')) return;
     try {
-        // URL-encode room ID to handle special characters like @
-        await $.ajax({ url: `/api/rooms/${encodeURIComponent(id)}`, type: 'DELETE' });
+        const url = window.isAdmin
+            ? `/api/rooms/${encodeURIComponent(id)}`
+            : `/api/user/rooms/${encodeURIComponent(id)}`;
+        await $.ajax({ url: url, type: 'DELETE' });
         // Remove the DOM element instead of refreshing the entire list
         $(`[data-room-id="${escapeHtml(id)}"]`).fadeOut(300, function () { $(this).remove(); });
     } catch (e) { alert(e.statusText); }
@@ -589,20 +603,46 @@ window.saveRoom = async function () {
 
     if (!id) return alert('ID required');
     try {
-        await $.ajax({
-            url: '/api/rooms',
-            type: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({
-                roomId: id,
-                name: name,
-                isMonitorEnabled: isMonitor,
-                language: language,
-                priority: priority,
-                isRecordingEnabled: isRecording,
-                recordingAccountId: recAccount
-            })
-        });
+        const url = window.isAdmin ? '/api/rooms' : '/api/user/rooms';
+        if (window.isAdmin) {
+            await $.ajax({
+                url: url,
+                type: 'POST',
+                contentType: 'application/json',
+                data: JSON.stringify({
+                    roomId: id,
+                    name: name,
+                    isMonitorEnabled: isMonitor,
+                    language: language,
+                    priority: priority,
+                    isRecordingEnabled: isRecording,
+                    recordingAccountId: recAccount
+                })
+            });
+        } else {
+            if (isEdit) {
+                await $.ajax({
+                    url: `/api/user/rooms/${encodeURIComponent(id)}`,
+                    type: 'PUT',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        alias: name,
+                        isEnabled: isMonitor,
+                        notes: ''
+                    })
+                });
+            } else {
+                await $.ajax({
+                    url: url,
+                    type: 'POST',
+                    contentType: 'application/json',
+                    data: JSON.stringify({
+                        roomId: id,
+                        alias: name
+                    })
+                });
+            }
+        }
         closeRoomModal();
 
         if (isEdit) {
