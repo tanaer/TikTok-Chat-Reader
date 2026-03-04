@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - TikTok Monitor</title>
+    <link rel="stylesheet" href="landing.css">
+    <link rel="stylesheet" href="auth.css">
+</head>
+
+<body>
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="logo-section">
+                <h1>🎵 <span>TikTok Monitor</span></h1>
+                <p>登录您的账户</p>
+            </div>
+
+            <div id="alertBox" class="alert" style="display: none;"></div>
+
+            <form id="loginForm" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="email">邮箱</label>
+                    <input type="email" id="email" placeholder="your@email.com" required autocomplete="email">
+                </div>
+
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="password" placeholder="请输入密码" required minlength="6"
+                            autocomplete="current-password">
+                        <button type="button" class="password-toggle" onclick="togglePassword()">👁</button>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-primary btn-block btn-lg" id="submitBtn">
+                    <span class="spinner"></span>
+                    <span class="btn-text">登 录</span>
+                </button>
+            </form>
+
+            <div class="auth-footer">
+                还没有账户？<a href="register.html">立即注册</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // If already logged in, redirect to dashboard
+        if (localStorage.getItem('accessToken')) {
+            window.location.href = '/';
+        }
+
+        function showAlert(message, type = 'error') {
+            const box = document.getElementById('alertBox');
+            box.className = `alert alert-${type}`;
+            box.textContent = message;
+            box.style.display = 'block';
+        }
+
+        function togglePassword() {
+            const input = document.getElementById('password');
+            input.type = input.type === 'password' ? 'text' : 'password';
+        }
+
+        async function handleLogin(e) {
+            e.preventDefault();
+            const btn = document.getElementById('submitBtn');
+            btn.classList.add('loading');
+            btn.disabled = true;
+
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+
+            try {
+                const response = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || '登录失败');
+                }
+
+                // Store tokens
+                localStorage.setItem('accessToken', data.accessToken);
+                localStorage.setItem('refreshToken', data.refreshToken);
+
+                // Redirect to dashboard
+                window.location.href = '/';
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                btn.classList.remove('loading');
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+
+</html>

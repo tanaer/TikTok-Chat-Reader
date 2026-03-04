@@ -959,7 +959,8 @@ class Manager {
                 us.chat_count as chatCount,
                 us.top_room_id as topRoom,
                 us.rose_count,
-                us.tiktok_count
+                us.tiktok_count,
+                us.top_gifts_json
             FROM user_stats us
             JOIN "user" u ON us.user_id = u.user_id
             ${whereClause}
@@ -981,38 +982,16 @@ class Manager {
             roomNameMap = Object.fromEntries(roomNames.map(r => [r.roomId, r.name || r.roomId]));
         }
 
-        // Get top 6 gifts for displayed users (still needs event table, but only for current page)
-        const userIds = rows.map(r => r.userId);
-        const placeholders = userIds.map(() => '?').join(',');
-
-        const topGiftStats = await query(`
-            SELECT 
-                user_id,
-                (data_json::json->>'giftName') as gift_name,
-                (data_json::json->>'giftPictureUrl') as gift_icon,
-                MAX(COALESCE(diamond_count, 0)) as unit_price,
-                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
-                SUM(COALESCE(repeat_count, 1)) as gift_count
-            FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL
-            GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
-            ORDER BY user_id, total_value DESC
-        `, userIds);
-
+        // Parse pre-calculated top gifts
         const topGiftsMap = {};
-        for (const g of topGiftStats) {
-            if (!topGiftsMap[g.userId]) {
-                topGiftsMap[g.userId] = [];
+        for (const r of rows) {
+            try {
+                topGiftsMap[r.userId] = JSON.parse(r.topGiftsJson || '[]');
+            } catch (e) {
+                topGiftsMap[r.userId] = [];
             }
-            if (topGiftsMap[g.userId].length < 6) {
-                topGiftsMap[g.userId].push({
-                    name: g.giftName || '礼物',
-                    icon: g.giftIcon || '',
-                    unitPrice: parseInt(g.unitPrice) || 0,
-                    totalValue: parseInt(g.totalValue) || 0,
-                    count: parseInt(g.giftCount) || 0
-                });
-            }
+            // Clean up JSON string from response
+            delete r.topGiftsJson;
         }
 
         // Enrich rows
@@ -2537,19 +2516,55 @@ class Manager {
                     value: parseInt(r.roomValue) || 0
                 }]));
 
+                // 5.5 Top gifts per user
+                const topGiftStats = await query(`
+                    WITH user_gifts AS (
+                        SELECT 
+                            user_id,
+                            (data_json::json->>'giftName') as gift_name,
+                            (data_json::json->>'giftPictureUrl') as gift_icon,
+                            MAX(COALESCE(diamond_count, 0)) as unit_price,
+                            SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                            SUM(COALESCE(repeat_count, 1)) as gift_count
+                        FROM event
+                        WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL
+                        GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
+                    ),
+                    ranked_gifts AS (
+                        SELECT *, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY total_value DESC) as rn
+                        FROM user_gifts
+                    )
+                    SELECT * FROM ranked_gifts WHERE rn <= 6
+                `, batchIds);
+
+                const topGiftsMap = {};
+                for (const g of topGiftStats) {
+                    if (!topGiftsMap[g.userId]) {
+                        topGiftsMap[g.userId] = [];
+                    }
+                    topGiftsMap[g.userId].push({
+                        name: g.giftName || '礼物',
+                        icon: g.giftIcon || '',
+                        unitPrice: parseInt(g.unitPrice) || 0,
+                        totalValue: parseInt(g.totalValue) || 0,
+                        count: parseInt(g.giftCount) || 0
+                    });
+                }
+
                 // 6. Upsert user_stats for each user in batch
                 for (const userId of batchIds) {
                     const basic = basicMap[userId] || {};
                     const rose = roseMap[userId] || { value: 0, count: 0 };
                     const tiktok = tiktokMap[userId] || { value: 0, count: 0 };
                     const topRoom = topRoomMap[userId] || { roomId: null, value: 0 };
+                    const topGiftsJson = JSON.stringify(topGiftsMap[userId] || []);
 
                     await run(`
                         INSERT INTO user_stats (
                             user_id, total_gift_value, room_count, chat_count,
                             rose_value, tiktok_value, rose_count, tiktok_count,
-                            top_room_id, top_room_value, last_active, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                            top_room_id, top_room_value, last_active, top_gifts_json, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                         ON CONFLICT (user_id) DO UPDATE SET
                             total_gift_value = EXCLUDED.total_gift_value,
                             room_count = EXCLUDED.room_count,
@@ -2561,6 +2576,7 @@ class Manager {
                             top_room_id = EXCLUDED.top_room_id,
                             top_room_value = EXCLUDED.top_room_value,
                             last_active = EXCLUDED.last_active,
+                            top_gifts_json = EXCLUDED.top_gifts_json,
                             updated_at = NOW()
                     `, [
                         userId,
@@ -2573,7 +2589,8 @@ class Manager {
                         tiktok.count,
                         topRoom.roomId,
                         topRoom.value,
-                        basic.lastActive || null
+                        basic.lastActive || null,
+                        topGiftsJson
                     ]);
                     totalRefreshed++;
                 }
@@ -2680,6 +2697,201 @@ class Manager {
             console.error('[Manager] Error refreshing global_stats:', err);
             throw err;
         }
+    }
+
+    // ========================
+    // Multi-Tenant Room Management
+    // ========================
+
+    /**
+     * Subscribe a user to a room (creates user_room + ensures global room record)
+     */
+    async subscribeUserToRoom(userId, roomId, alias) {
+        await this.ensureDb();
+        // Ensure room exists in global room table
+        await run(
+            `INSERT INTO room (room_id, name, is_monitor_enabled)
+             VALUES (?, ?, 1) ON CONFLICT (room_id) DO UPDATE SET is_monitor_enabled = 1`,
+            [roomId, alias || roomId]
+        );
+
+        // Create user_room subscription
+        await run(
+            `INSERT INTO user_room (user_id, room_id, alias, is_enabled)
+             VALUES (?, ?, ?, TRUE)
+             ON CONFLICT (user_id, room_id) DO UPDATE SET is_enabled = TRUE, alias = EXCLUDED.alias, updated_at = NOW()`,
+            [userId, roomId, alias || null]
+        );
+
+        return { roomId, alias };
+    }
+
+    /**
+     * Check if user has access to a room
+     */
+    async userHasRoomAccess(userId, roomId) {
+        await this.ensureDb();
+        const result = await get(
+            'SELECT 1 FROM user_room WHERE user_id = ? AND room_id = ?',
+            [userId, roomId]
+        );
+        return !!result;
+    }
+
+    /**
+     * Get a user's rooms with optional search/pagination
+     */
+    async getUserRooms(userId, options = {}) {
+        await this.ensureDb();
+        const { page = 1, limit = 50, search = '' } = options;
+        const offset = (page - 1) * limit;
+
+        let whereClause = 'WHERE ur.user_id = ?';
+        const params = [userId];
+        const countParams = [userId];
+
+        if (search && search.trim()) {
+            const likePattern = `%${search.trim()}%`;
+            whereClause += ' AND (ur.room_id ILIKE ? OR ur.alias ILIKE ? OR r.name ILIKE ?)';
+            params.push(likePattern, likePattern, likePattern);
+            countParams.push(likePattern, likePattern, likePattern);
+        }
+
+        const rooms = await query(`
+            SELECT ur.room_id, ur.alias, ur.is_enabled, ur.notes, ur.created_at,
+                   r.name, r.numeric_room_id, r.is_monitor_enabled, r.updated_at as room_updated_at
+            FROM user_room ur
+            LEFT JOIN room r ON ur.room_id = r.room_id
+            ${whereClause}
+            ORDER BY ur.created_at DESC
+            LIMIT ? OFFSET ?
+        `, [...params, limit, offset]);
+
+        const countResult = await get(`
+            SELECT COUNT(*) as total FROM user_room ur
+            LEFT JOIN room r ON ur.room_id = r.room_id
+            ${whereClause}
+        `, countParams);
+
+        return {
+            data: rooms,
+            pagination: { page, limit, total: countResult?.total || 0, totalPages: Math.ceil((countResult?.total || 0) / limit) }
+        };
+    }
+
+    /**
+     * Get a user's rooms with statistics
+     */
+    async getUserRoomStats(userId, liveRoomIds = [], options = {}) {
+        await this.ensureDb();
+        const { page = 1, limit = 50, search = '', sort = 'default' } = options;
+        const offset = (page - 1) * limit;
+
+        let whereClause = 'WHERE ur.user_id = ? AND ur.is_enabled = TRUE';
+        const params = [userId];
+
+        if (search && search.trim()) {
+            const likePattern = `%${search.trim()}%`;
+            whereClause += ' AND (ur.room_id ILIKE ? OR r.name ILIKE ?)';
+            params.push(likePattern, likePattern);
+        }
+
+        let orderBy = 'ORDER BY r.updated_at DESC NULLS LAST';
+        if (sort === 'gift') orderBy = 'ORDER BY COALESCE(rs.all_time_gift_value, 0) DESC';
+        else if (sort === 'quality') orderBy = 'ORDER BY COALESCE(rs.account_quality, 0) DESC';
+
+        const rooms = await query(`
+            SELECT ur.room_id, ur.alias, r.name, r.numeric_room_id, r.is_monitor_enabled, r.updated_at,
+                   COALESCE(rs.all_time_gift_value, 0) as all_time_gift_value,
+                   COALESCE(rs.all_time_visit_count, 0) as all_time_visit_count,
+                   COALESCE(rs.all_time_chat_count, 0) as all_time_chat_count,
+                   COALESCE(rs.monthly_gift_value, 0) as monthly_gift_value,
+                   COALESCE(rs.account_quality, 0) as account_quality,
+                   rs.last_session_time
+            FROM user_room ur
+            LEFT JOIN room r ON ur.room_id = r.room_id
+            LEFT JOIN room_stats rs ON ur.room_id = rs.room_id
+            ${whereClause}
+            ${orderBy}
+            LIMIT ? OFFSET ?
+        `, [...params, limit, offset]);
+
+        // Mark live status
+        const data = rooms.map(room => ({
+            ...room,
+            isLive: liveRoomIds.includes(room.roomId)
+        }));
+
+        return { data, pagination: { page, limit } };
+    }
+
+    /**
+     * Update a user's room settings
+     */
+    async updateUserRoom(userId, roomId, updates) {
+        await this.ensureDb();
+        const { alias, isEnabled, notes } = updates;
+        const sets = [];
+        const params = [];
+
+        if (alias !== undefined) { sets.push(`alias = ?`); params.push(alias); }
+        if (isEnabled !== undefined) { sets.push(`is_enabled = ?`); params.push(isEnabled); }
+        if (notes !== undefined) { sets.push(`notes = ?`); params.push(notes); }
+
+        if (sets.length === 0) return;
+
+        sets.push('updated_at = NOW()');
+        params.push(userId, roomId);
+
+        await run(
+            `UPDATE user_room SET ${sets.join(', ')} WHERE user_id = ? AND room_id = ?`,
+            params
+        );
+    }
+
+    /**
+     * Unsubscribe a user from a room
+     * If no other subscribers remain, room monitoring will stop at next cycle
+     */
+    async unsubscribeUserFromRoom(userId, roomId) {
+        await this.ensureDb();
+        await run('DELETE FROM user_room WHERE user_id = ? AND room_id = ?', [userId, roomId]);
+
+        // Check if any subscribers remain
+        const remaining = await get(
+            'SELECT COUNT(*) as cnt FROM user_room WHERE room_id = ? AND is_enabled = TRUE',
+            [roomId]
+        );
+
+        if (parseInt(remaining?.cnt || 0) === 0) {
+            // No active subscribers - disable monitoring
+            await run('UPDATE room SET is_monitor_enabled = 0 WHERE room_id = ?', [roomId]);
+            console.log(`[Manager] Room ${roomId} has no active subscribers, monitoring will stop`);
+        }
+    }
+
+    /**
+     * Get all rooms that should be actively monitored
+     * Returns rooms that have at least one active subscriber with is_enabled = TRUE
+     * Used by auto_recorder instead of getRooms()
+     */
+    async getActiveMonitorRooms() {
+        await this.ensureDb();
+        const rooms = await query(`
+            SELECT DISTINCT r.room_id, r.numeric_room_id, r.name, r.address, 
+                   r.updated_at, r.is_monitor_enabled, r.language, r.priority
+            FROM room r
+            WHERE r.is_monitor_enabled = 1
+              AND (
+                  -- Legacy: rooms without user_room entries (admin-managed)
+                  NOT EXISTS (SELECT 1 FROM user_room LIMIT 1)
+                  OR
+                  -- Multi-tenant: has at least one active subscriber
+                  EXISTS (SELECT 1 FROM user_room ur WHERE ur.room_id = r.room_id AND ur.is_enabled = TRUE)
+              )
+            ORDER BY r.priority DESC, r.updated_at DESC
+        `);
+        return { data: rooms };
     }
 }
 

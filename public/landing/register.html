@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册 - TikTok Monitor</title>
+    <link rel="stylesheet" href="landing.css">
+    <link rel="stylesheet" href="auth.css">
+</head>
+
+<body>
+    <div class="auth-container">
+        <div class="auth-card">
+            <div class="logo-section">
+                <h1>🎵 <span>TikTok Monitor</span></h1>
+                <p>创建您的账户</p>
+            </div>
+
+            <div id="alertBox" class="alert" style="display: none;"></div>
+
+            <form id="registerForm" onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label for="email">邮箱</label>
+                    <input type="email" id="email" placeholder="your@email.com" required autocomplete="email">
+                </div>
+
+                <div class="form-group">
+                    <label for="nickname">昵称 <span style="color: rgba(255,255,255,0.3);">(可选)</span></label>
+                    <input type="text" id="nickname" placeholder="您的显示名称" autocomplete="nickname">
+                </div>
+
+                <div class="form-group">
+                    <label for="password">密码</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="password" placeholder="至少6位" required minlength="6"
+                            autocomplete="new-password">
+                        <button type="button" class="password-toggle" onclick="togglePassword('password')">👁</button>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="confirmPassword">确认密码</label>
+                    <div class="password-wrapper">
+                        <input type="password" id="confirmPassword" placeholder="再次输入密码" required minlength="6"
+                            autocomplete="new-password">
+                        <button type="button" class="password-toggle"
+                            onclick="togglePassword('confirmPassword')">👁</button>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn btn-accent btn-block btn-lg" id="submitBtn">
+                    <span class="spinner"></span>
+                    <span class="btn-text">注 册</span>
+                </button>
+            </form>
+
+            <div class="auth-footer">
+                已有账户？<a href="login.html">立即登录</a>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // If already logged in, redirect
+        if (localStorage.getItem('accessToken')) {
+            window.location.href = '/';
+        }
+
+        function showAlert(message, type = 'error') {
+            const box = document.getElementById('alertBox');
+            box.className = `alert alert-${type}`;
+            box.textContent = message;
+            box.style.display = 'block';
+        }
+
+        function togglePassword(fieldId) {
+            const input = document.getElementById(fieldId);
+            input.type = input.type === 'password' ? 'text' : 'password';
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const btn = document.getElementById('submitBtn');
+
+            const email = document.getElementById('email').value.trim();
+            const nickname = document.getElementById('nickname').value.trim();
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+
+            // Validate
+            if (password !== confirmPassword) {
+                showAlert('两次输入的密码不一致');
+                return;
+            }
+
+            btn.classList.add('loading');
+            btn.disabled = true;
+
+            try {
+                const response = await fetch('/api/auth/register', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email, password, nickname: nickname || undefined })
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.error || '注册失败');
+                }
+
+                // Store tokens
+                localStorage.setItem('accessToken', data.accessToken);
+                localStorage.setItem('refreshToken', data.refreshToken);
+
+                showAlert('注册成功！正在跳转...', 'success');
+
+                // Redirect to dashboard
+                setTimeout(() => {
+                    window.location.href = '/';
+                }, 800);
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                btn.classList.remove('loading');
+                btn.disabled = false;
+            }
+        }
+    </script>
+</body>
+
+</html>

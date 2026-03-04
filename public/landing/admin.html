@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 - TikTok Monitor</title>
+    <link rel="stylesheet" href="landing.css">
+    <style>
+        .admin-container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+        }
+
+        .top-bar h1 {
+            font-size: 1.75rem;
+            font-weight: 800;
+            color: white;
+        }
+
+        .top-bar .nav-links {
+            display: flex;
+            gap: 16px;
+        }
+
+        .top-bar .nav-links a {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.875rem;
+        }
+
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 24px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        }
+
+        .tab {
+            padding: 12px 24px;
+            color: rgba(255, 255, 255, 0.5);
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 0.9rem;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+
+        .tab:hover {
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .tab.active {
+            color: #00f5d4;
+            border-bottom-color: #00f5d4;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        /* Stats */
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: rgba(20, 20, 35, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 12px;
+            padding: 18px;
+        }
+
+        .stat-card .label {
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 0.75rem;
+        }
+
+        .stat-card .value {
+            font-size: 1.5rem;
+            font-weight: 800;
+            color: white;
+        }
+
+        /* Table */
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.85rem;
+        }
+
+        .data-table th,
+        .data-table td {
+            padding: 10px 8px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .data-table th {
+            color: rgba(255, 255, 255, 0.5);
+            font-weight: 600;
+            position: sticky;
+            top: 0;
+            background: rgba(10, 10, 20, 0.95);
+        }
+
+        .data-table td {
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .data-table tr:hover {
+            background: rgba(255, 255, 255, 0.03);
+        }
+
+        .badge {
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 0.7rem;
+            font-weight: 600;
+        }
+
+        .badge-active {
+            background: rgba(0, 245, 212, 0.15);
+            color: #00f5d4;
+        }
+
+        .badge-suspended {
+            background: rgba(255, 107, 107, 0.15);
+            color: #ff6b6b;
+        }
+
+        .badge-paid {
+            background: rgba(0, 245, 212, 0.15);
+            color: #00f5d4;
+        }
+
+        .badge-pending {
+            background: rgba(255, 193, 7, 0.15);
+            color: #ffc107;
+        }
+
+        .badge-admin {
+            background: rgba(123, 44, 191, 0.2);
+            color: #b68fe8;
+        }
+
+        .badge-user {
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        /* Toolbar */
+        .toolbar {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .toolbar input,
+        .toolbar select {
+            padding: 8px 12px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.06);
+            color: white;
+            font-size: 0.85rem;
+            font-family: inherit;
+            outline: none;
+        }
+
+        .toolbar input:focus,
+        .toolbar select:focus {
+            border-color: rgba(123, 44, 191, 0.5);
+        }
+
+        .toolbar select option {
+            background: #1a1a2e;
+        }
+
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 16px;
+        }
+
+        .pagination button {
+            padding: 6px 14px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.04);
+            color: rgba(255, 255, 255, 0.7);
+            cursor: pointer;
+            font-family: inherit;
+        }
+
+        .pagination button.active,
+        .pagination button:hover {
+            background: rgba(123, 44, 191, 0.2);
+            border-color: rgba(123, 44, 191, 0.4);
+            color: white;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.3;
+            cursor: default;
+        }
+
+        /* Modal */
+        .modal-overlay {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.6);
+            z-index: 100;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .modal {
+            background: #1a1a2e;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 16px;
+            padding: 28px;
+            width: 90%;
+            max-width: 480px;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal h3 {
+            color: white;
+            margin-bottom: 20px;
+            font-size: 1.1rem;
+        }
+
+        .modal .form-group {
+            margin-bottom: 14px;
+        }
+
+        .modal .form-group label {
+            display: block;
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.85rem;
+            margin-bottom: 4px;
+        }
+
+        .modal .form-group input,
+        .modal .form-group select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.06);
+            color: white;
+            font-family: inherit;
+            font-size: 0.9rem;
+            outline: none;
+        }
+
+        .modal .form-group select option {
+            background: #1a1a2e;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="admin-container">
+        <div class="top-bar">
+            <h1>⚙️ 管理后台</h1>
+            <div class="nav-links"><a href="/">控制台</a><a href="user-center.html">用户中心</a></div>
+        </div>
+
+        <!-- Stats -->
+        <div class="stats-row" id="statsRow">
+            <div class="stat-card">
+                <div class="label">用户数</div>
+                <div class="value" id="statUsers">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">房间数</div>
+                <div class="value" id="statRooms">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">活跃房间</div>
+                <div class="value" id="statActive">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">订单数</div>
+                <div class="value" id="statOrders">-</div>
+            </div>
+            <div class="stat-card">
+                <div class="label">总收入</div>
+                <div class="value" id="statRevenue">-</div>
+            </div>
+        </div>
+
+        <!-- Tabs -->
+        <div class="tabs">
+            <div class="tab active" onclick="switchTab('users')">👥 用户管理</div>
+            <div class="tab" onclick="switchTab('orders')">📋 订单管理</div>
+        </div>
+
+        <!-- Users Tab -->
+        <div class="tab-content active" id="tab-users">
+            <div class="toolbar">
+                <input type="text" id="userSearch" placeholder="搜索邮箱/昵称..." style="width:220px;"
+                    onkeydown="if(event.key==='Enter')loadUsers()">
+                <button class="btn btn-outline btn-sm" onclick="loadUsers()">搜索</button>
+            </div>
+            <div class="glass-card" style="overflow-x:auto;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>邮箱</th>
+                            <th>昵称</th>
+                            <th>角色</th>
+                            <th>余额</th>
+                            <th>套餐</th>
+                            <th>房间</th>
+                            <th>状态</th>
+                            <th>注册于</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="userTableBody">
+                        <tr>
+                            <td colspan="10" style="text-align:center;color:rgba(255,255,255,0.4);">加载中...</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="pagination" id="userPagination"></div>
+            </div>
+        </div>
+
+        <!-- Orders Tab -->
+        <div class="tab-content" id="tab-orders">
+            <div class="toolbar">
+                <input type="text" id="orderSearch" placeholder="搜索订单号/邮箱..." style="width:220px;"
+                    onkeydown="if(event.key==='Enter')loadOrders()">
+                <select id="orderStatus" onchange="loadOrders()">
+                    <option value="">全部状态</option>
+                    <option value="paid">已支付</option>
+                    <option value="pending">待支付</option>
+                    <option value="failed">失败</option>
+                    <option value="refunded">已退款</option>
+                </select>
+                <button class="btn btn-outline btn-sm" onclick="loadOrders()">搜索</button>
+            </div>
+            <div class="glass-card" style="overflow-x:auto;">
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>订单号</th>
+                            <th>用户</th>
+                            <th>金额</th>
+                            <th>方式</th>
+                            <th>状态</th>
+                            <th>时间</th>
+                            <th>操作</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orderTableBody">
+                        <tr>
+                            <td colspan="7" style="text-align:center;color:rgba(255,255,255,0.4);">加载中...</td>
+                        </tr>
+                    </tbody>
+                </table>
+                <div class="pagination" id="orderPagination"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Edit Modal -->
+    <div class="modal-overlay" id="userModal">
+        <div class="modal">
+            <h3 id="modalTitle">编辑用户</h3>
+            <input type="hidden" id="modalUserId">
+            <div class="form-group"><label>角色</label><select id="modalRole">
+                    <option value="user">普通用户</option>
+                    <option value="admin">管理员</option>
+                </select></div>
+            <div class="form-group"><label>状态</label><select id="modalStatus">
+                    <option value="active">正常</option>
+                    <option value="suspended">停用</option>
+                </select></div>
+            <hr style="border-color:rgba(255,255,255,0.06);margin:16px 0;">
+            <div class="form-group"><label>调整余额 (元，正数=加，负数=减)</label><input type="number" id="modalBalanceAdj"
+                    placeholder="0" step="0.01"></div>
+            <div class="form-group"><label>调整原因</label><input type="text" id="modalBalanceReason" placeholder="手动调整">
+            </div>
+            <hr style="border-color:rgba(255,255,255,0.06);margin:16px 0;">
+            <div class="form-group"><label>重置密码 (留空不修改)</label><input type="text" id="modalNewPwd"
+                    placeholder="新密码（至少6位）"></div>
+            <hr style="border-color:rgba(255,255,255,0.06);margin:16px 0;">
+            <div class="form-group"><label>设置套餐</label><select id="modalPlan">
+                    <option value="">不修改</option>
+                </select></div>
+            <div class="form-group"><label>有效天数</label><input type="number" id="modalPlanDays" value="30" min="1"></div>
+            <div class="modal-actions">
+                <button class="btn btn-primary btn-sm" onclick="saveUser()">保存</button>
+                <button class="btn btn-outline btn-sm" onclick="closeModal('userModal')">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('accessToken');
+        if (!token) { window.location.href = 'login.html'; }
+
+        let userPage = 1, orderPage = 1;
+
+        function fmt(cents) { return cents === 0 ? '¥0' : '¥' + (cents / 100).toFixed(cents % 100 === 0 ? 0 : 2); }
+        function fmtDate(d) { return d ? new Date(d).toLocaleDateString('zh-CN') : '-'; }
+
+        async function apiFetch(url, opts = {}) {
+            const res = await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...opts.headers } });
+            if (res.status === 401) { window.location.href = 'login.html'; }
+            if (res.status === 403) { alert('无管理员权限'); window.location.href = '/'; }
+            return res;
+        }
+
+        function switchTab(name) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            event.target.classList.add('active');
+            document.getElementById('tab-' + name).classList.add('active');
+            if (name === 'orders') loadOrders();
+        }
+
+        function closeModal(id) { document.getElementById(id).classList.remove('show'); }
+
+        // ---- Stats ----
+        async function loadStats() {
+            try {
+                const res = await apiFetch('/api/admin/stats');
+                const d = await res.json();
+                document.getElementById('statUsers').textContent = d.totalUsers;
+                document.getElementById('statRooms').textContent = d.totalRooms;
+                document.getElementById('statActive').textContent = d.activeRooms;
+                document.getElementById('statOrders').textContent = d.totalOrders;
+                document.getElementById('statRevenue').textContent = fmt(d.totalRevenue);
+            } catch { }
+        }
+
+        // ---- Users ----
+        async function loadUsers() {
+            try {
+                const search = document.getElementById('userSearch').value;
+                const res = await apiFetch(`/api/admin/users?page=${userPage}&limit=20&search=${encodeURIComponent(search)}`);
+                const d = await res.json();
+
+                const tbody = document.getElementById('userTableBody');
+                if (!d.data || d.data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:rgba(255,255,255,0.4);">无数据</td></tr>';
+                } else {
+                    tbody.innerHTML = d.data.map(u => `<tr>
+                        <td>${u.id}</td>
+                        <td>${u.email}</td>
+                        <td>${u.nickname || '-'}</td>
+                        <td><span class="badge badge-${u.role}">${u.role}</span></td>
+                        <td>${fmt(u.balance || 0)}</td>
+                        <td>${u.plan_name || '免费版'}</td>
+                        <td>${u.room_count || 0}</td>
+                        <td><span class="badge badge-${u.status}">${u.status === 'active' ? '正常' : '停用'}</span></td>
+                        <td>${fmtDate(u.created_at)}</td>
+                        <td><button class="btn btn-ghost btn-sm" onclick="editUser(${u.id},'${u.role}','${u.status}')">编辑</button></td>
+                    </tr>`).join('');
+                }
+
+                renderPagination('userPagination', d.pagination, p => { userPage = p; loadUsers(); });
+            } catch (err) {
+                console.error('Load users error:', err);
+            }
+        }
+
+        function editUser(id, role, status) {
+            document.getElementById('modalUserId').value = id;
+            document.getElementById('modalRole').value = role;
+            document.getElementById('modalStatus').value = status;
+            document.getElementById('modalBalanceAdj').value = '';
+            document.getElementById('modalBalanceReason').value = '';
+            document.getElementById('modalNewPwd').value = '';
+            document.getElementById('modalPlan').value = '';
+            document.getElementById('modalPlanDays').value = 30;
+            document.getElementById('modalTitle').textContent = `编辑用户 #${id}`;
+            document.getElementById('userModal').classList.add('show');
+        }
+
+        async function saveUser() {
+            const id = document.getElementById('modalUserId').value;
+            try {
+                // 1. Update role/status
+                await apiFetch(`/api/admin/users/${id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify({
+                        role: document.getElementById('modalRole').value,
+                        status: document.getElementById('modalStatus').value
+                    })
+                });
+
+                // 2. Adjust balance if specified
+                const adjYuan = parseFloat(document.getElementById('modalBalanceAdj').value);
+                if (adjYuan && adjYuan !== 0) {
+                    const adjCents = Math.round(adjYuan * 100);
+                    await apiFetch(`/api/admin/users/${id}/adjust-balance`, {
+                        method: 'POST',
+                        body: JSON.stringify({ amount: adjCents, reason: document.getElementById('modalBalanceReason').value })
+                    });
+                }
+
+                // 3. Reset password if specified
+                const newPwd = document.getElementById('modalNewPwd').value.trim();
+                if (newPwd) {
+                    const r = await apiFetch(`/api/admin/users/${id}/reset-password`, {
+                        method: 'POST',
+                        body: JSON.stringify({ newPassword: newPwd })
+                    });
+                    const d = await r.json();
+                    if (!r.ok) throw new Error(d.error);
+                }
+
+                // 4. Set subscription if specified
+                const planCode = document.getElementById('modalPlan').value;
+                if (planCode) {
+                    await apiFetch(`/api/admin/users/${id}/set-subscription`, {
+                        method: 'POST',
+                        body: JSON.stringify({ planCode, durationDays: parseInt(document.getElementById('modalPlanDays').value) || 30 })
+                    });
+                }
+
+                closeModal('userModal');
+                loadUsers();
+                loadStats();
+            } catch (err) {
+                alert('保存失败: ' + err.message);
+            }
+        }
+
+        // ---- Orders ----
+        async function loadOrders() {
+            try {
+                const search = document.getElementById('orderSearch').value;
+                const status = document.getElementById('orderStatus').value;
+                const res = await apiFetch(`/api/admin/orders?page=${orderPage}&limit=20&search=${encodeURIComponent(search)}&status=${status}`);
+                const d = await res.json();
+
+                const tbody = document.getElementById('orderTableBody');
+                if (!d.data || d.data.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:rgba(255,255,255,0.4);">无数据</td></tr>';
+                } else {
+                    const statusMap = { paid: '已支付', pending: '待支付', failed: '失败', refunded: '已退款' };
+                    tbody.innerHTML = d.data.map(o => `<tr>
+                        <td style="font-size:0.75rem;">${o.order_no}</td>
+                        <td>${o.user_email || '-'}</td>
+                        <td>${fmt(o.amount)}</td>
+                        <td>${o.payment_method || '-'}</td>
+                        <td><span class="badge badge-${o.status}">${statusMap[o.status] || o.status}</span></td>
+                        <td>${fmtDate(o.created_at)}</td>
+                        <td>${o.status === 'pending' ? `<button class="btn btn-ghost btn-sm" onclick="updateOrderStatus(${o.id},'paid')">标记已付</button>` : ''}</td>
+                    </tr>`).join('');
+                }
+
+                renderPagination('orderPagination', d.pagination, p => { orderPage = p; loadOrders(); });
+            } catch (err) { console.error('Load orders error:', err); }
+        }
+
+        async function updateOrderStatus(id, status) {
+            if (!confirm(`确认将订单标记为"${status}"？`)) return;
+            try {
+                await apiFetch(`/api/admin/orders/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
+                loadOrders();
+                loadStats();
+            } catch (err) { alert(err.message); }
+        }
+
+        // ---- Pagination helper ----
+        function renderPagination(elemId, pg, onClick) {
+            if (!pg || pg.totalPages <= 1) { document.getElementById(elemId).innerHTML = ''; return; }
+            let html = '';
+            html += `<button ${pg.page <= 1 ? 'disabled' : ''} onclick="arguments[0].stopPropagation()">上一页</button>`;
+            for (let i = 1; i <= pg.totalPages && i <= 10; i++) {
+                html += `<button class="${i === pg.page ? 'active' : ''}">${i}</button>`;
+            }
+            html += `<button ${pg.page >= pg.totalPages ? 'disabled' : ''}>下一页</button>`;
+            const div = document.getElementById(elemId);
+            div.innerHTML = html;
+            div.querySelectorAll('button').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const text = btn.textContent;
+                    if (text === '上一页') onClick(pg.page - 1);
+                    else if (text === '下一页') onClick(pg.page + 1);
+                    else onClick(parseInt(text));
+                });
+            });
+        }
+
+        // ---- Load plans for the modal dropdown ----
+        async function loadPlans() {
+            try {
+                const res = await apiFetch('/api/admin/plans');
+                const plans = await res.json();
+                const select = document.getElementById('modalPlan');
+                plans.forEach(p => {
+                    const opt = document.createElement('option');
+                    opt.value = p.code;
+                    opt.textContent = `${p.name} (${p.room_limit === -1 ? '无限' : p.room_limit}间)`;
+                    select.appendChild(opt);
+                });
+            } catch { }
+        }
+
+        // Init
+        loadStats();
+        loadUsers();
+        loadPlans();
+    </script>
+</body>
+
+</html>

@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户中心 - TikTok Monitor</title>
+    <link rel="stylesheet" href="landing.css">
+    <link rel="stylesheet" href="auth.css">
+    <style>
+        .dashboard {
+            max-width: 960px;
+            margin: 0 auto;
+            padding: 40px 20px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .top-bar {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 32px;
+        }
+
+        .top-bar h1 {
+            font-size: 1.75rem;
+            font-weight: 800;
+            color: white;
+        }
+
+        .top-bar .nav-links {
+            display: flex;
+            gap: 16px;
+        }
+
+        .top-bar .nav-links a {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.875rem;
+        }
+
+        .top-bar .nav-links a:hover {
+            color: white;
+        }
+
+        .stats-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 32px;
+        }
+
+        .stat-card {
+            background: rgba(20, 20, 35, 0.8);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 14px;
+            padding: 24px;
+        }
+
+        .stat-card .label {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.8rem;
+            margin-bottom: 4px;
+        }
+
+        .stat-card .value {
+            font-size: 1.75rem;
+            font-weight: 800;
+            color: white;
+        }
+
+        .stat-card .value.accent {
+            color: #00f5d4;
+        }
+
+        .stat-card .sub {
+            color: rgba(255, 255, 255, 0.4);
+            font-size: 0.8rem;
+            margin-top: 4px;
+        }
+
+        .section {
+            margin-bottom: 32px;
+        }
+
+        .section-title {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: white;
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .recharge-amounts {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .recharge-amounts button {
+            padding: 10px 20px;
+            border-radius: 10px;
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            background: rgba(255, 255, 255, 0.06);
+            color: white;
+            cursor: pointer;
+            font-size: 0.9rem;
+            font-weight: 600;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+
+        .recharge-amounts button:hover,
+        .recharge-amounts button.active {
+            border-color: #00f5d4;
+            background: rgba(0, 245, 212, 0.1);
+            color: #00f5d4;
+        }
+
+        .pay-methods {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 16px;
+        }
+
+        .pay-methods button {
+            padding: 8px 16px;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.04);
+            color: rgba(255, 255, 255, 0.7);
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-family: inherit;
+            transition: all 0.2s;
+        }
+
+        .pay-methods button:hover,
+        .pay-methods button.active {
+            border-color: #7b2cbf;
+            background: rgba(123, 44, 191, 0.15);
+            color: white;
+        }
+
+        .order-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .order-table th,
+        .order-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+            font-size: 0.85rem;
+        }
+
+        .order-table th {
+            color: rgba(255, 255, 255, 0.5);
+            font-weight: 600;
+        }
+
+        .order-table td {
+            color: rgba(255, 255, 255, 0.8);
+        }
+
+        .badge {
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .badge-paid {
+            background: rgba(0, 245, 212, 0.15);
+            color: #00f5d4;
+        }
+
+        .badge-pending {
+            background: rgba(255, 193, 7, 0.15);
+            color: #ffc107;
+        }
+
+        .badge-active {
+            background: rgba(0, 245, 212, 0.15);
+            color: #00f5d4;
+        }
+
+        .badge-expired {
+            background: rgba(255, 255, 255, 0.08);
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .addon-list {
+            display: grid;
+            gap: 10px;
+        }
+
+        .addon-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 10px;
+            padding: 14px 16px;
+        }
+
+        .addon-item .name {
+            font-weight: 600;
+            color: white;
+        }
+
+        .addon-item .meta {
+            color: rgba(255, 255, 255, 0.5);
+            font-size: 0.8rem;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 32px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .balance-log {
+            max-height: 240px;
+            overflow-y: auto;
+        }
+
+        .notif-list {
+            display: grid;
+            gap: 8px;
+            max-height: 320px;
+            overflow-y: auto;
+        }
+
+        .notif-item {
+            padding: 12px 16px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .notif-item.unread {
+            border-color: rgba(0, 245, 212, 0.3);
+            background: rgba(0, 245, 212, 0.05);
+        }
+
+        .notif-item .notif-title {
+            font-weight: 600;
+            color: white;
+            font-size: 0.9rem;
+        }
+
+        .notif-item .notif-content {
+            color: rgba(255, 255, 255, 0.6);
+            font-size: 0.8rem;
+            margin-top: 4px;
+            line-height: 1.4;
+        }
+
+        .notif-item .notif-time {
+            color: rgba(255, 255, 255, 0.3);
+            font-size: 0.75rem;
+            margin-top: 6px;
+        }
+
+        .notif-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .notif-header .mark-read {
+            font-size: 0.8rem;
+            color: #00f5d4;
+            cursor: pointer;
+            background: none;
+            border: none;
+            font-family: inherit;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="dashboard">
+        <div class="top-bar">
+            <h1>🎵 用户中心</h1>
+            <div class="nav-links">
+                <a href="/">控制台</a>
+                <a href="pricing.html">套餐</a>
+                <a href="profile.html">设置</a>
+                <a href="#" onclick="doLogout()">退出</a>
+            </div>
+        </div>
+
+        <div id="alertBox" class="alert" style="display:none;"></div>
+
+        <!-- Stats Row -->
+        <div class="stats-row">
+            <div class="stat-card">
+                <div class="label">账户余额</div>
+                <div class="value accent" id="balanceValue">-</div>
+                <div class="sub" id="balanceSub"></div>
+            </div>
+            <div class="stat-card">
+                <div class="label">当前套餐</div>
+                <div class="value" id="planValue">-</div>
+                <div class="sub" id="planSub"></div>
+            </div>
+            <div class="stat-card">
+                <div class="label">房间使用</div>
+                <div class="value" id="roomValue">-</div>
+                <div class="sub" id="roomSub"></div>
+            </div>
+        </div>
+
+        <!-- Recharge Section -->
+        <div class="section">
+            <div class="section-title">💰 充值余额</div>
+            <div class="glass-card">
+                <div class="recharge-amounts" id="rechargeAmounts">
+                    <button onclick="selectAmount(1000)">¥10</button>
+                    <button onclick="selectAmount(5000)">¥50</button>
+                    <button onclick="selectAmount(10000)" class="active">¥100</button>
+                    <button onclick="selectAmount(30000)">¥300</button>
+                    <button onclick="selectAmount(50000)">¥500</button>
+                    <button onclick="selectAmount(100000)">¥1000</button>
+                </div>
+                <div class="pay-methods" id="payMethods">
+                    <button class="active" onclick="selectPayMethod('alipay')">支付宝</button>
+                    <button onclick="selectPayMethod('wxpay')">微信支付</button>
+                </div>
+                <button class="btn btn-accent" onclick="doRecharge()" id="rechargeBtn">
+                    <span class="spinner"></span>
+                    <span class="btn-text">立即充值 ¥100</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Subscription Section -->
+        <div class="section">
+            <div class="section-title">💎 我的订阅</div>
+            <div class="glass-card" id="subscriptionCard">加载中...</div>
+        </div>
+
+        <!-- Addons Section -->
+        <div class="section">
+            <div class="section-title">🧩 房间加量包</div>
+            <div class="glass-card">
+                <div id="addonList" class="addon-list">加载中...</div>
+                <div style="margin-top: 12px;">
+                    <a href="pricing.html" class="btn btn-outline btn-sm">购买加量包</a>
+                </div>
+            </div>
+        </div>
+
+        <!-- Notifications Section -->
+        <div class="section">
+            <div class="section-title notif-header">
+                <span>🔔 系统通知 <span id="notifBadge"
+                        style="background:#ff6b6b;color:white;padding:1px 7px;border-radius:10px;font-size:0.7rem;margin-left:6px;display:none;"></span></span>
+                <button class="mark-read" onclick="markAllRead()">全部已读</button>
+            </div>
+            <div class="glass-card">
+                <div id="notifList" class="notif-list">加载中...</div>
+            </div>
+        </div>
+
+        <!-- Balance Log -->
+        <div class="section">
+            <div class="section-title">📊 余额变动</div>
+            <div class="glass-card balance-log">
+                <table class="order-table" id="balanceLogTable">
+                    <thead>
+                        <tr>
+                            <th>时间</th>
+                            <th>类型</th>
+                            <th>金额</th>
+                            <th>余额</th>
+                            <th>说明</th>
+                        </tr>
+                    </thead>
+                    <tbody id="balanceLogBody">
+                        <tr>
+                            <td colspan="5" class="empty-state">加载中...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Orders Section -->
+        <div class="section">
+            <div class="section-title">📋 订单记录</div>
+            <div class="glass-card" style="overflow-x: auto;">
+                <table class="order-table">
+                    <thead>
+                        <tr>
+                            <th>订单号</th>
+                            <th>金额</th>
+                            <th>方式</th>
+                            <th>状态</th>
+                            <th>时间</th>
+                        </tr>
+                    </thead>
+                    <tbody id="orderBody">
+                        <tr>
+                            <td colspan="5" class="empty-state">加载中...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const token = localStorage.getItem('accessToken');
+        if (!token) { window.location.href = 'login.html'; }
+
+        let selectedAmount = 10000;
+        let selectedPayMethod = 'alipay';
+
+        function showAlert(msg, type = 'error') {
+            const box = document.getElementById('alertBox');
+            box.className = `alert alert-${type}`;
+            box.textContent = msg;
+            box.style.display = 'block';
+            setTimeout(() => { box.style.display = 'none'; }, 5000);
+        }
+
+        function fmt(cents) { return cents === 0 ? '¥0' : '¥' + (cents / 100).toFixed(cents % 100 === 0 ? 0 : 2); }
+        function fmtDate(d) { return d ? new Date(d).toLocaleString('zh-CN') : '-'; }
+        function fmtShortDate(d) { return d ? new Date(d).toLocaleDateString('zh-CN') : '-'; }
+
+        const typeNames = { recharge: '充值', purchase: '购买', refund: '退款', admin_adjust: '管理员调整' };
+        const statusBadge = s => `<span class="badge badge-${s}">${({ paid: '已付', pending: '待付', active: '生效', expired: '过期', cancelled: '取消' })[s] || s}</span>`;
+
+        function selectAmount(cents) {
+            selectedAmount = cents;
+            document.querySelectorAll('.recharge-amounts button').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+            document.querySelector('#rechargeBtn .btn-text').textContent = `立即充值 ${fmt(cents)}`;
+        }
+
+        function selectPayMethod(m) {
+            selectedPayMethod = m;
+            document.querySelectorAll('.pay-methods button').forEach(b => b.classList.remove('active'));
+            event.target.classList.add('active');
+        }
+
+        async function apiFetch(url, opts = {}) {
+            const res = await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...opts.headers } });
+            if (res.status === 401) { window.location.href = 'login.html'; return null; }
+            return res;
+        }
+
+        async function loadDashboard() {
+            try {
+                const [subRes, balRes, orderRes, notifRes] = await Promise.all([
+                    apiFetch('/api/subscription'),
+                    apiFetch('/api/payment/balance'),
+                    apiFetch('/api/subscription/orders?limit=10'),
+                    apiFetch('/api/auth/notifications?limit=20')
+                ]);
+
+                const sub = await subRes.json();
+                const bal = await balRes.json();
+                const orders = await orderRes.json();
+                const notifs = await notifRes.json();
+
+                // Stats
+                document.getElementById('balanceValue').textContent = fmt(sub.balance || 0);
+                document.getElementById('planValue').textContent = sub.plan?.name || '免费版';
+                const days = sub.daysRemaining;
+                document.getElementById('planSub').textContent = days >= 0 ? `剩余 ${days} 天` : (sub.plan?.code === 'free' ? '永久有效' : '');
+                const room = sub.roomUsage;
+                document.getElementById('roomValue').textContent = `${room?.current || 0}/${room?.totalLimit === -1 ? '∞' : room?.totalLimit || 1}`;
+                document.getElementById('roomSub').textContent = room?.addonRooms ? `含加量 +${room.addonRooms}` : '';
+
+                // Subscription card
+                const card = document.getElementById('subscriptionCard');
+                if (!sub.plan || sub.plan?.code === 'free' || sub.plan?.code === 'none') {
+                    card.innerHTML = `<p style="color:rgba(255,255,255,0.6);">当前未订阅任何套餐，<a href="pricing.html">选择套餐</a>开始使用。</p>`;
+                } else {
+                    card.innerHTML = `
+                        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                            <div>
+                                <strong style="color:white;font-size:1.1rem;">${sub.plan?.name}</strong>
+                                <span style="color:rgba(255,255,255,0.4);margin-left:8px;">${({ monthly: '月付', quarterly: '季付', annual: '年付', free: '免费' })[sub.billingCycle] || sub.billingCycle}</span>
+                            </div>
+                            <div style="color:rgba(255,255,255,0.5);font-size:0.85rem;">${fmtShortDate(sub.startDate)} ~ ${fmtShortDate(sub.endDate)}</div>
+                        </div>
+                        <div style="margin-top:12px;"><a href="pricing.html" class="btn btn-outline btn-sm">升级/续费</a></div>`;
+                }
+
+                // Addons
+                const addonDiv = document.getElementById('addonList');
+                const addons = sub.addons || [];
+                if (addons.length === 0) {
+                    addonDiv.innerHTML = '<div class="empty-state">暂无加量包</div>';
+                } else {
+                    addonDiv.innerHTML = addons.map(a => `
+                        <div class="addon-item">
+                            <div><div class="name">${a.package_name} (+${a.room_count}间)</div>
+                            <div class="meta">到期: ${fmtShortDate(a.end_date)}</div></div>
+                            ${statusBadge(a.status)}
+                        </div>`).join('');
+                }
+
+                // Balance log
+                const logBody = document.getElementById('balanceLogBody');
+                const logs = bal.logs || [];
+                if (logs.length === 0) {
+                    logBody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无记录</td></tr>';
+                } else {
+                    logBody.innerHTML = logs.map(l => `<tr>
+                        <td>${fmtDate(l.created_at)}</td>
+                        <td>${typeNames[l.type] || l.type}</td>
+                        <td style="color:${l.amount > 0 ? '#00f5d4' : '#ff6b6b'}">${l.amount > 0 ? '+' : ''}${fmt(l.amount)}</td>
+                        <td>${fmt(l.balance_after)}</td>
+                        <td>${l.description || '-'}</td>
+                    </tr>`).join('');
+                }
+
+                // Orders
+                const orderBody = document.getElementById('orderBody');
+                const ords = orders.orders || [];
+                if (ords.length === 0) {
+                    orderBody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无订单</td></tr>';
+                } else {
+                    orderBody.innerHTML = ords.map(o => {
+                        const meta = typeof o.metadata === 'string' ? JSON.parse(o.metadata) : (o.metadata || {});
+                        return `<tr>
+                            <td style="font-size:0.75rem;">${o.order_no}</td>
+                            <td>${fmt(o.amount)}</td>
+                            <td>${o.payment_method || '-'}</td>
+                            <td>${statusBadge(o.status)}</td>
+                            <td>${fmtDate(o.created_at)}</td>
+                        </tr>`;
+                    }).join('');
+                }
+
+                // Notifications
+                const notifDiv = document.getElementById('notifList');
+                const notifItems = notifs.data || [];
+                const unreadCount = notifItems.filter(n => !n.isRead).length;
+                const badge = document.getElementById('notifBadge');
+                if (unreadCount > 0) { badge.textContent = unreadCount; badge.style.display = 'inline'; }
+                else { badge.style.display = 'none'; }
+                if (notifItems.length === 0) {
+                    notifDiv.innerHTML = '<div class="empty-state">暂无通知</div>';
+                } else {
+                    notifDiv.innerHTML = notifItems.map(n => `
+                        <div class="notif-item ${n.isRead ? '' : 'unread'}" onclick="markRead(${n.id}, this)">
+                            <div class="notif-title">${n.title}</div>
+                            <div class="notif-content">${n.content || ''}</div>
+                            <div class="notif-time">${fmtDate(n.createdAt)}</div>
+                        </div>`).join('');
+                }
+            } catch (err) {
+                showAlert('加载失败: ' + err.message);
+            }
+        }
+
+        async function doRecharge() {
+            const btn = document.getElementById('rechargeBtn');
+            btn.classList.add('loading'); btn.disabled = true;
+            try {
+                const res = await apiFetch('/api/payment/recharge', {
+                    method: 'POST',
+                    body: JSON.stringify({ amount: selectedAmount, paymentMethod: selectedPayMethod })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error);
+
+                if (data.payUrl) {
+                    window.open(data.payUrl, '_blank');
+                    showAlert('支付页面已打开，完成支付后请刷新此页面', 'info');
+                } else {
+                    showAlert('充值订单已创建: ' + data.orderNo, 'success');
+                }
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                btn.classList.remove('loading'); btn.disabled = false;
+            }
+        }
+
+        function doLogout() {
+            const rt = localStorage.getItem('refreshToken');
+            fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken: rt }) });
+            localStorage.removeItem('accessToken');
+            localStorage.removeItem('refreshToken');
+            window.location.href = 'login.html';
+        }
+
+        async function markRead(id, el) {
+            await apiFetch(`/api/auth/notifications/${id}/read`, { method: 'PUT' });
+            el.classList.remove('unread');
+        }
+
+        async function markAllRead() {
+            await apiFetch('/api/auth/notifications/read-all', { method: 'PUT' });
+            document.querySelectorAll('.notif-item.unread').forEach(el => el.classList.remove('unread'));
+            document.getElementById('notifBadge').style.display = 'none';
+        }
+
+        loadDashboard();
+    </script>
+</body>
+
+</html>

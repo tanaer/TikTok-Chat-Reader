@@ -93,9 +93,10 @@
             </div>
             <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-50 w-52 p-2 shadow-lg mt-2">
                 <li class="menu-title"><span>账户</span></li>
-                <li><a href="/landing/subscription.html">💎 我的订阅</a></li>
-                <li><a href="/landing/profile.html">👤 个人资料</a></li>
-                ${isAdmin ? '<li class="divider"></li><li class="menu-title"><span>管理员</span></li><li><a href="/admin.html">🔧 系统管理</a></li>' : ''}
+                <li><a href="/landing/user-center.html">🏠 用户中心</a></li>
+                <li><a href="/landing/pricing.html">💎 套餐定价</a></li>
+                <li><a href="/landing/profile.html">👤 个人设置</a></li>
+                ${isAdmin ? '<li class="divider"></li><li class="menu-title"><span>管理</span></li><li><a href="/landing/admin.html">⚙️ 管理后台</a></li>' : ''}
                 <li class="divider"></li>
                 <li><a onclick="logout()" class="text-error">🚪 退出登录</a></li>
             </ul>

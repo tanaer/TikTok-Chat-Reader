@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>个人资料 - TikTok Monitor</title>
+    <link rel="stylesheet" href="landing.css">
+    <link rel="stylesheet" href="auth.css">
+</head>
+
+<body>
+    <div class="auth-container" style="align-items: flex-start; padding-top: 60px;">
+        <div class="auth-card" style="max-width: 520px;">
+            <a href="/"
+                style="display: inline-flex; align-items: center; gap: 6px; color: rgba(255,255,255,0.5); margin-bottom: 24px; font-size: 0.875rem;">
+                ← 返回控制台
+            </a>
+
+            <h2 style="color: white; margin-bottom: 24px; font-size: 1.5rem; font-weight: 700;">个人资料</h2>
+
+            <div id="alertBox" class="alert" style="display: none;"></div>
+
+            <!-- Profile Info Section -->
+            <div class="profile-section">
+                <h3>👤 基本信息</h3>
+                <div id="profileLoader" style="color: rgba(255,255,255,0.4); padding: 20px; text-align: center;">
+                    加载中...
+                </div>
+                <form id="profileForm" style="display: none;" onsubmit="handleUpdateProfile(event)">
+                    <div class="form-group">
+                        <label>邮箱</label>
+                        <input type="email" id="profileEmail" disabled style="opacity: 0.5; cursor: not-allowed;">
+                    </div>
+                    <div class="form-group">
+                        <label for="profileNickname">昵称</label>
+                        <input type="text" id="profileNickname" placeholder="您的显示名称">
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm" id="profileBtn">
+                        <span class="spinner"></span>
+                        <span class="btn-text">保存</span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Change Password Section -->
+            <div class="profile-section">
+                <h3>🔒 修改密码</h3>
+                <form id="passwordForm" onsubmit="handleChangePassword(event)">
+                    <div class="form-group">
+                        <label for="oldPassword">当前密码</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="oldPassword" placeholder="请输入当前密码" required
+                                autocomplete="current-password">
+                            <button type="button" class="password-toggle" onclick="togglePwd('oldPassword')">👁</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="newPassword">新密码</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="newPassword" placeholder="至少6位" required minlength="6"
+                                autocomplete="new-password">
+                            <button type="button" class="password-toggle" onclick="togglePwd('newPassword')">👁</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="confirmNewPassword">确认新密码</label>
+                        <div class="password-wrapper">
+                            <input type="password" id="confirmNewPassword" placeholder="再次输入新密码" required minlength="6"
+                                autocomplete="new-password">
+                            <button type="button" class="password-toggle"
+                                onclick="togglePwd('confirmNewPassword')">👁</button>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm" id="pwdBtn">
+                        <span class="spinner"></span>
+                        <span class="btn-text">修改密码</span>
+                    </button>
+                </form>
+            </div>
+
+            <!-- Subscription Quick View -->
+            <div class="profile-section" style="border-bottom: none;">
+                <h3>💎 账户信息</h3>
+                <div id="subInfo" style="color: rgba(255,255,255,0.5);">加载中...</div>
+                <div style="margin-top: 16px;">
+                    <a href="user-center.html" class="btn btn-outline btn-sm">用户中心</a>
+                    <a href="pricing.html" class="btn btn-ghost btn-sm">升级套餐</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const accessToken = localStorage.getItem('accessToken');
+        if (!accessToken) {
+            window.location.href = 'login.html';
+        }
+
+        function showAlert(message, type = 'error') {
+            const box = document.getElementById('alertBox');
+            box.className = `alert alert-${type}`;
+            box.textContent = message;
+            box.style.display = 'block';
+            setTimeout(() => { box.style.display = 'none'; }, 5000);
+        }
+
+        function togglePwd(fieldId) {
+            const input = document.getElementById(fieldId);
+            input.type = input.type === 'password' ? 'text' : 'password';
+        }
+
+        // Load user profile
+        async function loadProfile() {
+            try {
+                const res = await fetch('/api/auth/me', {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                if (!res.ok) {
+                    if (res.status === 401) { window.location.href = 'login.html'; return; }
+                    throw new Error('加载失败');
+                }
+                const user = await res.json();
+
+                document.getElementById('profileEmail').value = user.email;
+                document.getElementById('profileNickname').value = user.nickname || '';
+                document.getElementById('profileForm').style.display = 'block';
+                document.getElementById('profileLoader').style.display = 'none';
+            } catch (err) {
+                document.getElementById('profileLoader').textContent = '加载失败: ' + err.message;
+            }
+        }
+
+        // Load subscription info
+        async function loadSubscription() {
+            try {
+                const res = await fetch('/api/subscription', {
+                    headers: { 'Authorization': `Bearer ${accessToken}` }
+                });
+                if (!res.ok) throw new Error('加载失败');
+                const sub = await res.json();
+
+                const planName = sub.plan?.name || '免费版';
+                const rooms = sub.roomUsage
+                    ? `${sub.roomUsage.current}/${sub.roomUsage.totalLimit === -1 ? '∞' : sub.roomUsage.totalLimit}`
+                    : '-';
+                const days = sub.daysRemaining >= 0 ? `${sub.daysRemaining}天` : '永久';
+                const balance = sub.balance || 0;
+                const balanceStr = balance === 0 ? '¥0' : '¥' + (balance / 100).toFixed(balance % 100 === 0 ? 0 : 2);
+
+                document.getElementById('subInfo').innerHTML = `
+                    <div style="display: flex; gap: 24px; flex-wrap: wrap;">
+                        <div><strong>余额:</strong> <span style="color:#00f5d4;">${balanceStr}</span></div>
+                        <div><strong>套餐:</strong> ${planName}</div>
+                        <div><strong>房间:</strong> ${rooms}</div>
+                        <div><strong>剩余:</strong> ${days}</div>
+                    </div>
+                `;
+            } catch {
+                document.getElementById('subInfo').textContent = '无法加载订阅信息';
+            }
+        }
+
+        // Update nickname
+        async function handleUpdateProfile(e) {
+            e.preventDefault();
+            const btn = document.getElementById('profileBtn');
+            btn.classList.add('loading');
+            btn.disabled = true;
+
+            try {
+                const nickname = document.getElementById('profileNickname').value.trim();
+                const res = await fetch('/api/auth/profile', {
+                    method: 'PUT',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({ nickname })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '保存失败');
+                showAlert('昵称已保存', 'success');
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                btn.classList.remove('loading');
+                btn.disabled = false;
+            }
+        }
+
+        // Change password
+        async function handleChangePassword(e) {
+            e.preventDefault();
+            const btn = document.getElementById('pwdBtn');
+
+            const oldPassword = document.getElementById('oldPassword').value;
+            const newPassword = document.getElementById('newPassword').value;
+            const confirmNew = document.getElementById('confirmNewPassword').value;
+
+            if (newPassword !== confirmNew) {
+                showAlert('两次输入的新密码不一致');
+                return;
+            }
+
+            btn.classList.add('loading');
+            btn.disabled = true;
+
+            try {
+                const res = await fetch('/api/auth/change-password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${accessToken}`
+                    },
+                    body: JSON.stringify({ oldPassword, newPassword })
+                });
+
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '修改失败');
+
+                showAlert('密码修改成功，请重新登录', 'success');
+
+                // Clear tokens and redirect
+                setTimeout(() => {
+                    localStorage.removeItem('accessToken');
+                    localStorage.removeItem('refreshToken');
+                    window.location.href = 'login.html';
+                }, 1500);
+            } catch (err) {
+                showAlert(err.message);
+            } finally {
+                btn.classList.remove('loading');
+                btn.disabled = false;
+            }
+        }
+
+        // Initialize
+        loadProfile();
+        loadSubscription();
+    </script>
+</body>
+
+</html>

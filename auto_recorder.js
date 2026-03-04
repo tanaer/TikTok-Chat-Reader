@@ -354,8 +354,8 @@ class AutoRecorder {
 
         console.log('[AutoRecorder] Checking for live rooms...');
 
-        // Get all rooms from DB (no pagination needed for auto-monitor)
-        const roomsResult = await manager.getRooms({ limit: 9999 });
+        // Get rooms that should be monitored (has active subscribers or legacy admin rooms)
+        const roomsResult = await manager.getActiveMonitorRooms();
         const rooms = roomsResult.data || [];
 
         // Check global Auto Monitor setting (default to 'true' if not set)

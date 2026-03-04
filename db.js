@@ -142,6 +142,9 @@ async function initDb() {
         // Performance optimization: functional index for activeHour filtering in getTopGifters
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_timestamp_hour ON event(EXTRACT(HOUR FROM timestamp))`);
 
+        // Performance optimization: partial index for member events (dramatically improves getRoomEntryStats)
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_member_timestamp ON event(timestamp) WHERE type = 'member'`);
+
         // Migrations for new columns
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS language TEXT DEFAULT '中文'`);
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 0`);
@@ -195,9 +198,13 @@ async function initDb() {
                 top_room_id TEXT,
                 top_room_value BIGINT DEFAULT 0,
                 last_active TIMESTAMP,
+                top_gifts_json TEXT,
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         `);
+        // Migration: Add new column if it doesn't exist
+        await pool.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS top_gifts_json TEXT`);
+
         // Indexes for fast sorting on user_stats columns
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_gift ON user_stats(total_gift_value DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_room_count ON user_stats(room_count)`);

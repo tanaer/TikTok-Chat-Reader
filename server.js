@@ -12,6 +12,7 @@ const { manager } = require('./manager');
 const { AutoRecorder } = require('./auto_recorder');
 const recordingManager = require('./recording_manager');
 const ffmpegManager = require('./utils/ffmpeg_manager');
+const { startCronJobs } = require('./cron_jobs');
 
 
 const app = express();
@@ -21,11 +22,21 @@ const httpServer = createServer(app);
 const autoRecorder = new AutoRecorder();
 autoRecorder.setRecordingManager(recordingManager);
 recordingManager.startMonitoring(); // Start stall detection for recordings
+startCronJobs(); // Start background cron jobs (expiry, auto-renew, warnings)
 
 // Enable CORS & JSON parsing
 // Enable CORS & JSON parsing
 app.use(express.json());
 app.use(express.static('public')); // Serve static files first for performance
+
+// ========================
+// API Route Modules
+// ========================
+app.use('/api/auth', require('./auth/routes'));
+app.use('/api/subscription', require('./api/subscription'));
+app.use('/api/payment', require('./api/payment'));
+app.use('/api/admin', require('./api/admin'));
+app.use('/api/user', require('./api/user_rooms'));
 
 const io = new Server(httpServer, {
     cors: {
