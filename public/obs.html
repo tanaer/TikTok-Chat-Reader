@@ -1,21 +1,30 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dracula">
 
 <head>
     <meta charset="UTF-8">
     <meta http-equiv="X-UA-Compatible" content="IE=edge">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OBS Overlay</title>
+    <title>OBS Overlay - TikTok Monitor</title>
+
+    <!-- Tailwind + DaisyUI -->
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
 
     <link rel="stylesheet" href="style.css">
 
     <style>
         body {
+            background-color: transparent !important;
             min-width: 200px !important;
+            margin: 0;
+            padding: 8px;
+            font-family: inherit;
         }
 
         .usernamelink {
-            color: rgb(102, 143, 217) !important;
+            color: oklch(var(--p)) !important;
+            font-weight: 600;
         }
 
         ::-webkit-scrollbar {
@@ -23,13 +32,46 @@
             height: 0px;
         }
 
-        .eventcontainer > div {
-            margin-top: 5px;
+        .eventcontainer>div {
+            margin-top: 6px;
+            padding: 4px 8px;
+            background-color: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(4px);
+            border-radius: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            animation: slideIn 0.3s ease-out;
+        }
+
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateX(-10px);
+            }
+
+            to {
+                opacity: 1;
+                transform: translateX(0);
+            }
+        }
+
+        .splitstatetable {
+            width: 100%;
+            margin-bottom: 10px;
+        }
+
+        #stateText {
+            font-family: monospace;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.8rem;
         }
     </style>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js" crossorigin="anonymous"
+        referrerpolicy="no-referrer"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js" crossorigin="anonymous"
+        referrerpolicy="no-referrer"></script>
 
     <script>
         window.settings = Object.fromEntries(new URLSearchParams(location.search));
@@ -40,7 +82,7 @@
             }
 
             if (window.settings.bgColor) {
-                $('body').css('background-color', window.settings.bgColor);
+                $('body').css('background-color', window.settings.bgColor + ' !important');
             }
 
             if (window.settings.fontSize) {
@@ -53,20 +95,20 @@
     <script src="app.js"></script>
 </head>
 
-<body>
+<body class="text-base-content">
 
     <table class="splitstatetable">
         <tr>
             <td>
-                <pre id="stateText"></pre>
+                <pre id="stateText" class="text-info">Connecting...</pre>
             </td>
             <td>
-                <div id="roomStats"></div>
+                <div id="roomStats" class="text-xs text-right opacity-80"></div>
             </td>
         </tr>
     </table>
 
-    <div class="eventcontainer">
+    <div class="eventcontainer flex flex-col gap-1">
     </div>
 </body>
 

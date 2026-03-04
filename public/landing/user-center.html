@@ -1,423 +1,310 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dracula">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>用户中心 - TikTok Monitor</title>
-    <link rel="stylesheet" href="landing.css">
-    <link rel="stylesheet" href="auth.css">
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .dashboard {
-            max-width: 960px;
-            margin: 0 auto;
-            padding: 40px 20px;
-            position: relative;
-            z-index: 1;
-        }
-
-        .top-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 32px;
-        }
-
-        .top-bar h1 {
-            font-size: 1.75rem;
-            font-weight: 800;
-            color: white;
-        }
-
-        .top-bar .nav-links {
-            display: flex;
-            gap: 16px;
-        }
-
-        .top-bar .nav-links a {
-            color: rgba(255, 255, 255, 0.6);
-            font-size: 0.875rem;
-        }
-
-        .top-bar .nav-links a:hover {
-            color: white;
-        }
-
-        .stats-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 16px;
-            margin-bottom: 32px;
-        }
-
-        .stat-card {
-            background: rgba(20, 20, 35, 0.8);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 14px;
-            padding: 24px;
-        }
-
-        .stat-card .label {
-            color: rgba(255, 255, 255, 0.5);
-            font-size: 0.8rem;
-            margin-bottom: 4px;
-        }
-
-        .stat-card .value {
-            font-size: 1.75rem;
-            font-weight: 800;
-            color: white;
-        }
-
-        .stat-card .value.accent {
-            color: #00f5d4;
-        }
-
-        .stat-card .sub {
-            color: rgba(255, 255, 255, 0.4);
-            font-size: 0.8rem;
-            margin-top: 4px;
-        }
-
-        .section {
-            margin-bottom: 32px;
-        }
-
-        .section-title {
-            font-size: 1.15rem;
-            font-weight: 700;
-            color: white;
-            margin-bottom: 16px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .recharge-amounts {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 16px;
-        }
-
-        .recharge-amounts button {
-            padding: 10px 20px;
-            border-radius: 10px;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-            background: rgba(255, 255, 255, 0.06);
-            color: white;
-            cursor: pointer;
-            font-size: 0.9rem;
-            font-weight: 600;
-            font-family: inherit;
-            transition: all 0.2s;
-        }
-
-        .recharge-amounts button:hover,
-        .recharge-amounts button.active {
-            border-color: #00f5d4;
-            background: rgba(0, 245, 212, 0.1);
-            color: #00f5d4;
-        }
-
-        .pay-methods {
-            display: flex;
-            gap: 10px;
-            margin-bottom: 16px;
-        }
-
-        .pay-methods button {
-            padding: 8px 16px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            background: rgba(255, 255, 255, 0.04);
-            color: rgba(255, 255, 255, 0.7);
-            cursor: pointer;
-            font-size: 0.85rem;
-            font-family: inherit;
-            transition: all 0.2s;
-        }
-
-        .pay-methods button:hover,
-        .pay-methods button.active {
-            border-color: #7b2cbf;
-            background: rgba(123, 44, 191, 0.15);
-            color: white;
-        }
-
-        .order-table {
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
             width: 100%;
-            border-collapse: collapse;
+            height: 100%;
+            background:
+                radial-gradient(ellipse at 80% 20%, rgba(123, 44, 191, 0.12) 0%, transparent 50%),
+                radial-gradient(ellipse at 20% 80%, rgba(0, 245, 212, 0.08) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
         }
 
-        .order-table th,
-        .order-table td {
-            padding: 10px 12px;
-            text-align: left;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-            font-size: 0.85rem;
+        /* Custom scrollbar for tables and lists */
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
         }
 
-        .order-table th {
-            color: rgba(255, 255, 255, 0.5);
-            font-weight: 600;
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 4px;
         }
 
-        .order-table td {
-            color: rgba(255, 255, 255, 0.8);
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
         }
 
-        .badge {
-            padding: 3px 10px;
-            border-radius: 6px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-
-        .badge-paid {
-            background: rgba(0, 245, 212, 0.15);
-            color: #00f5d4;
-        }
-
-        .badge-pending {
-            background: rgba(255, 193, 7, 0.15);
-            color: #ffc107;
-        }
-
-        .badge-active {
-            background: rgba(0, 245, 212, 0.15);
-            color: #00f5d4;
-        }
-
-        .badge-expired {
-            background: rgba(255, 255, 255, 0.08);
-            color: rgba(255, 255, 255, 0.4);
-        }
-
-        .addon-list {
-            display: grid;
-            gap: 10px;
-        }
-
-        .addon-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 10px;
-            padding: 14px 16px;
-        }
-
-        .addon-item .name {
-            font-weight: 600;
-            color: white;
-        }
-
-        .addon-item .meta {
-            color: rgba(255, 255, 255, 0.5);
-            font-size: 0.8rem;
-        }
-
-        .empty-state {
-            text-align: center;
-            padding: 32px;
-            color: rgba(255, 255, 255, 0.4);
-        }
-
-        .balance-log {
-            max-height: 240px;
-            overflow-y: auto;
-        }
-
-        .notif-list {
-            display: grid;
-            gap: 8px;
-            max-height: 320px;
-            overflow-y: auto;
-        }
-
-        .notif-item {
-            padding: 12px 16px;
-            border-radius: 10px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .notif-item.unread {
-            border-color: rgba(0, 245, 212, 0.3);
-            background: rgba(0, 245, 212, 0.05);
-        }
-
-        .notif-item .notif-title {
-            font-weight: 600;
-            color: white;
-            font-size: 0.9rem;
-        }
-
-        .notif-item .notif-content {
-            color: rgba(255, 255, 255, 0.6);
-            font-size: 0.8rem;
-            margin-top: 4px;
-            line-height: 1.4;
-        }
-
-        .notif-item .notif-time {
-            color: rgba(255, 255, 255, 0.3);
-            font-size: 0.75rem;
-            margin-top: 6px;
-        }
-
-        .notif-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .notif-header .mark-read {
-            font-size: 0.8rem;
-            color: #00f5d4;
-            cursor: pointer;
-            background: none;
-            border: none;
-            font-family: inherit;
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
         }
     </style>
 </head>
 
-<body>
-    <div class="dashboard">
-        <div class="top-bar">
-            <h1>🎵 用户中心</h1>
-            <div class="nav-links">
-                <a href="/">控制台</a>
-                <a href="pricing.html">套餐</a>
-                <a href="profile.html">设置</a>
-                <a href="#" onclick="doLogout()">退出</a>
+<body class="min-h-screen text-base-content relative">
+    <div class="max-w-6xl mx-auto px-4 py-8">
+
+        <!-- Top bar -->
+        <div
+            class="navbar bg-base-100/60 backdrop-blur-md rounded-2xl shadow-sm border border-base-content/5 mb-8 px-6">
+            <div class="flex-1">
+                <h1 class="text-xl font-bold flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-primary" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                    </svg>
+                    用户中心
+                </h1>
+            </div>
+            <div class="flex-none gap-2 hidden sm:flex">
+                <a href="/" class="btn btn-ghost btn-sm hover:text-primary transition-colors">控制台</a>
+                <a href="pricing.html" class="btn btn-ghost btn-sm hover:text-primary transition-colors">套餐</a>
+                <a href="profile.html" class="btn btn-ghost btn-sm hover:text-primary transition-colors">设置</a>
+                <button onclick="doLogout()" class="btn btn-ghost btn-sm text-error hover:bg-error/20">退出</button>
+            </div>
+            <!-- Mobile Menu -->
+            <div class="flex-none sm:hidden dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-ghost btn-circle">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                </label>
+                <ul tabindex="0"
+                    class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52 border border-base-content/10">
+                    <li><a href="/">控制台</a></li>
+                    <li><a href="pricing.html">套餐</a></li>
+                    <li><a href="profile.html">设置</a></li>
+                    <li><a onclick="doLogout()" class="text-error">退出</a></li>
+                </ul>
             </div>
         </div>
 
-        <div id="alertBox" class="alert" style="display:none;"></div>
+        <div id="alertBox" class="alert shadow-lg mb-6 hidden font-medium transition-all"></div>
 
-        <!-- Stats Row -->
-        <div class="stats-row">
-            <div class="stat-card">
-                <div class="label">账户余额</div>
-                <div class="value accent" id="balanceValue">-</div>
-                <div class="sub" id="balanceSub"></div>
-            </div>
-            <div class="stat-card">
-                <div class="label">当前套餐</div>
-                <div class="value" id="planValue">-</div>
-                <div class="sub" id="planSub"></div>
-            </div>
-            <div class="stat-card">
-                <div class="label">房间使用</div>
-                <div class="value" id="roomValue">-</div>
-                <div class="sub" id="roomSub"></div>
-            </div>
-        </div>
+        <!-- Main Grid Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-        <!-- Recharge Section -->
-        <div class="section">
-            <div class="section-title">💰 充值余额</div>
-            <div class="glass-card">
-                <div class="recharge-amounts" id="rechargeAmounts">
-                    <button onclick="selectAmount(1000)">¥10</button>
-                    <button onclick="selectAmount(5000)">¥50</button>
-                    <button onclick="selectAmount(10000)" class="active">¥100</button>
-                    <button onclick="selectAmount(30000)">¥300</button>
-                    <button onclick="selectAmount(50000)">¥500</button>
-                    <button onclick="selectAmount(100000)">¥1000</button>
+            <!-- Left Column: Core Actions & Stats -->
+            <div class="lg:col-span-2 space-y-6">
+                <!-- Stats Row -->
+                <div
+                    class="stats stats-vertical sm:stats-horizontal shadow-xl bg-base-100/60 backdrop-blur-md border border-white/5 w-full">
+                    <div class="stat">
+                        <div class="stat-title opacity-70">账户余额</div>
+                        <div class="stat-value text-accent text-3xl" id="balanceValue">-</div>
+                        <div class="stat-desc mt-1 opacity-50" id="balanceSub">可用代金券与充值本金</div>
+                    </div>
+
+                    <div class="stat">
+                        <div class="stat-title opacity-70">当前套餐</div>
+                        <div class="stat-value text-3xl text-primary truncate" id="planValue">-</div>
+                        <div class="stat-desc mt-1 font-medium" id="planSub"></div>
+                    </div>
+
+                    <div class="stat">
+                        <div class="stat-title opacity-70">房间配额使用率</div>
+                        <div class="stat-value text-3xl" id="roomValue">-</div>
+                        <div class="stat-desc mt-1 font-medium text-warning" id="roomSub"></div>
+                    </div>
                 </div>
-                <div class="pay-methods" id="payMethods">
-                    <button class="active" onclick="selectPayMethod('alipay')">支付宝</button>
-                    <button onclick="selectPayMethod('wxpay')">微信支付</button>
+
+                <!-- Recharge Section -->
+                <div class="card bg-base-100/60 backdrop-blur-md shadow-xl border border-white/5">
+                    <div class="card-body">
+                        <h2 class="card-title text-xl mb-4 flex items-center gap-2">
+                            <span class="text-2xl">💳</span> 余额充值
+                        </h2>
+
+                        <div class="mb-5">
+                            <div class="text-sm opacity-60 mb-3">选择充值金额</div>
+                            <div class="flex flex-wrap gap-3" id="rechargeAmounts">
+                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                                    onclick="selectAmount(1000, this)">¥10</button>
+                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                                    onclick="selectAmount(5000, this)">¥50</button>
+                                <button class="btn btn-accent btn-sm shadow-md transition-all active-amount"
+                                    onclick="selectAmount(10000, this)">¥100</button>
+                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                                    onclick="selectAmount(30000, this)">¥300</button>
+                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                                    onclick="selectAmount(50000, this)">¥500</button>
+                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                                    onclick="selectAmount(100000, this)">¥1000</button>
+                            </div>
+                        </div>
+
+                        <div class="mb-6">
+                            <div class="text-sm opacity-60 mb-3">选择支付方式</div>
+                            <div class="flex flex-wrap gap-3" id="payMethods">
+                                <button class="btn btn-outline btn-primary btn-sm active-method shadow-sm"
+                                    onclick="selectPayMethod('alipay', this)">
+                                    <svg viewBox="0 0 1024 1024" class="w-4 h-4 mr-1" fill="currentColor">
+                                        <path
+                                            d="M720.896 525.824c15.872-46.08 24.576-96.256 27.648-150.016l-206.336 0.512c0 0-4.096-78.336-4.096-80.384l230.912 0c21.504 0 38.912-17.408 38.912-38.912s-17.408-38.912-38.912-38.912L540.672 218.112C534.528 153.6 534.528 153.6 534.528 153.6c0-21.504-17.408-38.912-38.912-38.912s-38.912 17.408-38.912 38.912l0 65.536-193.024 0c-21.504 0-38.912 17.408-38.912 38.912s17.408 38.912 38.912 38.912l193.024 0 0 80.384L230.4 376.832c-21.504 0-38.912 17.408-38.912 38.912s17.408 38.912 38.912 38.912L456.704 454.656c-13.824 37.376-32.256 71.68-54.784 103.424-40.96-33.792-88.064-58.88-138.24-73.216-20.48-5.632-41.984 6.144-48.128 26.112-5.632 20.48 6.144 41.984 26.624 48.128 72.704 20.48 139.776 56.32 195.584 104.96-56.32 40.448-120.832 69.632-190.464 85.504-20.992 4.608-34.304 25.088-29.696 46.08 4.096 17.92 19.968 30.208 37.888 30.208 2.56 0 5.632-0.512 8.192-1.024 93.184-21.504 177.664-62.976 250.368-120.32 60.416 46.08 129.024 79.872 201.728 98.304 5.12 1.024 9.728 1.536 14.848 1.536 17.408 0 32.768-11.776 37.376-29.184 5.12-20.992-7.68-42.496-28.672-47.616-56.832-14.336-110.08-40.96-157.696-78.336 43.52-52.224 77.824-112.128 100.352-177.152l87.552 45.056c6.144 3.072 13.312 4.608 19.968 4.608 13.824 0 27.648-7.68 34.304-20.48 9.728-18.944 2.048-43.008-17.408-52.736L720.896 525.824zM503.296 612.864C471.552 562.176 432.128 516.608 387.072 478.72c21.504-32.256 38.912-67.072 50.176-103.424l46.08-0.512C481.28 471.552 489.984 547.328 503.296 612.864z">
+                                        </path>
+                                    </svg>
+                                    支付宝
+                                </button>
+                                <button
+                                    class="btn btn-outline btn-success btn-sm hover:btn-success hover:text-white transition-all"
+                                    onclick="selectPayMethod('wxpay', this)">
+                                    <svg viewBox="0 0 1024 1024" class="w-4 h-4 mr-1" fill="currentColor">
+                                        <path
+                                            d="M699.2 388.9c0-117.8-115.6-213.3-258.1-213.3s-258.1 95.5-258.1 213.3c0 62.6 32.7 118.8 84.1 157.5-6.6 22.3-21.7 65.6-25 76.6-4.5 14.8 11.2 13.8 20.2 8.6 12-7.1 76-46.6 92.2-56.9 27 7.7 55.9 11.9 86.2 11.9 142.1 0 258.5-95.2 258.5-213.1z.1-7.4-.1-14.8-.4-22 0-1.8 0-3.6-.1-5.3-2 1.3-4.1 2.5-6.2 3.7-22.3 12.5-47 22.8-73.6 30.7-3.6 1.1-7.2 2.1-10.9 3.1-40.8 11.1-84.3 17.5-129.9 18.6h-5.5c-30.8 0-60.8-4-89.6-11.7h-1.3c-23-6.1-45-14.2-65.7-24.3-15.5-7.6-30.4-16.1-44.5-25.5-3.6-2.4-7.2-4.9-10.7-7.4-48-34.9-79.6-86.4-86-145 0-1.3-.1-2.7-.1-4 0-142 138-257.6 308-257.6s308 115.6 308 257.6c.1 123.6-104.3 226.7-242.9 252 5.5-3.3 11-6.8 16.4-10.4 12.5-8.4 20.4-8 16.1 7-3.3 11.3-18.1 53-24.9 75.3 49-36.5 81-90.4 81-150.8M312.8 335.5c-19.8 0-35.8-16-35.8-35.8 0-19.8 16-35.8 35.8-35.8s35.8 16 35.8 35.8-16 35.8-35.8 35.8zm256.3 0c-19.8 0-35.8-16-35.8-35.8 0-19.8 16-35.8 35.8-35.8 19.8 0 35.8 16 35.8 35.8 0 19.8-16 35.8-35.8 35.8zm-155.6 94.7c17.5 0 31.7-14.2 31.7-31.7 0-17.5-14.2-31.7-31.7-31.7-17.5 0-31.7 14.2-31.7 31.7 0 17.5 14.2 31.7 31.7 31.7zm184.4 0c17.5 0 31.7-14.2 31.7-31.7s-14.2-31.7-31.7-31.7c-17.5 0-31.7 14.2-31.7 31.7.1 17.5 14.3 31.7 31.7 31.7z">
+                                        </path>
+                                    </svg>
+                                    微信支付
+                                </button>
+                            </div>
+                        </div>
+
+                        <button class="btn btn-accent btn-block shadow-lg hover:scale-[1.01] transition-transform"
+                            onclick="doRecharge()" id="rechargeBtn">
+                            立即充值 <strong id="btnAmountText">¥100</strong>
+                        </button>
+                    </div>
                 </div>
-                <button class="btn btn-accent" onclick="doRecharge()" id="rechargeBtn">
-                    <span class="spinner"></span>
-                    <span class="btn-text">立即充值 ¥100</span>
-                </button>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <!-- Subscription Mini Card -->
+                    <div class="card bg-base-100/60 backdrop-blur-md shadow-xl border border-white/5 h-full">
+                        <div class="card-body p-6">
+                            <h2 class="card-title text-lg flex items-center gap-2 mb-2">
+                                <span class="text-xl">💎</span> 我的订阅
+                            </h2>
+                            <div id="subscriptionCard" class="flex-grow flex flex-col justify-center min-h-[80px]">
+                                <span class="loading loading-dots loading-sm opacity-50"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Addon Packages -->
+                    <div class="card bg-base-100/60 backdrop-blur-md shadow-xl border border-white/5 h-full">
+                        <div class="card-body p-6">
+                            <h2 class="card-title text-lg flex items-center justify-between mb-0">
+                                <span class="flex items-center gap-2"><span class="text-xl">🧩</span> 房间加量包</span>
+                            </h2>
+                            <div id="addonList"
+                                class="flex-grow flex flex-col gap-3 my-4 overflow-y-auto custom-scrollbar max-h-40">
+                                <span class="loading loading-dots loading-sm opacity-50"></span>
+                            </div>
+                            <div class="card-actions justify-end mt-auto">
+                                <a href="pricing.html" class="btn btn-outline btn-sm btn-block">购买或管理加量包</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Orders Table -->
+                <div class="card bg-base-100/50 backdrop-blur-md shadow-xl border border-white/5">
+                    <div class="card-body p-0">
+                        <h2 class="px-6 py-4 text-lg font-bold border-b border-base-content/10 flex items-center gap-2">
+                            <span class="text-xl">📋</span> 订单记录
+                        </h2>
+                        <div class="overflow-x-auto custom-scrollbar">
+                            <table class="table table-zebra table-sm">
+                                <thead>
+                                    <tr class="text-base-content/60 border-b border-base-content/20">
+                                        <th class="pl-6 font-medium">订单号</th>
+                                        <th class="font-medium">金额</th>
+                                        <th class="font-medium">方式</th>
+                                        <th class="font-medium">状态</th>
+                                        <th class="pr-6 font-medium">时间</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="orderBody">
+                                    <tr>
+                                        <td colspan="5" class="text-center py-6 opacity-50">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
             </div>
-        </div>
 
-        <!-- Subscription Section -->
-        <div class="section">
-            <div class="section-title">💎 我的订阅</div>
-            <div class="glass-card" id="subscriptionCard">加载中...</div>
-        </div>
+            <!-- Right Column: Notifications & Logs -->
+            <div class="space-y-6">
+                <!-- Notifications -->
+                <div class="card bg-base-100/70 backdrop-blur-md shadow-xl border border-white/5">
+                    <div class="card-body p-0">
+                        <div
+                            class="px-5 py-4 flex justify-between items-center border-b border-base-content/10 bg-base-200/30 rounded-t-2xl">
+                            <h2 class="font-bold flex items-center gap-2">
+                                <span class="text-xl">🔔</span> 系统通知
+                                <span id="notifBadge"
+                                    class="badge badge-error badge-sm ml-1 hidden border-none text-white shadow-sm"></span>
+                            </h2>
+                            <button class="btn btn-xs btn-ghost text-accent hover:bg-accent/20" onclick="markAllRead()"
+                                id="markAllBtn" style="display:none;">全部已读</button>
+                        </div>
+                        <div id="notifList" class="p-3 space-y-2 overflow-y-auto custom-scrollbar max-h-[400px]">
+                            <div class="py-10 text-center opacity-50 flex justify-center"><span
+                                    class="loading loading-spinner"></span></div>
+                        </div>
+                    </div>
+                </div>
 
-        <!-- Addons Section -->
-        <div class="section">
-            <div class="section-title">🧩 房间加量包</div>
-            <div class="glass-card">
-                <div id="addonList" class="addon-list">加载中...</div>
-                <div style="margin-top: 12px;">
-                    <a href="pricing.html" class="btn btn-outline btn-sm">购买加量包</a>
+                <!-- Balance Log -->
+                <div class="card bg-base-100/50 backdrop-blur-md shadow-xl border border-white/5">
+                    <div class="card-body p-0">
+                        <h2
+                            class="px-5 py-4 font-bold border-b border-base-content/10 flex items-center gap-2 bg-base-200/30 rounded-t-2xl">
+                            <span class="text-xl">📊</span> 余额变动明细
+                        </h2>
+                        <div class="overflow-y-auto custom-scrollbar max-h-[350px]">
+                            <table class="table table-xs">
+                                <thead>
+                                    <tr class="text-base-content/60 sticky top-0 bg-base-100/90 backdrop-blur z-10">
+                                        <th class="pl-5">时间</th>
+                                        <th>金额/结余</th>
+                                        <th class="pr-5">说明</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="balanceLogBody">
+                                    <tr>
+                                        <td colspan="3" class="text-center py-6 opacity-50">加载中...</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </div>
-        </div>
 
-        <!-- Notifications Section -->
-        <div class="section">
-            <div class="section-title notif-header">
-                <span>🔔 系统通知 <span id="notifBadge"
-                        style="background:#ff6b6b;color:white;padding:1px 7px;border-radius:10px;font-size:0.7rem;margin-left:6px;display:none;"></span></span>
-                <button class="mark-read" onclick="markAllRead()">全部已读</button>
-            </div>
-            <div class="glass-card">
-                <div id="notifList" class="notif-list">加载中...</div>
-            </div>
-        </div>
-
-        <!-- Balance Log -->
-        <div class="section">
-            <div class="section-title">📊 余额变动</div>
-            <div class="glass-card balance-log">
-                <table class="order-table" id="balanceLogTable">
-                    <thead>
-                        <tr>
-                            <th>时间</th>
-                            <th>类型</th>
-                            <th>金额</th>
-                            <th>余额</th>
-                            <th>说明</th>
-                        </tr>
-                    </thead>
-                    <tbody id="balanceLogBody">
-                        <tr>
-                            <td colspan="5" class="empty-state">加载中...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Orders Section -->
-        <div class="section">
-            <div class="section-title">📋 订单记录</div>
-            <div class="glass-card" style="overflow-x: auto;">
-                <table class="order-table">
-                    <thead>
-                        <tr>
-                            <th>订单号</th>
-                            <th>金额</th>
-                            <th>方式</th>
-                            <th>状态</th>
-                            <th>时间</th>
-                        </tr>
-                    </thead>
-                    <tbody id="orderBody">
-                        <tr>
-                            <td colspan="5" class="empty-state">加载中...</td>
-                        </tr>
-                    </tbody>
-                </table>
-            </div>
         </div>
     </div>
+
+    <!-- Alert Modal (daisyUI native) -->
+    <dialog id="messageModal" class="modal modal-bottom sm:modal-middle">
+        <div class="modal-box border border-base-content/10">
+            <h3 class="font-bold text-lg flex items-center gap-2" id="modalTitle">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-info" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                提示
+            </h3>
+            <p class="py-4 whitespace-pre-line" id="modalMsg"></p>
+            <div class="modal-action">
+                <form method="dialog" class="flex gap-2 w-full justify-end">
+                    <button class="btn btn-outline opacity-60" id="modalCancelBtn" style="display:none;">取消</button>
+                    <button class="btn btn-primary" id="modalConfirmBtn">确定</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
 
     <script>
         const token = localStorage.getItem('accessToken');
@@ -426,32 +313,84 @@
         let selectedAmount = 10000;
         let selectedPayMethod = 'alipay';
 
+        // Async Modal Function
+        function showModal(title, msg, isConfirm = false, isError = false) {
+            return new Promise(resolve => {
+                const titleIcon = document.querySelector('#modalTitle svg');
+                if (isError) {
+                    titleIcon.classList.replace('text-info', 'text-error');
+                    titleIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />';
+                } else {
+                    titleIcon.classList.replace('text-error', 'text-info');
+                    titleIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />';
+                }
+
+                document.getElementById('modalTitle').innerHTML = titleIcon.outerHTML + `<span>${title}</span>`;
+                document.getElementById('modalMsg').innerText = msg;
+                const cancelBtn = document.getElementById('modalCancelBtn');
+                const confirmBtn = document.getElementById('modalConfirmBtn');
+
+                cancelBtn.style.display = isConfirm ? 'block' : 'none';
+
+                cancelBtn.onclick = () => resolve(false);
+                confirmBtn.onclick = () => resolve(true);
+
+                document.getElementById('messageModal').showModal();
+                document.getElementById('messageModal').addEventListener('close', () => resolve(false), { once: true });
+            });
+        }
+
+        // Inline alert (Toast style at top of screen)
         function showAlert(msg, type = 'error') {
             const box = document.getElementById('alertBox');
-            box.className = `alert alert-${type}`;
-            box.textContent = msg;
-            box.style.display = 'block';
-            setTimeout(() => { box.style.display = 'none'; }, 5000);
+            box.className = `alert alert-${type} shadow-lg mb-6 font-medium transition-all ${type === 'error' ? 'animate-bounce' : ''}`;
+            box.innerHTML = `
+                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${type === 'error' ? 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z' : 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'}" /></svg>
+                <span>${msg}</span>
+            `;
+            box.classList.remove('hidden');
+            setTimeout(() => { box.classList.add('hidden'); }, 4000);
         }
 
         function fmt(cents) { return cents === 0 ? '¥0' : '¥' + (cents / 100).toFixed(cents % 100 === 0 ? 0 : 2); }
-        function fmtDate(d) { return d ? new Date(d).toLocaleString('zh-CN') : '-'; }
-        function fmtShortDate(d) { return d ? new Date(d).toLocaleDateString('zh-CN') : '-'; }
+        function fmtDate(d) { return d ? new Date(d).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }) : '-'; }
+        function fmtShortDate(d) { return d ? new Date(d).toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' }) : '-'; }
 
-        const typeNames = { recharge: '充值', purchase: '购买', refund: '退款', admin_adjust: '管理员调整' };
-        const statusBadge = s => `<span class="badge badge-${s}">${({ paid: '已付', pending: '待付', active: '生效', expired: '过期', cancelled: '取消' })[s] || s}</span>`;
+        const typeNames = { recharge: '充值', purchase: '套餐', refund: '退款', admin_adjust: '后管调整' };
 
-        function selectAmount(cents) {
+        const badgeClasses = {
+            paid: 'badge-success', pending: 'badge-warning', active: 'badge-success',
+            expired: 'badge-ghost opacity-50', cancelled: 'badge-error opacity-70'
+        };
+        const statusNames = { paid: '已付款', pending: '待付', active: '生效中', expired: '过期', cancelled: '已取消' };
+        const statusBadge = s => `<span class="badge ${badgeClasses[s] || 'badge-ghost'} badge-sm font-medium border-base-content/10 shadow-sm">${statusNames[s] || s}</span>`;
+
+        function selectAmount(cents, btnElement) {
             selectedAmount = cents;
-            document.querySelectorAll('.recharge-amounts button').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
-            document.querySelector('#rechargeBtn .btn-text').textContent = `立即充值 ${fmt(cents)}`;
+            document.querySelectorAll('#rechargeAmounts button').forEach(b => {
+                b.classList.remove('btn-accent', 'shadow-md', 'active-amount');
+                b.classList.add('btn-outline');
+            });
+            btnElement.classList.add('btn-accent', 'shadow-md', 'active-amount');
+            btnElement.classList.remove('btn-outline');
+            document.getElementById('btnAmountText').textContent = fmt(cents);
         }
 
-        function selectPayMethod(m) {
+        function selectPayMethod(m, btnElement) {
             selectedPayMethod = m;
-            document.querySelectorAll('.pay-methods button').forEach(b => b.classList.remove('active'));
-            event.target.classList.add('active');
+            document.querySelectorAll('#payMethods button').forEach(b => {
+                b.classList.replace('btn-primary', 'btn-ghost') || b.classList.replace('btn-success', 'btn-ghost');
+                b.classList.remove('border-primary', 'border-success', 'active-method', 'shadow-sm', 'text-white');
+                b.classList.add('btn-outline', 'opacity-60');
+            });
+
+            btnElement.classList.remove('btn-outline', 'btn-ghost', 'opacity-60');
+            btnElement.classList.add('active-method', 'shadow-sm');
+            if (m === 'alipay') {
+                btnElement.classList.add('btn-primary', 'text-white');
+            } else {
+                btnElement.classList.add('btn-success', 'text-white');
+            }
         }
 
         async function apiFetch(url, opts = {}) {
@@ -465,50 +404,73 @@
                 const [subRes, balRes, orderRes, notifRes] = await Promise.all([
                     apiFetch('/api/subscription'),
                     apiFetch('/api/payment/balance'),
-                    apiFetch('/api/subscription/orders?limit=10'),
-                    apiFetch('/api/auth/notifications?limit=20')
+                    apiFetch('/api/subscription/orders?limit=15'),
+                    apiFetch('/api/auth/notifications?limit=25')
                 ]);
+
+                if (!subRes || !balRes || !orderRes || !notifRes) return; // Prevent JS errors if 401
 
                 const sub = await subRes.json();
                 const bal = await balRes.json();
                 const orders = await orderRes.json();
                 const notifs = await notifRes.json();
 
-                // Stats
+                // Stats Header
                 document.getElementById('balanceValue').textContent = fmt(sub.balance || 0);
                 document.getElementById('planValue').textContent = sub.plan?.name || '免费版';
+
                 const days = sub.daysRemaining;
-                document.getElementById('planSub').textContent = days >= 0 ? `剩余 ${days} 天` : (sub.plan?.code === 'free' ? '永久有效' : '');
+                document.getElementById('planSub').textContent = days >= 0 ? `剩余 ${days} 天` : (sub.plan?.code === 'free' ? '免费权益' : '');
+
                 const room = sub.roomUsage;
                 document.getElementById('roomValue').textContent = `${room?.current || 0}/${room?.totalLimit === -1 ? '∞' : room?.totalLimit || 1}`;
-                document.getElementById('roomSub').textContent = room?.addonRooms ? `含加量 +${room.addonRooms}` : '';
+                if (room?.totalLimit !== -1) {
+                    const percent = Math.min(100, Math.round((room?.current || 0) / (room?.totalLimit || 1) * 100));
+                    document.getElementById('roomSub').innerHTML = `<progress class="progress progress-warning w-24 mt-2" value="${percent}" max="100"></progress> ${room?.addonRooms ? `<br/><span class="text-xs opacity-70">含加购 +${room.addonRooms}</span>` : ''}`;
+                }
 
-                // Subscription card
-                const card = document.getElementById('subscriptionCard');
+                // Subscription mini card
+                const sCard = document.getElementById('subscriptionCard');
                 if (!sub.plan || sub.plan?.code === 'free' || sub.plan?.code === 'none') {
-                    card.innerHTML = `<p style="color:rgba(255,255,255,0.6);">当前未订阅任何套餐，<a href="pricing.html">选择套餐</a>开始使用。</p>`;
+                    sCard.innerHTML = `
+                        <div class="flex flex-col items-center justify-center p-4 text-center">
+                            <div class="w-12 h-12 bg-base-200 rounded-full flex items-center justify-center mb-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg></div>
+                            <p class="text-sm opacity-60 mb-4">当前未订阅高级套餐</p>
+                            <a href="pricing.html" class="btn btn-primary btn-sm rounded-full px-6">浏览所有套餐</a>
+                        </div>`;
                 } else {
-                    card.innerHTML = `
-                        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:12px;">
+                    const cycleNames = { monthly: '月度', quarterly: '季度', annual: '年度', free: '不限' };
+                    sCard.innerHTML = `
+                        <div class="flex justify-between items-start mb-6 w-full">
                             <div>
-                                <strong style="color:white;font-size:1.1rem;">${sub.plan?.name}</strong>
-                                <span style="color:rgba(255,255,255,0.4);margin-left:8px;">${({ monthly: '月付', quarterly: '季付', annual: '年付', free: '免费' })[sub.billingCycle] || sub.billingCycle}</span>
+                                <h3 class="font-bold text-xl text-primary">${sub.plan?.name}</h3>
+                                <div class="badge badge-outline badge-sm mt-1 border-primary/30 text-primary/80">${cycleNames[sub.billingCycle] || sub.billingCycle}周转</div>
                             </div>
-                            <div style="color:rgba(255,255,255,0.5);font-size:0.85rem;">${fmtShortDate(sub.startDate)} ~ ${fmtShortDate(sub.endDate)}</div>
+                            <div class="text-right">
+                                <div class="text-xs opacity-50 font-medium">服务期限</div>
+                                <div class="text-sm">${fmtShortDate(sub.startDate)}<br/><span class="opacity-50 text-xs">至</span> ${fmtShortDate(sub.endDate)}</div>
+                            </div>
                         </div>
-                        <div style="margin-top:12px;"><a href="pricing.html" class="btn btn-outline btn-sm">升级/续费</a></div>`;
+                        <a href="subscription.html" class="btn btn-outline btn-accent btn-sm mt-auto self-end px-6 rounded-lg shadow-sm">续费或管理</a>`;
                 }
 
                 // Addons
                 const addonDiv = document.getElementById('addonList');
-                const addons = sub.addons || [];
-                if (addons.length === 0) {
-                    addonDiv.innerHTML = '<div class="empty-state">暂无加量包</div>';
+                const pAddons = sub.addons || [];
+                if (pAddons.length === 0) {
+                    addonDiv.innerHTML = '<div class="text-center text-sm opacity-40 py-6 border border-dashed border-base-content/10 rounded-xl">无需加量目前够用</div>';
                 } else {
-                    addonDiv.innerHTML = addons.map(a => `
-                        <div class="addon-item">
-                            <div><div class="name">${a.package_name} (+${a.room_count}间)</div>
-                            <div class="meta">到期: ${fmtShortDate(a.end_date)}</div></div>
+                    addonDiv.innerHTML = pAddons.map(a => `
+                        <div class="flex justify-between items-center p-3 bg-base-200/50 rounded-lg hover:bg-base-200 transition-colors border border-base-content/5">
+                            <div class="flex items-center gap-3">
+                                <div class="avatar placeholder">
+                                    <div class="bg-accent/10 text-accent rounded-full w-8 font-bold">+${a.room_count}</div>
+                                </div>
+                                <div>
+                                    <div class="text-sm font-bold">${a.package_name}</div>
+                                    <div class="text-xs opacity-50">至 ${fmtShortDate(a.end_date)}</div>
+                                </div>
+                            </div>
                             ${statusBadge(a.status)}
                         </div>`).join('');
                 }
@@ -517,33 +479,41 @@
                 const logBody = document.getElementById('balanceLogBody');
                 const logs = bal.logs || [];
                 if (logs.length === 0) {
-                    logBody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无记录</td></tr>';
+                    logBody.innerHTML = '<tr><td colspan="3" class="text-center py-8 opacity-40 border-none">干净得像一张白纸</td></tr>';
                 } else {
-                    logBody.innerHTML = logs.map(l => `<tr>
-                        <td>${fmtDate(l.created_at)}</td>
-                        <td>${typeNames[l.type] || l.type}</td>
-                        <td style="color:${l.amount > 0 ? '#00f5d4' : '#ff6b6b'}">${l.amount > 0 ? '+' : ''}${fmt(l.amount)}</td>
-                        <td>${fmt(l.balance_after)}</td>
-                        <td>${l.description || '-'}</td>
-                    </tr>`).join('');
+                    logBody.innerHTML = logs.map(l => {
+                        const isIncome = l.amount > 0;
+                        return `
+                        <tr class="hover">
+                            <td class="pl-5 whitespace-nowrap"><div class="text-xs opacity-70">${fmtDate(l.created_at)}</div></td>
+                            <td>
+                                <div class="${isIncome ? 'text-success' : 'text-error'} font-semibold font-mono">
+                                    ${isIncome ? '+' : ''}${fmt(l.amount)}
+                                </div>
+                                <div class="text-[10px] opacity-40 font-mono">结: ${fmt(l.balance_after)}</div>
+                            </td>
+                            <td class="pr-5">
+                                <div class="badge badge-ghost badge-xs mb-1 opacity-60">${typeNames[l.type] || l.type}</div>
+                                <div class="text-xs truncate max-w-[120px]" title="${l.description || '-'}">${l.description || '-'}</div>
+                            </td>
+                        </tr>`;
+                    }).join('');
                 }
 
-                // Orders
+                // Orders Table
                 const orderBody = document.getElementById('orderBody');
                 const ords = orders.orders || [];
                 if (ords.length === 0) {
-                    orderBody.innerHTML = '<tr><td colspan="5" class="empty-state">暂无订单</td></tr>';
+                    orderBody.innerHTML = '<tr><td colspan="5" class="text-center py-8 opacity-40 border-none">毫无消费痕迹</td></tr>';
                 } else {
-                    orderBody.innerHTML = ords.map(o => {
-                        const meta = typeof o.metadata === 'string' ? JSON.parse(o.metadata) : (o.metadata || {});
-                        return `<tr>
-                            <td style="font-size:0.75rem;">${o.order_no}</td>
-                            <td>${fmt(o.amount)}</td>
-                            <td>${o.payment_method || '-'}</td>
+                    orderBody.innerHTML = ords.map(o => `
+                        <tr class="hover">
+                            <td class="pl-6 font-mono text-xs opacity-60">${o.order_no}</td>
+                            <td class="font-semibold">${fmt(o.amount)}</td>
+                            <td><div class="badge badge-outline badge-sm capitalize border-base-content/20">${o.payment_method || '-'}</div></td>
                             <td>${statusBadge(o.status)}</td>
-                            <td>${fmtDate(o.created_at)}</td>
-                        </tr>`;
-                    }).join('');
+                            <td class="pr-6 text-xs opacity-60">${fmtDate(o.created_at)}</td>
+                        </tr>`).join('');
                 }
 
                 // Notifications
@@ -551,26 +521,48 @@
                 const notifItems = notifs.data || [];
                 const unreadCount = notifItems.filter(n => !n.isRead).length;
                 const badge = document.getElementById('notifBadge');
-                if (unreadCount > 0) { badge.textContent = unreadCount; badge.style.display = 'inline'; }
-                else { badge.style.display = 'none'; }
+                const markBtn = document.getElementById('markAllBtn');
+
+                if (unreadCount > 0) {
+                    badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
+                    badge.classList.remove('hidden');
+                    markBtn.style.display = 'block';
+                } else {
+                    badge.classList.add('hidden');
+                    markBtn.style.display = 'none';
+                }
+
                 if (notifItems.length === 0) {
-                    notifDiv.innerHTML = '<div class="empty-state">暂无通知</div>';
+                    notifDiv.innerHTML = `
+                        <div class="flex flex-col items-center justify-center p-8 text-center border border-dashed border-base-content/10 rounded-xl my-4 opacity-70">
+                            <span class="text-3xl mb-2">🎉</span>
+                            <span class="text-sm font-medium">天下太平，暂无通知</span>
+                        </div>`;
                 } else {
                     notifDiv.innerHTML = notifItems.map(n => `
-                        <div class="notif-item ${n.isRead ? '' : 'unread'}" onclick="markRead(${n.id}, this)">
-                            <div class="notif-title">${n.title}</div>
-                            <div class="notif-content">${n.content || ''}</div>
-                            <div class="notif-time">${fmtDate(n.createdAt)}</div>
+                        <div class="p-3.5 rounded-xl border transition-all cursor-pointer ${n.isRead ? 'bg-base-200/30 border-base-content/5 hover:border-base-content/20 opacity-70' : 'bg-primary/5 border-primary/20 hover:border-primary/50 shadow-sm'}" onclick="markRead(${n.id}, this)">
+                            <div class="flex justify-between items-start gap-2">
+                                <span class="font-bold text-sm leading-tight flex items-center gap-1.5 break-all">
+                                    ${n.isRead ? '' : '<span class="w-1.5 h-1.5 rounded-full bg-error shrink-0"></span>'}
+                                    ${n.title}
+                                </span>
+                                <span class="text-[10px] opacity-40 shrink-0 mt-0.5">${fmtShortDate(n.createdAt)}</span>
+                            </div>
+                            ${n.content ? `<p class="mt-1.5 text-xs opacity-70 line-clamp-2 leading-relaxed break-words">${n.content}</p>` : ''}
                         </div>`).join('');
                 }
             } catch (err) {
-                showAlert('加载失败: ' + err.message);
+                showAlert('仪表盘加载失败，请刷新重试', 'error');
+                console.error(err);
             }
         }
 
         async function doRecharge() {
             const btn = document.getElementById('rechargeBtn');
-            btn.classList.add('loading'); btn.disabled = true;
+            const originalHTML = btn.innerHTML;
+            btn.innerHTML = '<span class="loading loading-spinner"></span> 正在创建订单...';
+            btn.disabled = true;
+
             try {
                 const res = await apiFetch('/api/payment/recharge', {
                     method: 'POST',
@@ -580,35 +572,73 @@
                 if (!res.ok) throw new Error(data.error);
 
                 if (data.payUrl) {
+                    await showModal('即将前往支付', '点击确定跳转到第三方支付页面。完成支付后请刷新本页查看余额。', false, false);
                     window.open(data.payUrl, '_blank');
-                    showAlert('支付页面已打开，完成支付后请刷新此页面', 'info');
+                    // Add reload button after redirecting
+                    btn.innerHTML = '已发起支付，点此刷新刷新余额';
+                    btn.disabled = false;
+                    btn.onclick = () => location.reload();
+                    btn.classList.replace('btn-accent', 'btn-success');
                 } else {
-                    showAlert('充值订单已创建: ' + data.orderNo, 'success');
+                    await showModal('创建成功', '充值订单已创建: ' + data.orderNo, false, false);
+                    btn.innerHTML = originalHTML;
+                    btn.disabled = false;
+                    loadDashboard(); // reload to show new order
                 }
             } catch (err) {
-                showAlert(err.message);
-            } finally {
-                btn.classList.remove('loading'); btn.disabled = false;
+                showModal('充值受阻', err.message, false, true);
+                btn.innerHTML = originalHTML;
+                btn.disabled = false;
+            }
+        }
+
+        async function markRead(id, el) {
+            if (el.classList.contains('bg-base-200/30')) return; // already read visual
+
+            try {
+                await apiFetch(`/api/auth/notifications/${id}/read`, { method: 'PUT' });
+                el.classList.replace('bg-primary/5', 'bg-base-200/30');
+                el.classList.replace('border-primary/20', 'border-base-content/5');
+                el.classList.remove('hover:border-primary/50', 'shadow-sm');
+                el.classList.add('hover:border-base-content/20', 'opacity-70');
+
+                // Remove the unread red dot
+                const dot = el.querySelector('.bg-error');
+                if (dot) dot.remove();
+
+                // update badge
+                const badge = document.getElementById('notifBadge');
+                let c = parseInt(badge.textContent || 0);
+                if (c > 1) {
+                    badge.textContent = c - 1;
+                } else {
+                    badge.classList.add('hidden');
+                    document.getElementById('markAllBtn').style.display = 'none';
+                }
+            } catch (e) { console.error('Failed to mark read', e) }
+        }
+
+        async function markAllRead() {
+            try {
+                document.getElementById('markAllBtn').innerHTML = '<span class="loading loading-spinner border-none"></span>';
+                await apiFetch('/api/auth/notifications/read-all', { method: 'PUT' });
+                loadDashboard(); // re-render cleanly
+            } catch (e) {
+                showAlert('操作失败', 'error');
+                document.getElementById('markAllBtn').innerHTML = '全部已读';
             }
         }
 
         function doLogout() {
-            const rt = localStorage.getItem('refreshToken');
-            fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken: rt }) });
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('refreshToken');
-            window.location.href = 'login.html';
-        }
-
-        async function markRead(id, el) {
-            await apiFetch(`/api/auth/notifications/${id}/read`, { method: 'PUT' });
-            el.classList.remove('unread');
-        }
-
-        async function markAllRead() {
-            await apiFetch('/api/auth/notifications/read-all', { method: 'PUT' });
-            document.querySelectorAll('.notif-item.unread').forEach(el => el.classList.remove('unread'));
-            document.getElementById('notifBadge').style.display = 'none';
+            showModal('退出登录', '确定要退出当前账号吗？', true).then(confirmed => {
+                if (confirmed) {
+                    const rt = localStorage.getItem('refreshToken');
+                    fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken: rt }) }).catch(() => null);
+                    localStorage.removeItem('accessToken');
+                    localStorage.removeItem('refreshToken');
+                    window.location.href = 'login.html';
+                }
+            });
         }
 
         loadDashboard();

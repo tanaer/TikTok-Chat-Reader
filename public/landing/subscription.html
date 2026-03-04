@@ -1,143 +1,90 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dracula">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>我的订阅 - TikTok Monitor</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="landing.css">
-    <link rel="stylesheet" href="auth.css">
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .subscription-container {
-            max-width: 800px;
-            margin: 80px auto;
-            padding: 0 20px;
-        }
-
-        .subscription-card {
-            background: rgba(20, 20, 30, 0.8);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px;
-            padding: 32px;
-            margin-bottom: 24px;
-        }
-
-        .subscription-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-        }
-
-        .plan-badge {
-            display: inline-block;
-            padding: 6px 16px;
-            border-radius: 20px;
-            font-size: 0.875rem;
-            font-weight: 600;
-        }
-
-        .plan-badge.free {
-            background: rgba(255, 255, 255, 0.1);
-            color: #888;
-        }
-
-        .plan-badge.basic {
-            background: rgba(0, 245, 212, 0.2);
-            color: #00f5d4;
-        }
-
-        .plan-badge.pro {
-            background: rgba(123, 44, 191, 0.2);
-            color: #b57aff;
-        }
-
-        .plan-badge.enterprise {
-            background: rgba(255, 107, 107, 0.2);
-            color: #ff6b6b;
-        }
-
-        .stat-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 16px;
-            margin-top: 24px;
-        }
-
-        .stat-item {
-            text-align: center;
-            padding: 20px;
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 12px;
-        }
-
-        .stat-value {
-            font-size: 2rem;
-            font-weight: 700;
-            color: #00f5d4;
-        }
-
-        .stat-label {
-            font-size: 0.875rem;
-            color: rgba(255, 255, 255, 0.6);
-            margin-top: 4px;
-        }
-
-        .action-buttons {
-            display: flex;
-            gap: 12px;
-            margin-top: 24px;
-        }
-
-        .btn-outline {
-            padding: 12px 24px;
-            border: 1px solid rgba(255, 255, 255, 0.2);
-            background: transparent;
-            color: white;
-            border-radius: 8px;
-            cursor: pointer;
-            transition: all 0.3s;
-        }
-
-        .btn-outline:hover {
-            background: rgba(255, 255, 255, 0.1);
-        }
-
-        .back-link {
-            display: inline-flex;
-            align-items: center;
-            gap: 8px;
-            color: rgba(255, 255, 255, 0.6);
-            text-decoration: none;
-            margin-bottom: 24px;
-        }
-
-        .back-link:hover {
-            color: white;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 60px;
-            color: rgba(255, 255, 255, 0.6);
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                radial-gradient(ellipse at 80% 20%, rgba(123, 44, 191, 0.12) 0%, transparent 50%),
+                radial-gradient(ellipse at 20% 80%, rgba(0, 245, 212, 0.08) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
         }
     </style>
 </head>
 
-<body>
-    <div class="subscription-container">
-        <a href="/" class="back-link">← 返回控制台</a>
+<body class="min-h-screen text-base-content p-4 md:p-8">
+    <div class="max-w-4xl mx-auto">
 
-        <div id="subscriptionContent" class="loading">
-            加载中...
+        <div class="mb-8">
+            <a href="/" class="btn btn-ghost btn-sm text-base-content/60 hover:text-primary gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                返回控制台
+            </a>
         </div>
+
+        <div id="subscriptionContent" class="flex justify-center items-center min-h-[50vh]">
+            <span class="loading loading-spinner loading-lg text-primary"></span>
+        </div>
+
     </div>
 
+    <!-- Alert Modal -->
+    <dialog id="messageModal" class="modal modal-bottom sm:modal-middle">
+        <div class="modal-box border border-base-content/10">
+            <h3 class="font-bold text-lg flex items-center gap-2" id="modalTitle">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-info" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                提示
+            </h3>
+            <p class="py-4 whitespace-pre-line" id="modalMsg"></p>
+            <div class="modal-action">
+                <form method="dialog" class="flex gap-2 w-full justify-end">
+                    <button class="btn btn-outline" id="modalCancelBtn" style="display:none;">取消</button>
+                    <button class="btn btn-primary" id="modalConfirmBtn">确定</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
+
     <script>
+        function showModal(title, msg, isConfirm = false) {
+            return new Promise(resolve => {
+                document.getElementById('modalTitle').innerText = title;
+                document.getElementById('modalMsg').innerText = msg;
+                const cancelBtn = document.getElementById('modalCancelBtn');
+                const confirmBtn = document.getElementById('modalConfirmBtn');
+
+                cancelBtn.style.display = isConfirm ? 'block' : 'none';
+                cancelBtn.onclick = () => resolve(false);
+                confirmBtn.onclick = () => resolve(true);
+
+                document.getElementById('messageModal').showModal();
+                document.getElementById('messageModal').addEventListener('close', () => resolve(false), { once: true });
+            });
+        }
+
         document.addEventListener('DOMContentLoaded', async () => {
             const container = document.getElementById('subscriptionContent');
             const accessToken = localStorage.getItem('accessToken');
@@ -148,7 +95,6 @@
             }
 
             try {
-                // Fetch subscription data
                 const subResponse = await fetch('/api/subscription', {
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 });
@@ -163,63 +109,79 @@
 
                 const subscription = await subResponse.json();
 
-                // Render subscription info
+                let badgeClass = 'badge-ghost';
+                const code = subscription.plan?.code;
+                if (code === 'basic') badgeClass = 'badge-accent';
+                if (code === 'pro') badgeClass = 'badge-primary';
+                if (code === 'enterprise') badgeClass = 'badge-secondary';
+
                 container.innerHTML = `
-                    <div class="subscription-card">
-                        <div class="subscription-header">
-                            <div>
-                                <h1 style="margin: 0; font-size: 1.5rem;">我的订阅</h1>
-                                <p style="color: rgba(255,255,255,0.6); margin: 8px 0 0 0;">管理您的订阅计划</p>
+                    <div class="card bg-base-100/80 backdrop-blur-xl shadow-2xl border border-white/10 mb-8">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start mb-6">
+                                <div>
+                                    <h1 class="text-3xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">我的订阅</h1>
+                                    <p class="text-base-content/60 mt-1">管理您的订阅计划与用量</p>
+                                </div>
+                                <div class="badge ${badgeClass} badge-lg font-bold p-4 shadow-sm">${subscription.plan?.name || '免费版'}</div>
                             </div>
-                            <span class="plan-badge ${subscription.plan?.code || 'free'}">${subscription.plan?.name || '免费版'}</span>
-                        </div>
 
-                        <div class="stat-grid">
-                            <div class="stat-item">
-                                <div class="stat-value">${subscription.plan?.roomLimit === -1 ? '∞' : (subscription.plan?.roomLimit || 1)}</div>
-                                <div class="stat-label">可监控房间</div>
+                            <div class="stats stats-vertical lg:stats-horizontal shadow bg-base-200/50 border border-base-content/5 mt-4">
+                                <div class="stat place-items-center">
+                                    <div class="stat-title">可监控房间</div>
+                                    <div class="stat-value text-accent">${subscription.plan?.roomLimit === -1 ? '∞' : (subscription.plan?.roomLimit || 1)}</div>
+                                </div>
+                                <div class="stat place-items-center">
+                                    <div class="stat-title">AI分析剩余</div>
+                                    <div class="stat-value text-primary">${subscription.aiCreditsRemaining || 0}</div>
+                                </div>
+                                <div class="stat place-items-center">
+                                    <div class="stat-title">剩余天数</div>
+                                    <div class="stat-value text-secondary">${subscription.daysRemaining >= 0 ? subscription.daysRemaining : '∞'}</div>
+                                </div>
                             </div>
-                            <div class="stat-item">
-                                <div class="stat-value">${subscription.aiCreditsRemaining || 0}</div>
-                                <div class="stat-label">AI分析剩余</div>
-                            </div>
-                            <div class="stat-item">
-                                <div class="stat-value">${subscription.daysRemaining >= 0 ? subscription.daysRemaining : '∞'}</div>
-                                <div class="stat-label">剩余天数</div>
-                            </div>
-                        </div>
 
-                        ${subscription.endDate ? `
-                            <p style="margin-top: 24px; color: rgba(255,255,255,0.6); font-size: 0.875rem;">
-                                订阅到期日: ${new Date(subscription.endDate).toLocaleDateString('zh-CN')}
-                                ${subscription.autoRenew ? ' · 自动续费已开启' : ''}
-                            </p>
-                        ` : ''}
-
-                        <div class="action-buttons">
-                            <a href="/landing/#pricing" class="btn btn-primary">升级套餐</a>
-                            ${subscription.plan?.code !== 'free' ? `
-                                <button class="btn-outline" onclick="cancelAutoRenew()">取消自动续费</button>
+                            ${subscription.endDate ? `
+                                <div class="mt-6 p-4 bg-info/10 text-info rounded-xl text-sm flex items-center gap-3">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
+                                    <div>
+                                        订阅到期日: <strong>${new Date(subscription.endDate).toLocaleDateString('zh-CN')}</strong>
+                                        <span class="opacity-80 ml-2">${subscription.autoRenew ? ' · 自动续费已开启' : ''}</span>
+                                    </div>
+                                </div>
                             ` : ''}
+
+                            <div class="card-actions justify-end mt-8">
+                                ${subscription.plan?.code !== 'free' ? `
+                                    <button class="btn btn-ghost hover:bg-error/20 hover:text-error transition-colors" onclick="cancelAutoRenew()">取消自动续费</button>
+                                ` : ''}
+                                <a href="pricing.html" class="btn btn-primary shadow-lg shadow-primary/30 ml-2">升级/变一套餐</a>
+                            </div>
                         </div>
                     </div>
 
-                    <div class="subscription-card">
-                        <h2 style="margin: 0 0 16px 0; font-size: 1.25rem;">AI分析额度</h2>
-                        <p style="color: rgba(255,255,255,0.6);">
-                            本月已使用 ${subscription.aiCreditsUsed || 0} 次分析，剩余 ${subscription.aiCreditsRemaining || 0} 次
-                        </p>
-                        <div class="action-buttons">
-                            <a href="/landing/buy-credits.html" class="btn-outline">购买额外额度</a>
+                    <div class="card bg-base-100/60 backdrop-blur-xl shadow-xl border border-white/5">
+                        <div class="card-body">
+                            <h2 class="card-title text-xl mb-2">AI 分析额度</h2>
+                            <div class="w-full bg-base-300 rounded-full h-2.5 mb-4">
+                                <div class="bg-primary h-2.5 rounded-full" style="width: ${(subscription.aiCreditsUsed / (subscription.aiCreditsUsed + subscription.aiCreditsRemaining)) * 100 || 0}%"></div>
+                            </div>
+                            <p class="text-base-content/70">
+                                本月已使用 <strong class="text-base-content">${subscription.aiCreditsUsed || 0}</strong> 次分析，剩余 <strong class="text-primary">${subscription.aiCreditsRemaining || 0}</strong> 次
+                            </p>
+                            <div class="card-actions justify-end mt-4">
+                                <button class="btn btn-outline btn-sm hover:btn-primary" onclick="showModal('功能升级中','购买额外额度功能即将上线。敬请期待！')">购买额度</button>
+                            </div>
                         </div>
                     </div>
                 `;
             } catch (err) {
                 container.innerHTML = `
-                    <div class="subscription-card">
-                        <p style="color: #ff6b6b;">加载失败: ${err.message}</p>
-                        <div class="action-buttons">
-                            <button class="btn btn-primary" onclick="location.reload()">重试</button>
+                    <div class="alert alert-error shadow-lg">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                        <span>加载失败: ${err.message}</span>
+                        <div class="flex-none">
+                            <button class="btn btn-sm" onclick="location.reload()">重试</button>
                         </div>
                     </div>
                 `;
@@ -227,7 +189,7 @@
         });
 
         async function cancelAutoRenew() {
-            if (!confirm('确定取消自动续费？当前订阅期内仍可正常使用。')) return;
+            if (!(await showModal('确认取消续费', '确定取消自动续费？当前订阅期内仍可正常使用。', true))) return;
 
             const accessToken = localStorage.getItem('accessToken');
             try {
@@ -236,14 +198,14 @@
                     headers: { 'Authorization': `Bearer ${accessToken}` }
                 });
                 if (response.ok) {
-                    alert('已取消自动续费');
+                    await showModal('取消成功', '已成功取消自动续费');
                     location.reload();
                 } else {
                     const data = await response.json();
-                    alert(data.error || '操作失败');
+                    showModal('取消失败', data.error || '操作失败');
                 }
             } catch (err) {
-                alert('操作失败: ' + err.message);
+                showModal('取消异常', '错误: ' + err.message);
             }
         }
     </script>

@@ -1,320 +1,187 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dracula">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>套餐定价 - TikTok Monitor</title>
-    <link rel="stylesheet" href="landing.css">
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .pricing-container {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 40px 20px;
-            position: relative;
-            z-index: 1;
-        }
-
-        .pricing-header {
-            text-align: center;
-            margin-bottom: 40px;
-        }
-
-        .pricing-header h1 {
-            font-size: 2.25rem;
-            font-weight: 800;
-            color: white;
-            margin-bottom: 8px;
-        }
-
-        .pricing-header h1 span {
-            background: linear-gradient(135deg, #00f5d4, #7b2cbf);
-            -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
-            background-clip: text;
-        }
-
-        .pricing-header p {
-            color: rgba(255, 255, 255, 0.5);
-        }
-
-        .balance-bar {
-            text-align: center;
-            margin-bottom: 24px;
-            padding: 14px;
-            background: rgba(0, 245, 212, 0.06);
-            border: 1px solid rgba(0, 245, 212, 0.15);
-            border-radius: 10px;
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 0.9rem;
-        }
-
-        .balance-bar strong {
-            color: #00f5d4;
-            font-size: 1.1rem;
-        }
-
-        .billing-toggle {
-            display: flex;
-            justify-content: center;
-            background: rgba(255, 255, 255, 0.06);
-            border-radius: 12px;
-            padding: 4px;
-            width: fit-content;
-            margin: 0 auto 36px;
-        }
-
-        .billing-toggle button {
-            padding: 10px 24px;
-            border: none;
-            background: transparent;
-            color: rgba(255, 255, 255, 0.6);
-            font-size: 0.85rem;
-            font-weight: 600;
-            cursor: pointer;
-            border-radius: 8px;
-            transition: all 0.3s;
-            font-family: inherit;
-        }
-
-        .billing-toggle button.active {
-            background: linear-gradient(135deg, #7b2cbf, #5b21b6);
-            color: white;
-            box-shadow: 0 4px 12px rgba(123, 44, 191, 0.3);
-        }
-
-        .save-badge {
-            display: inline-block;
-            background: rgba(0, 245, 212, 0.2);
-            color: #00f5d4;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-size: 0.65rem;
-            margin-left: 4px;
-        }
-
-        .plan-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
-            gap: 18px;
-            margin-bottom: 48px;
-        }
-
-        .plan-card {
-            background: rgba(20, 20, 35, 0.8);
-            backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            border-radius: 16px;
-            padding: 26px;
-            position: relative;
-            transition: all 0.3s;
-        }
-
-        .plan-card:hover {
-            transform: translateY(-3px);
-            border-color: rgba(123, 44, 191, 0.3);
-            box-shadow: 0 12px 40px rgba(0, 0, 0, 0.3);
-        }
-
-        .plan-card.popular {
-            border-color: rgba(123, 44, 191, 0.4);
-        }
-
-        .plan-card.popular::before {
-            content: '🔥 推荐';
-            position: absolute;
-            top: -11px;
-            left: 50%;
-            transform: translateX(-50%);
-            background: linear-gradient(135deg, #7b2cbf, #5b21b6);
-            color: white;
-            padding: 3px 14px;
-            border-radius: 20px;
-            font-size: 0.75rem;
-            font-weight: 600;
-        }
-
-        .plan-name {
-            font-size: 1.15rem;
-            font-weight: 700;
-            color: white;
-            margin-bottom: 2px;
-        }
-
-        .plan-price {
-            margin: 16px 0;
-        }
-
-        .plan-price .amount {
-            font-size: 2.25rem;
-            font-weight: 800;
-            color: white;
-        }
-
-        .plan-price .currency {
-            font-size: 1.1rem;
-            vertical-align: super;
-            color: #00f5d4;
-        }
-
-        .plan-price .period {
-            color: rgba(255, 255, 255, 0.4);
-            font-size: 0.8rem;
-        }
-
-        .plan-price .total-hint {
-            color: rgba(255, 255, 255, 0.3);
-            font-size: 0.75rem;
-            margin-top: 2px;
-        }
-
-        .plan-features {
-            list-style: none;
-            padding: 0;
-            margin-bottom: 20px;
-        }
-
-        .plan-features li {
-            padding: 5px 0;
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 0.85rem;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .plan-features li .ck {
-            color: #00f5d4;
-        }
-
-        .addon-section {
-            margin-bottom: 48px;
-        }
-
-        .addon-section h2 {
-            font-size: 1.35rem;
-            font-weight: 700;
-            color: white;
-            text-align: center;
-            margin-bottom: 6px;
-        }
-
-        .addon-section .desc {
-            color: rgba(255, 255, 255, 0.5);
-            text-align: center;
-            margin-bottom: 24px;
-            font-size: 0.9rem;
-        }
-
-        .addon-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 14px;
-            max-width: 700px;
-            margin: 0 auto;
-        }
-
-        .addon-card {
-            background: rgba(20, 20, 35, 0.6);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 12px;
-            padding: 22px;
-            text-align: center;
-            transition: all 0.3s;
-        }
-
-        .addon-card:hover {
-            border-color: rgba(0, 245, 212, 0.3);
-            transform: translateY(-2px);
-        }
-
-        .addon-rooms {
-            font-size: 1.75rem;
-            font-weight: 800;
-            color: #00f5d4;
-        }
-
-        .addon-name {
-            color: rgba(255, 255, 255, 0.8);
-            font-weight: 600;
-            margin: 4px 0 8px;
-        }
-
-        .addon-price {
-            color: rgba(255, 255, 255, 0.5);
-            font-size: 0.85rem;
-            margin-bottom: 12px;
-        }
-
-        .back-bar {
-            padding: 16px 0;
-        }
-
-        .landing-footer {
-            text-align: center;
-            padding: 32px 0;
-            color: rgba(255, 255, 255, 0.3);
-            font-size: 0.75rem;
-            border-top: 1px solid rgba(255, 255, 255, 0.05);
-        }
-
-        @media (max-width: 768px) {
-            .pricing-header h1 {
-                font-size: 1.5rem;
-            }
-
-            .plan-grid {
-                grid-template-columns: 1fr;
-            }
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background:
+                radial-gradient(ellipse at 20% 50%, rgba(123, 44, 191, 0.15) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 20%, rgba(0, 245, 212, 0.1) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
         }
     </style>
 </head>
 
-<body>
-    <div class="pricing-container">
-        <div class="back-bar"><a href="/" style="color:rgba(255,255,255,0.5);font-size:0.85rem;">← 返回控制台</a></div>
+<body class="min-h-screen text-base-content relative overflow-x-hidden">
+    <div class="container mx-auto px-4 py-8 max-w-6xl">
 
-        <div class="pricing-header">
-            <h1>选择您的<span>套餐</span></h1>
-            <p>按房间数灵活选择，月/季/年付，时间越长折扣越多</p>
+        <!-- Top bar -->
+        <div class="mb-12">
+            <a href="/" class="btn btn-ghost btn-sm text-base-content/60 hover:text-primary gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+                </svg>
+                返回控制台
+            </a>
         </div>
 
-        <div id="balanceBar" class="balance-bar" style="display:none;">
-            当前余额: <strong id="currentBalance">¥0</strong>
-            <a href="user-center.html" style="margin-left:12px;color:#00f5d4;font-size:0.85rem;">去充值 →</a>
+        <!-- Header -->
+        <div class="text-center mb-12">
+            <h1 class="text-4xl md:text-5xl font-extrabold mb-4 tracking-tight">
+                选择您的 <span class="bg-gradient-to-r from-accent to-primary bg-clip-text text-transparent">套餐</span>
+            </h1>
+            <p class="text-lg text-base-content/60 max-w-2xl mx-auto">
+                按房间数灵活选择，月/季/年付，时间越长折扣越多
+            </p>
         </div>
 
-        <div class="billing-toggle">
-            <button class="active" onclick="setBilling('monthly',this)">月付</button>
-            <button onclick="setBilling('quarterly',this)">季付 <span class="save-badge">省~15%</span></button>
-            <button onclick="setBilling('annual',this)">年付 <span class="save-badge">省~25%</span></button>
-        </div>
-
-        <div id="planGrid" class="plan-grid">
-            <div style="text-align:center;color:rgba(255,255,255,0.4);grid-column:1/-1;padding:40px;">加载中...</div>
-        </div>
-
-        <div class="addon-section">
-            <h2>🧩 房间数加量包</h2>
-            <p class="desc">需要更多房间？可独立购买加量包，叠加到当前套餐上</p>
-            <div id="addonGrid" class="addon-grid">
-                <div style="text-align:center;color:rgba(255,255,255,0.4);grid-column:1/-1;">加载中...</div>
+        <!-- Balance Bar (Hidden by default) -->
+        <div id="balanceBar" class="hidden mb-10 max-w-md mx-auto">
+            <div
+                class="alert bg-base-200/50 border border-accent/20 flex flex-col sm:flex-row justify-between items-center shadow-lg rounded-xl">
+                <div>
+                    <span class="text-base-content/70 text-sm">当前余额</span>
+                    <strong id="currentBalance" class="text-accent text-lg ml-2 font-bold tracking-wide">¥0</strong>
+                </div>
+                <a href="user-center.html" class="btn btn-outline btn-accent btn-sm mt-3 sm:mt-0 shadow-sm">
+                    去充值 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 ml-1" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                    </svg>
+                </a>
             </div>
         </div>
 
-        <div class="landing-footer">© 2024 TikTok Monitor. 价格均为人民币。购买前请先充值余额。</div>
+        <!-- Billing Toggle -->
+        <div class="flex justify-center mb-12">
+            <div class="tabs p-1 bg-base-200/50 rounded-2xl shadow-inner border border-base-content/5"
+                id="billingToggle">
+                <button class="tab tab-active h-10 px-6 rounded-xl text-sm font-medium transition-all"
+                    onclick="setBilling('monthly', this)">月付</button>
+                <button class="tab h-10 px-6 rounded-xl text-sm font-medium transition-all"
+                    onclick="setBilling('quarterly', this)">
+                    季付 <span class="badge badge-accent badge-sm ml-2 font-bold scale-90 -mr-2">省~15%</span>
+                </button>
+                <button class="tab h-10 px-6 rounded-xl text-sm font-medium transition-all"
+                    onclick="setBilling('annual', this)">
+                    年付 <span class="badge badge-accent badge-sm ml-2 font-bold scale-90 -mr-2">省~25%</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Plans Grid -->
+        <div id="planGrid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 mb-20">
+            <div class="col-span-full flex justify-center py-10">
+                <span class="loading loading-bars loading-lg text-primary"></span>
+            </div>
+        </div>
+
+        <!-- Addons Section -->
+        <div class="mt-8 mb-16 pt-16 border-t border-base-content/10">
+            <div class="text-center mb-10">
+                <h2 class="text-2xl font-bold flex justify-center items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-warning" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M14 10l-2 1m0 0l-2-1m2 1v2.5M20 7l-2 1m2-1l-2-1m2 1v2.5M14 4l-2-1-2 1M4 7l2-1M4 7l2 1M4 7v2.5M12 21l-2-1m2 1l2-1m-2 1v-2.5M6 18l-2-1v-2.5M18 18l2-1v-2.5" />
+                    </svg>
+                    房间数加量包
+                </h2>
+                <p class="text-base-content/50 mt-2 text-sm">需要更多房间？可独立购买加量包，叠加到当前套餐上</p>
+            </div>
+            <div id="addonGrid"
+                class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-4 max-w-5xl mx-auto">
+                <div class="col-span-full flex justify-center py-4">
+                    <span class="loading loading-dots loading-md text-base-content/30"></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <footer class="footer footer-center p-8 text-base-content/40 text-xs border-t border-base-content/5 mt-10">
+            <div>
+                <p>© 2024 TikTok Monitor. 价格均为人民币。购买前请先充值余额。</p>
+            </div>
+        </footer>
     </div>
+
+    <!-- Alert Modal for messages -->
+    <dialog id="messageModal" class="modal modal-bottom sm:modal-middle">
+        <div class="modal-box border border-base-content/10">
+            <h3 class="font-bold text-lg flex items-center gap-2" id="modalTitle">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-info" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                提示
+            </h3>
+            <p class="py-4 whitespace-pre-line" id="modalMsg"></p>
+            <div class="modal-action">
+                <form method="dialog" class="flex gap-2 w-full justify-end">
+                    <button class="btn btn-outline" id="modalCancelBtn" style="display:none;">取消</button>
+                    <button class="btn btn-primary" id="modalConfirmBtn">确定</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>close</button>
+        </form>
+    </dialog>
 
     <script>
         let billing = 'monthly';
         let plans = [], addons = [], userBalance = 0;
+        let resolveModal = null;
+
+        // Custom Async Confirm/Alert function to replace native ones visually
+        function showModal(title, msg, isConfirm = false) {
+            return new Promise(resolve => {
+                document.getElementById('modalTitle').innerText = title;
+                document.getElementById('modalMsg').innerText = msg;
+                const cancelBtn = document.getElementById('modalCancelBtn');
+                const confirmBtn = document.getElementById('modalConfirmBtn');
+
+                cancelBtn.style.display = isConfirm ? 'block' : 'none';
+
+                cancelBtn.onclick = () => resolve(false);
+                confirmBtn.onclick = () => resolve(true);
+
+                document.getElementById('messageModal').showModal();
+
+                // Also resolve false if user clicks outside backdrop
+                document.getElementById('messageModal').addEventListener('close', () => {
+                    resolve(false);
+                }, { once: true });
+            });
+        }
 
         function fmt(c) { return c === 0 ? '免费' : '¥' + (c / 100).toFixed(c % 100 === 0 ? 0 : 2); }
 
         function setBilling(cycle, btn) {
             billing = cycle;
-            document.querySelectorAll('.billing-toggle button').forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
+
+            // Handle DaisyUI Tab styling
+            document.querySelectorAll('#billingToggle .tab').forEach(b => {
+                b.classList.remove('tab-active', 'bg-base-100', 'shadow', 'text-primary');
+            });
+            btn.classList.add('tab-active', 'bg-base-100', 'shadow', 'text-primary');
+
             renderPlans();
             renderAddons();
         }
@@ -335,7 +202,7 @@
 
         function renderPlans() {
             const grid = document.getElementById('planGrid');
-            if (!plans.length) { grid.innerHTML = '<div style="text-align:center;color:rgba(255,255,255,0.4);grid-column:1/-1;">暂无套餐</div>'; return; }
+            if (!plans.length) { grid.innerHTML = '<div class="col-span-full text-center text-base-content/40 py-10">暂无套餐</div>'; return; }
 
             grid.innerHTML = plans.map(p => {
                 const price = getPrice(p);
@@ -346,41 +213,69 @@
                 const history = p.history_days === -1 ? '永久' : p.history_days + '天';
                 const ff = p.feature_flags || {};
 
-                return `<div class="plan-card${isPop ? ' popular' : ''}">
-                    <div class="plan-name">${p.name}</div>
-                    <div class="plan-price">
-                        ${isFree ? '<div class="amount">免费</div>' :
-                        `<div class="amount"><span class="currency">¥</span>${(pm / 100).toFixed(0)}</div>
-                             <div class="period">/月${billing !== 'monthly' ? ` (${periodLabel()}付)` : ''}</div>
-                             ${billing !== 'monthly' ? `<div class="total-hint">${periodLabel()}付共 ${fmt(price)}</div>` : ''}`}
+                return `
+                <div class="card bg-base-100/80 backdrop-blur-md shadow-xl border border-white/5 transition-all duration-300 ${isPop ? 'border-primary/50 shadow-primary/20 scale-105 z-10' : 'hover:-translate-y-2 hover:border-white/20 hover:shadow-2xl'}">
+                    ${isPop ? '<div class="absolute -top-3 left-1/2 -translate-x-1/2 badge badge-primary font-bold shadow-lg shadow-primary/30 border-none ring-2 ring-base-100 px-3 py-3">🔥 推荐首选</div>' : ''}
+                    <div class="card-body">
+                        <h2 class="card-title text-xl font-bold opacity-90">${p.name}</h2>
+                        
+                        <div class="mt-4 mb-6">
+                            ${isFree ? '<div class="text-4xl font-extrabold text-white">免费</div>' :
+                        `<div class="flex items-baseline">
+                                <span class="text-xl text-primary font-bold mr-1">¥</span>
+                                <span class="text-5xl font-extrabold text-white tracking-tight">${(pm / 100).toFixed(0)}</span>
+                                <span class="text-base-content/50 ml-1 font-medium">/月${billing !== 'monthly' ? ` (${periodLabel()}付)` : ''}</span>
+                             </div>
+                             ${billing !== 'monthly' ? `<div class="text-xs text-accent mt-2 font-medium bg-accent/10 w-fit px-2 py-1 rounded">${periodLabel()}付共 ${fmt(price)}</div>` : ''}`}
+                        </div>
+                        
+                        <div class="divider my-0 opacity-20"></div>
+
+                        <ul class="space-y-4 my-6 text-sm flex-grow">
+                            <li class="flex items-start gap-3">
+                                <svg class="w-5 h-5 text-success shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 
+                                <span class="opacity-80">监控房间 <span class="font-bold text-white">${rooms}</span> 间</span>
+                            </li>
+                            <li class="flex items-start gap-3">
+                                <svg class="w-5 h-5 text-success shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 
+                                <span class="opacity-80">历史数据 <span class="font-bold text-white">${history}</span></span>
+                            </li>
+                            <li class="flex items-start gap-3">
+                                <svg class="w-5 h-5 text-success shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> 
+                                <span class="opacity-80">AI分析连麦 <span class="font-bold text-white">${p.ai_credits_monthly || 0}</span> 次/月</span>
+                            </li>
+                            ${ff.export ? '<li class="flex items-start gap-3"><svg class="w-5 h-5 text-success shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> <span class="opacity-80">数据报表导出</span></li>' : ''}
+                            ${ff.api_access ? '<li class="flex items-start gap-3"><svg class="w-5 h-5 text-success shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> <span class="opacity-80">开放 API 接口</span></li>' : ''}
+                            ${ff.priority_support ? '<li class="flex items-start gap-3"><svg class="w-5 h-5 text-success shrink-0 mt-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M5 13l4 4L19 7"/></svg> <span class="opacity-80 text-warning font-medium">7x24 优先技术支持</span></li>' : ''}
+                        </ul>
+
+                        <div class="card-actions mt-auto pt-4">
+                            ${isFree
+                        ? '<button class="btn btn-outline btn-block text-base-content/50 border-base-content/20" disabled>当前为基础方案</button>'
+                        : `<button class="btn ${isPop ? 'btn-primary shadow-lg shadow-primary/30' : 'btn-accent text-base-100 shadow-lg shadow-accent/20'} btn-block hover:scale-[1.02] transition-transform font-bold" onclick="buyPlan('${p.code}')">
+                                    ${userBalance >= price ? '立即使用余额购买' : '余额不足 · 去充值'}</button>`}
+                        </div>
                     </div>
-                    <ul class="plan-features">
-                        <li><span class="ck">✓</span> 监控房间 ${rooms}间</li>
-                        <li><span class="ck">✓</span> 历史数据 ${history}</li>
-                        <li><span class="ck">✓</span> AI分析 ${p.ai_credits_monthly || 0}次/月</li>
-                        ${ff.export ? '<li><span class="ck">✓</span> 数据导出</li>' : ''}
-                        ${ff.api_access ? '<li><span class="ck">✓</span> API接口</li>' : ''}
-                        ${ff.priority_support ? '<li><span class="ck">✓</span> 优先支持</li>' : ''}
-                    </ul>
-                    ${isFree
-                        ? '<button class="btn btn-outline btn-block btn-sm" disabled>当前方案</button>'
-                        : `<button class="btn ${isPop ? 'btn-primary' : 'btn-accent'} btn-block btn-sm" onclick="buyPlan('${p.code}')">
-                            ${userBalance >= price ? '余额购买' : '余额不足 · 去充值'}</button>`}
                 </div>`;
             }).join('');
         }
 
         function renderAddons() {
             const grid = document.getElementById('addonGrid');
-            if (!addons.length) { grid.innerHTML = '<div style="text-align:center;color:rgba(255,255,255,0.4);grid-column:1/-1;">暂无</div>'; return; }
+            if (!addons.length) { grid.innerHTML = '<div class="col-span-full text-center text-base-content/40">暂无包月加量选项</div>'; return; }
 
             grid.innerHTML = addons.map(a => {
                 const price = getPrice(a);
-                return `<div class="addon-card">
-                    <div class="addon-rooms">+${a.room_count}</div>
-                    <div class="addon-name">${a.name}</div>
-                    <div class="addon-price">${fmt(price)}/${periodLabel()}</div>
-                    <button class="btn btn-outline btn-sm btn-block" onclick="buyAddon(${a.id})">${userBalance >= price ? '余额购买' : '余额不足'}</button>
+                return `
+                <div class="card bg-base-200/40 backdrop-blur-sm border border-base-content/10 hover:border-accent/50 hover:bg-base-200/80 transition-all duration-300">
+                    <div class="card-body text-center p-6 flex flex-col items-center">
+                        <div class="w-16 h-16 rounded-full bg-accent/10 flex items-center justify-center mb-3 text-accent transition-colors">
+                            <span class="text-2xl font-black">+${a.room_count}</span>
+                        </div>
+                        <h3 class="font-bold text-lg mb-1">${a.name}</h3>
+                        <div class="text-sm font-medium opacity-60 mb-5 bg-base-300/50 px-3 py-1 rounded-full">${fmt(price)} / ${periodLabel()}</div>
+                        <button class="btn btn-sm btn-outline btn-block mt-auto hover:bg-accent hover:text-base-100 hover:border-accent" onclick="buyAddon(${a.id})">${userBalance >= price ? '余额购买' : '余额充值'}</button>
+                    </div>
                 </div>`;
             }).join('');
         }
@@ -397,14 +292,15 @@
                 userBalance = data.balance || 0;
 
                 if (token) {
-                    document.getElementById('balanceBar').style.display = 'block';
+                    const bar = document.getElementById('balanceBar');
+                    bar.classList.remove('hidden');
                     document.getElementById('currentBalance').textContent = fmt(userBalance);
                 }
 
                 renderPlans();
                 renderAddons();
             } catch (err) {
-                document.getElementById('planGrid').innerHTML = `<div style="text-align:center;color:#ff6b6b;grid-column:1/-1;">加载失败: ${err.message}</div>`;
+                document.getElementById('planGrid').innerHTML = `<div class="col-span-full text-center text-error p-8 bg-error/10 rounded-xl">加载失败: ${err.message}</div>`;
             }
         }
 
@@ -416,16 +312,20 @@
             const price = getPrice(plan);
 
             if (userBalance < price) {
-                if (confirm(`余额不足（需要 ${fmt(price)}，当前 ${fmt(userBalance)}）。\n是否前往充值？`)) {
+                if (await showModal('余额不足', `需要 ${fmt(price)}\n当前 ${fmt(userBalance)}\n\n是否前往充值？`, true)) {
                     window.location.href = 'user-center.html';
                 }
                 return;
             }
 
             const cycleNames = { monthly: '月付', quarterly: '季付', annual: '年付' };
-            if (!confirm(`确认使用余额购买 ${plan.name}（${cycleNames[billing]}）？\n扣款: ${fmt(price)}`)) return;
+            const confirmed = await showModal('确认购买', `确认使用余额购买【${plan.name}】（${cycleNames[billing]}）？\n\n预计扣款: ${fmt(price)}`, true);
+            if (!confirmed) return;
 
             try {
+                // Wait visual effect
+                document.querySelectorAll('button').forEach(b => b.classList.add('cursor-wait'));
+
                 const res = await fetch('/api/subscription/purchase', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -434,11 +334,15 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
 
-                alert(data.message + `\n剩余余额: ${fmt(data.newBalance)}`);
+                await showModal('支付成功', data.message + `\n\n剩余余额: ${fmt(data.newBalance)}`);
                 userBalance = data.newBalance;
                 document.getElementById('currentBalance').textContent = fmt(userBalance);
                 renderPlans();
-            } catch (err) { alert(err.message); }
+            } catch (err) {
+                showModal('购买受阻', err.message);
+            } finally {
+                document.querySelectorAll('button').forEach(b => b.classList.remove('cursor-wait'));
+            }
         }
 
         async function buyAddon(pkgId) {
@@ -449,12 +353,15 @@
             const price = getPrice(addon);
 
             if (userBalance < price) {
-                if (confirm(`余额不足。是否前往充值？`)) window.location.href = 'user-center.html';
+                if (await showModal('余额不足', `需要 ${fmt(price)}\n当前 ${fmt(userBalance)}\n\n是否前往充值？`, true)) {
+                    window.location.href = 'user-center.html';
+                }
                 return;
             }
 
             const cycleNames = { monthly: '月付', quarterly: '季付', annual: '年付' };
-            if (!confirm(`确认购买 ${addon.name}（${cycleNames[billing]}）？\n扣款: ${fmt(price)}`)) return;
+            const confirmed = await showModal('确认加购', `确认加购【${addon.name}】（${cycleNames[billing]}）？\n\n预计扣款: ${fmt(price)}`, true);
+            if (!confirmed) return;
 
             try {
                 const res = await fetch('/api/subscription/addon/purchase', {
@@ -465,12 +372,17 @@
                 const data = await res.json();
                 if (!res.ok) throw new Error(data.error);
 
-                alert(data.message + `\n剩余余额: ${fmt(data.newBalance)}`);
+                await showModal('支付成功', data.message + `\n\n剩余余额: ${fmt(data.newBalance)}`);
                 userBalance = data.newBalance;
                 document.getElementById('currentBalance').textContent = fmt(userBalance);
                 renderAddons();
-            } catch (err) { alert(err.message); }
+            } catch (err) {
+                showModal('加购受阻', err.message);
+            }
         }
+
+        // Initialize Tab styling
+        document.querySelector('#billingToggle .tab-active').click();
 
         loadPlans();
     </script>

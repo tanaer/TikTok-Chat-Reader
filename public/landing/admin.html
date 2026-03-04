@@ -1,441 +1,310 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dracula">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>管理后台 - TikTok Monitor</title>
-    <link rel="stylesheet" href="landing.css">
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        .admin-container {
-            max-width: 1100px;
-            margin: 0 auto;
-            padding: 40px 20px;
-            position: relative;
-            z-index: 1;
-        }
-
-        .top-bar {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 24px;
-        }
-
-        .top-bar h1 {
-            font-size: 1.75rem;
-            font-weight: 800;
-            color: white;
-        }
-
-        .top-bar .nav-links {
-            display: flex;
-            gap: 16px;
-        }
-
-        .top-bar .nav-links a {
-            color: rgba(255, 255, 255, 0.6);
-            font-size: 0.875rem;
-        }
-
-        /* Tabs */
-        .tabs {
-            display: flex;
-            gap: 0;
-            margin-bottom: 24px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
-        }
-
-        .tab {
-            padding: 12px 24px;
-            color: rgba(255, 255, 255, 0.5);
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 0.9rem;
-            border-bottom: 2px solid transparent;
-            transition: all 0.2s;
-        }
-
-        .tab:hover {
-            color: rgba(255, 255, 255, 0.8);
-        }
-
-        .tab.active {
-            color: #00f5d4;
-            border-bottom-color: #00f5d4;
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-        }
-
-        /* Stats */
-        .stats-row {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 12px;
-            margin-bottom: 24px;
-        }
-
-        .stat-card {
-            background: rgba(20, 20, 35, 0.8);
-            border: 1px solid rgba(255, 255, 255, 0.06);
-            border-radius: 12px;
-            padding: 18px;
-        }
-
-        .stat-card .label {
-            color: rgba(255, 255, 255, 0.4);
-            font-size: 0.75rem;
-        }
-
-        .stat-card .value {
-            font-size: 1.5rem;
-            font-weight: 800;
-            color: white;
-        }
-
-        /* Table */
-        .data-table {
-            width: 100%;
-            border-collapse: collapse;
-            font-size: 0.85rem;
-        }
-
-        .data-table th,
-        .data-table td {
-            padding: 10px 8px;
-            text-align: left;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-        }
-
-        .data-table th {
-            color: rgba(255, 255, 255, 0.5);
-            font-weight: 600;
-            position: sticky;
-            top: 0;
-            background: rgba(10, 10, 20, 0.95);
-        }
-
-        .data-table td {
-            color: rgba(255, 255, 255, 0.8);
-        }
-
-        .data-table tr:hover {
-            background: rgba(255, 255, 255, 0.03);
-        }
-
-        .badge {
-            padding: 3px 10px;
-            border-radius: 6px;
-            font-size: 0.7rem;
-            font-weight: 600;
-        }
-
-        .badge-active {
-            background: rgba(0, 245, 212, 0.15);
-            color: #00f5d4;
-        }
-
-        .badge-suspended {
-            background: rgba(255, 107, 107, 0.15);
-            color: #ff6b6b;
-        }
-
-        .badge-paid {
-            background: rgba(0, 245, 212, 0.15);
-            color: #00f5d4;
-        }
-
-        .badge-pending {
-            background: rgba(255, 193, 7, 0.15);
-            color: #ffc107;
-        }
-
-        .badge-admin {
-            background: rgba(123, 44, 191, 0.2);
-            color: #b68fe8;
-        }
-
-        .badge-user {
-            background: rgba(255, 255, 255, 0.08);
-            color: rgba(255, 255, 255, 0.5);
-        }
-
-        /* Toolbar */
-        .toolbar {
-            display: flex;
-            gap: 12px;
-            margin-bottom: 16px;
-            flex-wrap: wrap;
-            align-items: center;
-        }
-
-        .toolbar input,
-        .toolbar select {
-            padding: 8px 12px;
-            border-radius: 8px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            background: rgba(255, 255, 255, 0.06);
-            color: white;
-            font-size: 0.85rem;
-            font-family: inherit;
-            outline: none;
-        }
-
-        .toolbar input:focus,
-        .toolbar select:focus {
-            border-color: rgba(123, 44, 191, 0.5);
-        }
-
-        .toolbar select option {
-            background: #1a1a2e;
-        }
-
-        .pagination {
-            display: flex;
-            justify-content: center;
-            gap: 8px;
-            margin-top: 16px;
-        }
-
-        .pagination button {
-            padding: 6px 14px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 6px;
-            background: rgba(255, 255, 255, 0.04);
-            color: rgba(255, 255, 255, 0.7);
-            cursor: pointer;
-            font-family: inherit;
-        }
-
-        .pagination button.active,
-        .pagination button:hover {
-            background: rgba(123, 44, 191, 0.2);
-            border-color: rgba(123, 44, 191, 0.4);
-            color: white;
-        }
-
-        .pagination button:disabled {
-            opacity: 0.3;
-            cursor: default;
-        }
-
-        /* Modal */
-        .modal-overlay {
-            display: none;
+        body::before {
+            content: '';
             position: fixed;
             top: 0;
             left: 0;
             width: 100%;
             height: 100%;
-            background: rgba(0, 0, 0, 0.6);
-            z-index: 100;
-            justify-content: center;
-            align-items: center;
+            background:
+                radial-gradient(ellipse at 80% 20%, rgba(123, 44, 191, 0.12) 0%, transparent 50%),
+                radial-gradient(ellipse at 20% 80%, rgba(0, 245, 212, 0.08) 0%, transparent 50%);
+            pointer-events: none;
+            z-index: -1;
         }
 
-        .modal-overlay.show {
-            display: flex;
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
         }
 
-        .modal {
-            background: #1a1a2e;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 16px;
-            padding: 28px;
-            width: 90%;
-            max-width: 480px;
-            max-height: 80vh;
-            overflow-y: auto;
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 4px;
         }
 
-        .modal h3 {
-            color: white;
-            margin-bottom: 20px;
-            font-size: 1.1rem;
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 4px;
         }
 
-        .modal .form-group {
-            margin-bottom: 14px;
-        }
-
-        .modal .form-group label {
-            display: block;
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 0.85rem;
-            margin-bottom: 4px;
-        }
-
-        .modal .form-group input,
-        .modal .form-group select {
-            width: 100%;
-            padding: 10px 12px;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 8px;
-            background: rgba(255, 255, 255, 0.06);
-            color: white;
-            font-family: inherit;
-            font-size: 0.9rem;
-            outline: none;
-        }
-
-        .modal .form-group select option {
-            background: #1a1a2e;
-        }
-
-        .modal-actions {
-            display: flex;
-            gap: 10px;
-            margin-top: 20px;
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.2);
         }
     </style>
 </head>
 
-<body>
-    <div class="admin-container">
-        <div class="top-bar">
-            <h1>⚙️ 管理后台</h1>
-            <div class="nav-links"><a href="/">控制台</a><a href="user-center.html">用户中心</a></div>
-        </div>
+<body class="min-h-screen text-base-content relative">
+    <div class="max-w-[1400px] mx-auto px-4 py-8">
 
-        <!-- Stats -->
-        <div class="stats-row" id="statsRow">
-            <div class="stat-card">
-                <div class="label">用户数</div>
-                <div class="value" id="statUsers">-</div>
+        <!-- Top bar -->
+        <div
+            class="navbar bg-base-100/60 backdrop-blur-md rounded-2xl shadow-sm border border-base-content/5 mb-8 px-6">
+            <div class="flex-1">
+                <h1 class="text-xl font-bold flex items-center gap-2">
+                    <span class="text-primary text-2xl">⚙️</span>
+                    管理后台
+                </h1>
             </div>
-            <div class="stat-card">
-                <div class="label">房间数</div>
-                <div class="value" id="statRooms">-</div>
+            <div class="flex-none gap-2 hidden sm:flex">
+                <a href="/" class="btn btn-ghost btn-sm hover:text-primary transition-colors">控制台</a>
+                <a href="user-center.html" class="btn btn-ghost btn-sm hover:text-primary transition-colors">用户中心</a>
+                <button onclick="doLogout()" class="btn btn-ghost btn-sm text-error hover:bg-error/20">退出</button>
             </div>
-            <div class="stat-card">
-                <div class="label">活跃房间</div>
-                <div class="value" id="statActive">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">订单数</div>
-                <div class="value" id="statOrders">-</div>
-            </div>
-            <div class="stat-card">
-                <div class="label">总收入</div>
-                <div class="value" id="statRevenue">-</div>
-            </div>
-        </div>
-
-        <!-- Tabs -->
-        <div class="tabs">
-            <div class="tab active" onclick="switchTab('users')">👥 用户管理</div>
-            <div class="tab" onclick="switchTab('orders')">📋 订单管理</div>
-        </div>
-
-        <!-- Users Tab -->
-        <div class="tab-content active" id="tab-users">
-            <div class="toolbar">
-                <input type="text" id="userSearch" placeholder="搜索邮箱/昵称..." style="width:220px;"
-                    onkeydown="if(event.key==='Enter')loadUsers()">
-                <button class="btn btn-outline btn-sm" onclick="loadUsers()">搜索</button>
-            </div>
-            <div class="glass-card" style="overflow-x:auto;">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>ID</th>
-                            <th>邮箱</th>
-                            <th>昵称</th>
-                            <th>角色</th>
-                            <th>余额</th>
-                            <th>套餐</th>
-                            <th>房间</th>
-                            <th>状态</th>
-                            <th>注册于</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="userTableBody">
-                        <tr>
-                            <td colspan="10" style="text-align:center;color:rgba(255,255,255,0.4);">加载中...</td>
-                        </tr>
-                    </tbody>
-                </table>
-                <div class="pagination" id="userPagination"></div>
+            <!-- Mobile Menu -->
+            <div class="flex-none sm:hidden dropdown dropdown-end">
+                <label tabindex="0" class="btn btn-ghost btn-circle">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                </label>
+                <ul tabindex="0"
+                    class="menu menu-sm dropdown-content mt-3 z-[1] p-2 shadow bg-base-100 rounded-box w-52 border border-base-content/10">
+                    <li><a href="/">控制台</a></li>
+                    <li><a href="user-center.html">用户中心</a></li>
+                    <li><a onclick="doLogout()" class="text-error">退出</a></li>
+                </ul>
             </div>
         </div>
 
-        <!-- Orders Tab -->
-        <div class="tab-content" id="tab-orders">
-            <div class="toolbar">
-                <input type="text" id="orderSearch" placeholder="搜索订单号/邮箱..." style="width:220px;"
-                    onkeydown="if(event.key==='Enter')loadOrders()">
-                <select id="orderStatus" onchange="loadOrders()">
-                    <option value="">全部状态</option>
-                    <option value="paid">已支付</option>
-                    <option value="pending">待支付</option>
-                    <option value="failed">失败</option>
-                    <option value="refunded">已退款</option>
-                </select>
-                <button class="btn btn-outline btn-sm" onclick="loadOrders()">搜索</button>
+        <div id="alertBox" class="alert shadow-lg mb-6 hidden font-medium transition-all"></div>
+
+        <!-- System Stats -->
+        <div
+            class="stats stats-vertical sm:stats-horizontal shadow-xl bg-base-100/60 backdrop-blur-md border border-white/5 w-full mb-8">
+            <div class="stat place-items-center">
+                <div class="stat-title opacity-70">总用户数</div>
+                <div class="stat-value text-3xl" id="statUsers">-</div>
             </div>
-            <div class="glass-card" style="overflow-x:auto;">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>订单号</th>
-                            <th>用户</th>
-                            <th>金额</th>
-                            <th>方式</th>
-                            <th>状态</th>
-                            <th>时间</th>
-                            <th>操作</th>
-                        </tr>
-                    </thead>
-                    <tbody id="orderTableBody">
-                        <tr>
-                            <td colspan="7" style="text-align:center;color:rgba(255,255,255,0.4);">加载中...</td>
-                        </tr>
-                    </tbody>
-                </table>
-                <div class="pagination" id="orderPagination"></div>
+            <div class="stat place-items-center">
+                <div class="stat-title opacity-70">总房间数</div>
+                <div class="stat-value text-3xl text-primary" id="statRooms">-</div>
+            </div>
+            <div class="stat place-items-center">
+                <div class="stat-title opacity-70">活跃房间</div>
+                <div class="stat-value text-3xl text-secondary" id="statActive">-</div>
+            </div>
+            <div class="stat place-items-center">
+                <div class="stat-title opacity-70">总订单数</div>
+                <div class="stat-value text-3xl" id="statOrders">-</div>
+            </div>
+            <div class="stat place-items-center">
+                <div class="stat-title opacity-70">总收入</div>
+                <div class="stat-value text-3xl text-accent" id="statRevenue">-</div>
+            </div>
+        </div>
+
+        <!-- Main Workspace -->
+        <div class="card bg-base-100/70 backdrop-blur-md shadow-xl border border-white/5 min-h-[600px]">
+            <div class="card-body p-0">
+                <!-- Tabs -->
+                <div role="tablist" class="tabs tabs-bordered grid-cols-2 lg:grid-cols-4 px-6 pt-6">
+                    <input type="radio" name="admin_tabs" role="tab" class="tab text-lg h-12 font-bold"
+                        aria-label="👥 用户管理" id="tabUsers" checked onchange="switchTab('users')" />
+                    <input type="radio" name="admin_tabs" role="tab" class="tab text-lg h-12 font-bold"
+                        aria-label="📋 订单管理" id="tabOrders" onchange="switchTab('orders')" />
+                </div>
+
+                <div class="p-6">
+                    <!-- Users Tab Content -->
+                    <div id="content-users" class="space-y-4">
+                        <div class="flex flex-col sm:flex-row gap-3">
+                            <div class="join">
+                                <input class="input input-sm input-bordered join-item w-64 bg-base-200/50"
+                                    id="userSearch" placeholder="搜索邮箱/昵称..."
+                                    onkeydown="if(event.key==='Enter')loadUsers()" />
+                                <button class="btn btn-sm btn-primary join-item" onclick="loadUsers()">搜索</button>
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto custom-scrollbar border border-base-content/10 rounded-xl mt-4">
+                            <table class="table table-zebra table-sm whitespace-nowrap">
+                                <thead class="bg-base-200/50">
+                                    <tr class="text-base-content/70">
+                                        <th class="w-16">ID</th>
+                                        <th>邮箱</th>
+                                        <th>昵称</th>
+                                        <th>角色</th>
+                                        <th>余额</th>
+                                        <th>套餐</th>
+                                        <th>房间配额</th>
+                                        <th>状态</th>
+                                        <th>注册时间</th>
+                                        <th class="w-20 text-center">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="userTableBody">
+                                    <tr>
+                                        <td colspan="10" class="text-center py-10 opacity-50"><span
+                                                class="loading loading-spinner"></span></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="flex justify-center w-full mt-4" id="userPagination"></div>
+                    </div>
+
+                    <!-- Orders Tab Content -->
+                    <div id="content-orders" class="space-y-4 hidden">
+                        <div class="flex flex-col sm:flex-row gap-3">
+                            <div class="join">
+                                <input class="input input-sm input-bordered join-item w-56 bg-base-200/50"
+                                    id="orderSearch" placeholder="搜索订单号/邮箱..."
+                                    onkeydown="if(event.key==='Enter')loadOrders()" />
+                                <select class="select select-sm select-bordered join-item bg-base-200/50"
+                                    id="orderStatus" onchange="loadOrders()">
+                                    <option value="">全部状态</option>
+                                    <option value="paid">已支付</option>
+                                    <option value="pending">待支付</option>
+                                    <option value="failed">失败</option>
+                                    <option value="refunded">已退款</option>
+                                </select>
+                                <button class="btn btn-sm btn-primary join-item" onclick="loadOrders()">搜索</button>
+                            </div>
+                        </div>
+
+                        <div class="overflow-x-auto custom-scrollbar border border-base-content/10 rounded-xl mt-4">
+                            <table class="table table-zebra table-sm whitespace-nowrap">
+                                <thead class="bg-base-200/50">
+                                    <tr class="text-base-content/70">
+                                        <th>订单号</th>
+                                        <th>用户</th>
+                                        <th>金额</th>
+                                        <th>支付方式</th>
+                                        <th>状态</th>
+                                        <th>创建时间</th>
+                                        <th class="w-24 text-center">操作</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="orderTableBody">
+                                    <tr>
+                                        <td colspan="7" class="text-center py-10 opacity-50"><span
+                                                class="loading loading-spinner"></span></td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                        <div class="flex justify-center w-full mt-4" id="orderPagination"></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
     <!-- User Edit Modal -->
-    <div class="modal-overlay" id="userModal">
-        <div class="modal">
-            <h3 id="modalTitle">编辑用户</h3>
+    <dialog id="userModal" class="modal modal-bottom sm:modal-middle">
+        <div class="modal-box border border-base-content/10 max-w-lg">
+            <form method="dialog">
+                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
+            </form>
+            <h3 class="font-bold text-xl mb-6 flex items-center gap-2" id="modalTitle">
+                <span class="text-primary">✏️</span> <span>编辑用户</span>
+            </h3>
+
             <input type="hidden" id="modalUserId">
-            <div class="form-group"><label>角色</label><select id="modalRole">
-                    <option value="user">普通用户</option>
-                    <option value="admin">管理员</option>
-                </select></div>
-            <div class="form-group"><label>状态</label><select id="modalStatus">
-                    <option value="active">正常</option>
-                    <option value="suspended">停用</option>
-                </select></div>
-            <hr style="border-color:rgba(255,255,255,0.06);margin:16px 0;">
-            <div class="form-group"><label>调整余额 (元，正数=加，负数=减)</label><input type="number" id="modalBalanceAdj"
-                    placeholder="0" step="0.01"></div>
-            <div class="form-group"><label>调整原因</label><input type="text" id="modalBalanceReason" placeholder="手动调整">
+
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="form-control w-full">
+                    <label class="label"><span class="label-text">角色权限</span></label>
+                    <select id="modalRole" class="select select-bordered select-sm w-full bg-base-200/50">
+                        <option value="user">普通用户</option>
+                        <option value="admin">系统管理员</option>
+                    </select>
+                </div>
+                <div class="form-control w-full">
+                    <label class="label"><span class="label-text">账号状态</span></label>
+                    <select id="modalStatus" class="select select-bordered select-sm w-full bg-base-200/50">
+                        <option value="active">正常</option>
+                        <option value="suspended" class="text-error">停用</option>
+                    </select>
+                </div>
             </div>
-            <hr style="border-color:rgba(255,255,255,0.06);margin:16px 0;">
-            <div class="form-group"><label>重置密码 (留空不修改)</label><input type="text" id="modalNewPwd"
-                    placeholder="新密码（至少6位）"></div>
-            <hr style="border-color:rgba(255,255,255,0.06);margin:16px 0;">
-            <div class="form-group"><label>设置套餐</label><select id="modalPlan">
-                    <option value="">不修改</option>
-                </select></div>
-            <div class="form-group"><label>有效天数</label><input type="number" id="modalPlanDays" value="30" min="1"></div>
-            <div class="modal-actions">
-                <button class="btn btn-primary btn-sm" onclick="saveUser()">保存</button>
-                <button class="btn btn-outline btn-sm" onclick="closeModal('userModal')">取消</button>
+
+            <div class="divider text-xs opacity-50">余额与额度调整</div>
+
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="form-control w-full">
+                    <label class="label"><span class="label-text">调整余额 (元)</span><span
+                            class="label-text-alt text-info">正加负减</span></label>
+                    <input type="number" id="modalBalanceAdj" placeholder="留空不改" step="0.01"
+                        class="input input-sm input-bordered w-full bg-base-200/50 font-mono">
+                </div>
+                <div class="form-control w-full">
+                    <label class="label"><span class="label-text">调整原因</span></label>
+                    <input type="text" id="modalBalanceReason" placeholder="管理员后台手动调整"
+                        class="input input-sm input-bordered w-full bg-base-200/50">
+                </div>
+            </div>
+
+            <div class="divider text-xs opacity-50">套餐分发</div>
+
+            <div class="grid grid-cols-2 gap-4 mb-4">
+                <div class="form-control w-full">
+                    <label class="label"><span class="label-text">设置套餐</span></label>
+                    <select id="modalPlan" class="select select-bordered select-sm w-full bg-base-200/50">
+                        <option value="">(不修改)</option>
+                    </select>
+                </div>
+                <div class="form-control w-full">
+                    <label class="label"><span class="label-text">有效天数</span></label>
+                    <input type="number" id="modalPlanDays" value="30" min="1"
+                        class="input input-sm input-bordered w-full bg-base-200/50">
+                </div>
+            </div>
+
+            <div class="divider text-xs opacity-50">安全管理</div>
+
+            <div class="form-control w-full mb-6">
+                <label class="label"><span class="label-text">强制重置密码</span></label>
+                <input type="text" id="modalNewPwd" placeholder="留空则不修改（至少6位）"
+                    class="input input-sm input-bordered w-full bg-base-200/50 font-mono">
+            </div>
+
+            <div class="modal-action">
+                <form method="dialog" class="flex gap-2 w-full justify-end">
+                    <button class="btn btn-outline btn-sm px-6">取消</button>
+                    <button class="btn btn-primary btn-sm px-8 shadow-sm" type="button"
+                        onclick="saveUser()">保存所有修改</button>
+                </form>
             </div>
         </div>
-    </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <!-- General Message Modal -->
+    <dialog id="messageModal" class="modal modal-bottom sm:modal-middle">
+        <div class="modal-box border border-base-content/10">
+            <h3 class="font-bold text-lg flex items-center gap-2" id="msgModalTitle">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-info" fill="none" viewBox="0 0 24 24"
+                    stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                提示
+            </h3>
+            <p class="py-4 whitespace-pre-line" id="msgModalMsg"></p>
+            <div class="modal-action">
+                <form method="dialog" class="flex gap-2 w-full justify-end">
+                    <button class="btn btn-outline" id="msgModalCancelBtn" style="display:none;">取消</button>
+                    <button class="btn btn-primary" id="msgModalConfirmBtn">确定</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
+
+    <div id="toastContainer" class="toast toast-top toast-center z-50 mt-4 transition-all"></div>
 
     <script>
         const token = localStorage.getItem('accessToken');
@@ -443,25 +312,83 @@
 
         let userPage = 1, orderPage = 1;
 
+        // Custom UI utilities
+        function showToast(msg, type = 'success') {
+            const container = document.getElementById('toastContainer');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type} shadow-lg mb-2 animate-bounce flex items-center gap-2`;
+            if (type === 'error') {
+                alert.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> <span>${msg}</span>`;
+            } else {
+                alert.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> <span>${msg}</span>`;
+            }
+            container.appendChild(alert);
+            setTimeout(() => {
+                alert.classList.replace('animate-bounce', 'opacity-0');
+                setTimeout(() => alert.remove(), 300);
+            }, 3000);
+        }
+
+        function showMessageModal(title, msg, isConfirm = false, isError = false) {
+            return new Promise(resolve => {
+                const titleIcon = document.querySelector('#msgModalTitle svg');
+                if (isError) {
+                    titleIcon.classList.replace('text-info', 'text-error');
+                    titleIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />';
+                } else {
+                    titleIcon.classList.replace('text-error', 'text-info');
+                    titleIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />';
+                }
+
+                document.getElementById('msgModalTitle').innerHTML = titleIcon.outerHTML + `<span>${title}</span>`;
+                document.getElementById('msgModalMsg').innerText = msg;
+                const cancelBtn = document.getElementById('msgModalCancelBtn');
+                const confirmBtn = document.getElementById('msgModalConfirmBtn');
+
+                cancelBtn.style.display = isConfirm ? 'block' : 'none';
+                cancelBtn.onclick = () => resolve(false);
+                confirmBtn.onclick = () => resolve(true);
+
+                document.getElementById('messageModal').showModal();
+                document.getElementById('messageModal').addEventListener('close', () => resolve(false), { once: true });
+            });
+        }
+
         function fmt(cents) { return cents === 0 ? '¥0' : '¥' + (cents / 100).toFixed(cents % 100 === 0 ? 0 : 2); }
-        function fmtDate(d) { return d ? new Date(d).toLocaleDateString('zh-CN') : '-'; }
+        function fmtDate(d) { return d ? new Date(d).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }) : '-'; }
+
+        const badgeClasses = {
+            paid: 'badge-success', pending: 'badge-warning', failed: 'badge-error', refunded: 'badge-ghost',
+            active: 'badge-success', suspended: 'badge-error',
+            admin: 'badge-primary', user: 'badge-ghost'
+        };
+        const statusNames = {
+            paid: '已支付', pending: '待支付', failed: '充值失败', refunded: '已退款',
+            active: '正常', suspended: '已停用',
+            admin: '管理员', user: '用户'
+        };
+        const statusBadge = s => `<span class="badge ${badgeClasses[s] || 'badge-ghost'} badge-sm font-medium border-base-content/10 shadow-sm">${statusNames[s] || s}</span>`;
 
         async function apiFetch(url, opts = {}) {
             const res = await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...opts.headers } });
             if (res.status === 401) { window.location.href = 'login.html'; }
-            if (res.status === 403) { alert('无管理员权限'); window.location.href = '/'; }
+            if (res.status === 403) {
+                await showMessageModal('权限拒绝', '无管理员权限访问该页面', false, true);
+                window.location.href = '/';
+            }
             return res;
         }
 
         function switchTab(name) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-            event.target.classList.add('active');
-            document.getElementById('tab-' + name).classList.add('active');
-            if (name === 'orders') loadOrders();
+            document.getElementById('content-users').classList.add('hidden');
+            document.getElementById('content-orders').classList.add('hidden');
+            document.getElementById('content-' + name).classList.remove('hidden');
+            if (name === 'orders' && !document.getElementById('orderTableBody').hasChildNodes()) {
+                loadOrders(); // load only once lazily mostly handled by init anyway
+            } else if (name === 'orders') {
+                loadOrders();
+            }
         }
-
-        function closeModal(id) { document.getElementById(id).classList.remove('show'); }
 
         // ---- Stats ----
         async function loadStats() {
@@ -473,37 +400,41 @@
                 document.getElementById('statActive').textContent = d.activeRooms;
                 document.getElementById('statOrders').textContent = d.totalOrders;
                 document.getElementById('statRevenue').textContent = fmt(d.totalRevenue);
-            } catch { }
+            } catch { } // fail silently for metrics
         }
 
         // ---- Users ----
         async function loadUsers() {
             try {
                 const search = document.getElementById('userSearch').value;
-                const res = await apiFetch(`/api/admin/users?page=${userPage}&limit=20&search=${encodeURIComponent(search)}`);
+                document.getElementById('userTableBody').innerHTML = '<tr><td colspan="10" class="text-center py-10 opacity-50"><span class="loading loading-spinner"></span></td></tr>';
+                const res = await apiFetch(`/api/admin/users?page=${userPage}&limit=10&search=${encodeURIComponent(search)}`);
                 const d = await res.json();
 
                 const tbody = document.getElementById('userTableBody');
                 if (!d.data || d.data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="10" style="text-align:center;color:rgba(255,255,255,0.4);">无数据</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="10" class="text-center py-8 opacity-40">未找到符合条件的用户</td></tr>';
                 } else {
-                    tbody.innerHTML = d.data.map(u => `<tr>
-                        <td>${u.id}</td>
-                        <td>${u.email}</td>
-                        <td>${u.nickname || '-'}</td>
-                        <td><span class="badge badge-${u.role}">${u.role}</span></td>
-                        <td>${fmt(u.balance || 0)}</td>
+                    tbody.innerHTML = d.data.map(u => `
+                    <tr class="hover">
+                        <td class="font-mono text-xs opacity-60">${u.id}</td>
+                        <td class="font-medium">${u.email}</td>
+                        <td>${u.nickname || '<span class="opacity-30">-</span>'}</td>
+                        <td>${statusBadge(u.role)}</td>
+                        <td class="font-mono text-success font-semibold">${fmt(u.balance || 0)}</td>
                         <td>${u.plan_name || '免费版'}</td>
-                        <td>${u.room_count || 0}</td>
-                        <td><span class="badge badge-${u.status}">${u.status === 'active' ? '正常' : '停用'}</span></td>
-                        <td>${fmtDate(u.created_at)}</td>
-                        <td><button class="btn btn-ghost btn-sm" onclick="editUser(${u.id},'${u.role}','${u.status}')">编辑</button></td>
+                        <td class="font-mono">${u.room_count || 0}</td>
+                        <td>${statusBadge(u.status)}</td>
+                        <td class="text-xs opacity-60">${fmtDate(u.created_at)}</td>
+                        <td class="text-center">
+                            <button class="btn btn-ghost btn-xs text-info hover:bg-info/20" onclick="editUser(${u.id},'${u.role}','${u.status}')">管理</button>
+                        </td>
                     </tr>`).join('');
                 }
 
                 renderPagination('userPagination', d.pagination, p => { userPage = p; loadUsers(); });
             } catch (err) {
-                console.error('Load users error:', err);
+                showToast('加载用户列表失败', 'error');
             }
         }
 
@@ -516,12 +447,14 @@
             document.getElementById('modalNewPwd').value = '';
             document.getElementById('modalPlan').value = '';
             document.getElementById('modalPlanDays').value = 30;
-            document.getElementById('modalTitle').textContent = `编辑用户 #${id}`;
-            document.getElementById('userModal').classList.add('show');
+
+            document.querySelector('#modalTitle span:last-child').textContent = `编辑用户 (${id})`;
+            document.getElementById('userModal').showModal();
         }
 
         async function saveUser() {
             const id = document.getElementById('modalUserId').value;
+            const modal = document.getElementById('userModal');
             try {
                 // 1. Update role/status
                 await apiFetch(`/api/admin/users/${id}`, {
@@ -536,9 +469,10 @@
                 const adjYuan = parseFloat(document.getElementById('modalBalanceAdj').value);
                 if (adjYuan && adjYuan !== 0) {
                     const adjCents = Math.round(adjYuan * 100);
+                    const reason = document.getElementById('modalBalanceReason').value || '管理员后台手动调整';
                     await apiFetch(`/api/admin/users/${id}/adjust-balance`, {
                         method: 'POST',
-                        body: JSON.stringify({ amount: adjCents, reason: document.getElementById('modalBalanceReason').value })
+                        body: JSON.stringify({ amount: adjCents, reason })
                     });
                 }
 
@@ -562,11 +496,12 @@
                     });
                 }
 
-                closeModal('userModal');
+                modal.close();
+                showToast('用户信息更新成功', 'success');
                 loadUsers();
                 loadStats();
             } catch (err) {
-                alert('保存失败: ' + err.message);
+                showToast('保存失败: ' + err.message, 'error');
             }
         }
 
@@ -575,55 +510,84 @@
             try {
                 const search = document.getElementById('orderSearch').value;
                 const status = document.getElementById('orderStatus').value;
-                const res = await apiFetch(`/api/admin/orders?page=${orderPage}&limit=20&search=${encodeURIComponent(search)}&status=${status}`);
+                document.getElementById('orderTableBody').innerHTML = '<tr><td colspan="7" class="text-center py-10 opacity-50"><span class="loading loading-spinner"></span></td></tr>';
+                const res = await apiFetch(`/api/admin/orders?page=${orderPage}&limit=10&search=${encodeURIComponent(search)}&status=${status}`);
                 const d = await res.json();
 
                 const tbody = document.getElementById('orderTableBody');
                 if (!d.data || d.data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:rgba(255,255,255,0.4);">无数据</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 opacity-40">未找到相关订单</td></tr>';
                 } else {
-                    const statusMap = { paid: '已支付', pending: '待支付', failed: '失败', refunded: '已退款' };
-                    tbody.innerHTML = d.data.map(o => `<tr>
-                        <td style="font-size:0.75rem;">${o.order_no}</td>
-                        <td>${o.user_email || '-'}</td>
-                        <td>${fmt(o.amount)}</td>
-                        <td>${o.payment_method || '-'}</td>
-                        <td><span class="badge badge-${o.status}">${statusMap[o.status] || o.status}</span></td>
-                        <td>${fmtDate(o.created_at)}</td>
-                        <td>${o.status === 'pending' ? `<button class="btn btn-ghost btn-sm" onclick="updateOrderStatus(${o.id},'paid')">标记已付</button>` : ''}</td>
+                    tbody.innerHTML = d.data.map(o => `
+                    <tr class="hover">
+                        <td class="font-mono text-xs opacity-60">${o.order_no}</td>
+                        <td class="font-medium">${o.user_email || '<span class="opacity-30">-</span>'}</td>
+                        <td class="font-semibold">${fmt(o.amount)}</td>
+                        <td><div class="badge badge-outline badge-sm capitalize border-base-content/20">${o.payment_method || '-'}</div></td>
+                        <td>${statusBadge(o.status)}</td>
+                        <td class="text-xs opacity-60">${fmtDate(o.created_at)}</td>
+                        <td class="text-center">
+                            ${o.status === 'pending' ? `<button class="btn btn-ghost btn-xs text-success hover:bg-success/20" onclick="updateOrderStatus(${o.id},'paid')">补单(标为已付)</button>` : '<span class="opacity-20 text-xs">-</span>'}
+                        </td>
                     </tr>`).join('');
                 }
 
                 renderPagination('orderPagination', d.pagination, p => { orderPage = p; loadOrders(); });
-            } catch (err) { console.error('Load orders error:', err); }
+            } catch (err) {
+                showToast('加载订单列表失败', 'error');
+            }
         }
 
         async function updateOrderStatus(id, status) {
-            if (!confirm(`确认将订单标记为"${status}"？`)) return;
+            const confirmed = await showMessageModal('补单确认', `确认将此订单强制标记为"已支付"并下发相应商品权益吗？\n此操作一般用于用户付款成功但系统未收到回调的情况。`, true, true);
+            if (!confirmed) return;
             try {
                 await apiFetch(`/api/admin/orders/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
+                showToast('订单补发成功', 'success');
                 loadOrders();
                 loadStats();
-            } catch (err) { alert(err.message); }
+            } catch (err) { showToast(err.message, 'error'); }
         }
 
-        // ---- Pagination helper ----
+        // ---- Pagination helper (DaisyUI join) ----
         function renderPagination(elemId, pg, onClick) {
             if (!pg || pg.totalPages <= 1) { document.getElementById(elemId).innerHTML = ''; return; }
-            let html = '';
-            html += `<button ${pg.page <= 1 ? 'disabled' : ''} onclick="arguments[0].stopPropagation()">上一页</button>`;
-            for (let i = 1; i <= pg.totalPages && i <= 10; i++) {
-                html += `<button class="${i === pg.page ? 'active' : ''}">${i}</button>`;
+            let html = '<div class="join shadow-sm border border-base-content/10 bg-base-100">';
+            html += `<button class="join-item btn btn-sm ${pg.page <= 1 ? 'btn-disabled opacity-30' : ''}" data-act="prev">«</button>`;
+
+            // max pages to show = 5
+            let start = Math.max(1, pg.page - 2);
+            let end = Math.min(pg.totalPages, pg.page + 2);
+            if (end - start < 4) {
+                if (start === 1) end = Math.min(pg.totalPages, 5);
+                else start = Math.max(1, pg.totalPages - 4);
             }
-            html += `<button ${pg.page >= pg.totalPages ? 'disabled' : ''}>下一页</button>`;
+
+            if (start > 1) {
+                html += `<button class="join-item btn btn-sm" data-act="1">1</button>`;
+                if (start > 2) html += `<button class="join-item btn btn-sm btn-disabled">...</button>`;
+            }
+
+            for (let i = start; i <= end; i++) {
+                html += `<button class="join-item btn btn-sm ${i === pg.page ? 'btn-active border-primary/20' : ''}" data-act="${i}">${i}</button>`;
+            }
+
+            if (end < pg.totalPages) {
+                if (end < pg.totalPages - 1) html += `<button class="join-item btn btn-sm btn-disabled">...</button>`;
+                html += `<button class="join-item btn btn-sm" data-act="${pg.totalPages}">${pg.totalPages}</button>`;
+            }
+
+            html += `<button class="join-item btn btn-sm ${pg.page >= pg.totalPages ? 'btn-disabled opacity-30' : ''}" data-act="next">»</button>`;
+            html += '</div>';
+
             const div = document.getElementById(elemId);
             div.innerHTML = html;
-            div.querySelectorAll('button').forEach(btn => {
+            div.querySelectorAll('button[data-act]').forEach(btn => {
                 btn.addEventListener('click', () => {
-                    const text = btn.textContent;
-                    if (text === '上一页') onClick(pg.page - 1);
-                    else if (text === '下一页') onClick(pg.page + 1);
-                    else onClick(parseInt(text));
+                    const act = btn.getAttribute('data-act');
+                    if (act === 'prev') onClick(pg.page - 1);
+                    else if (act === 'next') onClick(pg.page + 1);
+                    else if (!isNaN(parseInt(act))) onClick(parseInt(act));
                 });
             });
         }
@@ -637,13 +601,25 @@
                 plans.forEach(p => {
                     const opt = document.createElement('option');
                     opt.value = p.code;
-                    opt.textContent = `${p.name} (${p.room_limit === -1 ? '无限' : p.room_limit}间)`;
+                    opt.textContent = `${p.name} (${p.room_limit === -1 ? '无限配额' : p.room_limit + '间'})`;
                     select.appendChild(opt);
                 });
-            } catch { }
+            } catch { } // fail silently
         }
 
-        // Init
+        function doLogout() {
+            showMessageModal('退出登录', '确定要退出管理账号吗？', true).then(confirmed => {
+                if (confirmed) {
+                    const rt = localStorage.getItem('refreshToken');
+                    fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken: rt }) }).catch(() => null);
+                    localStorage.removeItem('accessToken');
+                    localStorage.removeItem('refreshToken');
+                    window.location.href = 'login.html';
+                }
+            });
+        }
+
+        // Init Flow
         loadStats();
         loadUsers();
         loadPlans();
