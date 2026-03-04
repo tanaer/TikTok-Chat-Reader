@@ -107,6 +107,7 @@ dist
 *.db
 *.db.*
 *.sql
+!migrations/*.sql
 *.backup
 data.db*
 recovered.sql
