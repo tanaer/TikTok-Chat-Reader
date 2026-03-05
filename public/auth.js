@@ -175,9 +175,10 @@
         if (!slot || !user) return;
         const isAdm = user.role === 'admin';
         const initial = (user.nickname || user.email || '?')[0].toUpperCase();
+        const menuId = 'userMenu_' + Date.now();
 
         slot.innerHTML = `
-          <div class="dropdown dropdown-end">
+          <div class="dropdown dropdown-end" id="${menuId}">
             <label tabindex="0" class="btn btn-ghost gap-2 px-2 cursor-pointer">
               <div class="avatar placeholder">
                 <div class="bg-primary/20 text-primary rounded-full w-8 ring-1 ring-primary/30 font-bold">
@@ -188,27 +189,29 @@
               ${isAdm ? '<span class="badge badge-warning badge-xs">Admin</span>' : ''}
               <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
             </label>
-            <ul tabindex="0" class="dropdown-content z-[100] menu p-2 shadow-2xl bg-base-300 rounded-box w-52 border border-white/10">
-              <li class="menu-title text-xs opacity-40 pt-1">账户</li>
+            <div class="dropdown-content z-[100] menu bg-base-300 rounded-box w-52 p-2 shadow-2xl border border-white/10">
+              <li class="menu-title text-xs opacity-40 pt-1"><span>账户</span></li>
               <li><a href="/landing/user-center.html">👤 用户中心</a></li>
-              ${isAdm ? `<li class="menu-title text-xs opacity-40">管理员</li><li><a href="/landing/admin.html" class="text-warning">⚙️ 后台管理</a></li>` : ''}
-              <li class="border-t border-white/10 mt-1 pt-1"><a class="text-error" id="logoutLink">🚪 退出登录</a></li>
-            </ul>
+              ${isAdm ? `<li class="menu-title text-xs opacity-40"><span>管理员</span></li><li><a href="/landing/admin.html" class="text-warning">⚙️ 后台管理</a></li>` : ''}
+              <li class="border-t border-white/10 mt-1 pt-1"><a class="text-error" id="logoutBtn">🚪 退出登录</a></li>
+            </div>
           </div>
         `;
 
-        // Bind logout click using setTimeout to ensure DOM is ready
+        // Use event delegation for logout button
         setTimeout(function() {
-            const logoutLink = document.getElementById('logoutLink');
-            if (logoutLink) {
-                logoutLink.onclick = function(e) {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    window.logout();
-                    return false;
-                };
+            const menu = document.getElementById(menuId);
+            if (menu) {
+                menu.addEventListener('click', function(e) {
+                    if (e.target.closest('#logoutBtn') || e.target.id === 'logoutBtn') {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        window.logout();
+                        return false;
+                    }
+                });
             }
-        }, 50);
+        }, 100);
     };
 
     // ── 7. Global Helpers ────────────────────────────────────────────────────
