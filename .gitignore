@@ -125,3 +125,4 @@ doc/DouyinLiveRecorder-main
 *.db-wal
 *.db-shm
 bin/*.exe
+.qoder

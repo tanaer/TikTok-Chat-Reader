@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>管理后台 - TikTok Live Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/auth.js"></script>
+</head>
+<body class="bg-base-300 min-h-screen flex">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-base-100 min-h-screen shadow-lg flex-shrink-0">
+        <div class="p-4 border-b border-base-300">
+            <a href="/" class="text-xl font-bold text-primary">TikTok Monitor</a>
+            <p class="text-xs text-base-content/60 mt-1">管理后台</p>
+        </div>
+        <ul class="menu p-4 gap-1" id="sidebar-menu">
+            <li><a class="active" onclick="showSection('overview')">系统概览</a></li>
+            <li><a onclick="showSection('users')">用户管理</a></li>
+            <li><a onclick="showSection('orders')">订单管理</a></li>
+            <li><a onclick="showSection('plans')">套餐设置</a></li>
+            <li><a onclick="showSection('settings')">系统设置</a></li>
+            <li class="mt-4"><a href="/" class="text-base-content/60">← 返回前台</a></li>
+        </ul>
+    </aside>
+
+    <!-- Main Content -->
+    <div class="flex-1 flex flex-col min-h-screen">
+        <!-- Top bar -->
+        <div class="navbar bg-base-100 shadow px-6">
+            <div class="flex-1"><h2 id="section-title" class="text-lg font-bold">系统概览</h2></div>
+            <div class="flex-none">
+                <ul id="auth-nav-area" class="menu menu-horizontal gap-1"></ul>
+            </div>
+        </div>
+
+        <main class="flex-1 p-6 overflow-y-auto">
+            <!-- Overview Section -->
+            <section id="sec-overview">
+                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                    <div class="stat bg-base-100 rounded-box shadow"><div class="stat-title">总用户</div><div class="stat-value text-primary" id="s-users">-</div><div class="stat-desc" id="s-users-today"></div></div>
+                    <div class="stat bg-base-100 rounded-box shadow"><div class="stat-title">活跃订阅</div><div class="stat-value text-secondary" id="s-subs">-</div></div>
+                    <div class="stat bg-base-100 rounded-box shadow"><div class="stat-title">本月收入</div><div class="stat-value text-accent" id="s-revenue">-</div><div class="stat-desc" id="s-orders-total"></div></div>
+                    <div class="stat bg-base-100 rounded-box shadow"><div class="stat-title">用户余额池</div><div class="stat-value" id="s-balance">-</div></div>
+                </div>
+                <div class="stat bg-base-100 rounded-box shadow inline-block">
+                    <div class="stat-title">活跃监控房间</div><div class="stat-value text-info" id="s-rooms">-</div>
+                </div>
+            </section>
+
+            <!-- Users Section -->
+            <section id="sec-users" class="hidden">
+                <div class="flex gap-4 mb-4 flex-wrap">
+                    <input type="text" id="user-search" class="input input-bordered input-sm w-64" placeholder="搜索用户名/邮箱/昵称" onkeyup="if(event.key==='Enter')loadUsers(1)">
+                    <select id="user-role-filter" class="select select-bordered select-sm" onchange="loadUsers(1)">
+                        <option value="">全部角色</option><option value="user">普通用户</option><option value="admin">管理员</option>
+                    </select>
+                    <select id="user-status-filter" class="select select-bordered select-sm" onchange="loadUsers(1)">
+                        <option value="">全部状态</option><option value="active">正常</option><option value="disabled">已禁用</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm" onclick="loadUsers(1)">搜索</button>
+                </div>
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body p-4">
+                        <div class="overflow-x-auto">
+                            <table class="table table-zebra table-sm">
+                                <thead><tr><th>ID</th><th>用户名</th><th>昵称</th><th>余额</th><th>套餐</th><th>房间数</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
+                                <tbody id="users-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div id="users-pagination" class="flex justify-center mt-4"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Orders Section -->
+            <section id="sec-orders" class="hidden">
+                <div class="flex gap-4 mb-4 flex-wrap">
+                    <input type="text" id="order-search" class="input input-bordered input-sm w-64" placeholder="搜索订单号/用户名" onkeyup="if(event.key==='Enter')loadAdminOrders(1)">
+                    <select id="order-type-filter" class="select select-bordered select-sm" onchange="loadAdminOrders(1)">
+                        <option value="">全部类型</option><option value="plan">套餐</option><option value="addon">扩容包</option><option value="recharge">充值</option>
+                    </select>
+                    <button class="btn btn-primary btn-sm" onclick="loadAdminOrders(1)">搜索</button>
+                </div>
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body p-4">
+                        <div class="overflow-x-auto">
+                            <table class="table table-zebra table-sm">
+                                <thead><tr><th>订单号</th><th>用户</th><th>类型</th><th>内容</th><th>金额</th><th>状态</th><th>时间</th></tr></thead>
+                                <tbody id="admin-orders-tbody"></tbody>
+                            </table>
+                        </div>
+                        <div id="admin-orders-pagination" class="flex justify-center mt-4"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Plans Section -->
+            <section id="sec-plans" class="hidden">
+                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                    <!-- Plans -->
+                    <div>
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-bold">套餐管理</h3>
+                            <button class="btn btn-primary btn-sm" onclick="showPlanForm()">新增套餐</button>
+                        </div>
+                        <div id="plans-list" class="space-y-3"></div>
+                    </div>
+                    <!-- Addons -->
+                    <div>
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="text-lg font-bold">扩容包管理</h3>
+                            <button class="btn btn-primary btn-sm" onclick="showAddonForm()">新增扩容包</button>
+                        </div>
+                        <div id="addons-list" class="space-y-3"></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Settings Section -->
+            <section id="sec-settings" class="hidden">
+                <div class="card bg-base-100 shadow max-w-3xl">
+                    <div class="card-body">
+                        <h3 class="card-title mb-4">系统设置</h3>
+                        <div id="settings-form" class="space-y-4"></div>
+                        <div class="mt-6">
+                            <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- User detail modal -->
+    <dialog id="userDetailModal" class="modal">
+        <div class="modal-box max-w-3xl">
+            <h3 class="font-bold text-lg mb-4">用户详情</h3>
+            <div id="user-detail-content"></div>
+            <div class="modal-action"><button class="btn" onclick="document.getElementById('userDetailModal').close()">关闭</button></div>
+        </div>
+    </dialog>
+
+    <!-- Balance adjust modal -->
+    <dialog id="balanceModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">调整余额</h3>
+            <p class="text-sm text-base-content/60 mt-1" id="bal-user-info"></p>
+            <div class="form-control mt-4">
+                <label class="label"><span class="label-text">调整金额（正数=充值，负数=扣款）</span></label>
+                <input type="number" id="bal-amount" class="input input-bordered" step="0.01">
+            </div>
+            <div class="form-control mt-3">
+                <label class="label"><span class="label-text">备注 *</span></label>
+                <input type="text" id="bal-remark" class="input input-bordered" placeholder="例: 手动充值">
+            </div>
+            <input type="hidden" id="bal-user-id">
+            <div class="modal-action">
+                <button class="btn" onclick="document.getElementById('balanceModal').close()">取消</button>
+                <button class="btn btn-primary" onclick="submitBalanceAdjust()">确认</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Plan form modal -->
+    <dialog id="planFormModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg" id="plan-form-title">新增套餐</h3>
+            <input type="hidden" id="pf-id">
+            <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input type="text" id="pf-name" class="input input-bordered"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">代码 (英文)</span></label><input type="text" id="pf-code" class="input input-bordered"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">房间上限</span></label><input type="number" id="pf-room" class="input input-bordered" min="1"></div>
+            <div class="grid grid-cols-3 gap-2 mt-2">
+                <div class="form-control"><label class="label"><span class="label-text">月价</span></label><input type="number" id="pf-pm" class="input input-bordered input-sm" step="0.01"></div>
+                <div class="form-control"><label class="label"><span class="label-text">季价</span></label><input type="number" id="pf-pq" class="input input-bordered input-sm" step="0.01"></div>
+                <div class="form-control"><label class="label"><span class="label-text">年价</span></label><input type="number" id="pf-py" class="input input-bordered input-sm" step="0.01"></div>
+            </div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">排序</span></label><input type="number" id="pf-sort" class="input input-bordered" value="0"></div>
+            <div class="modal-action">
+                <button class="btn" onclick="document.getElementById('planFormModal').close()">取消</button>
+                <button class="btn btn-primary" onclick="submitPlanForm()">保存</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Addon form modal -->
+    <dialog id="addonFormModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg" id="addon-form-title">新增扩容包</h3>
+            <input type="hidden" id="af-id">
+            <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input type="text" id="af-name" class="input input-bordered"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">房间数</span></label><input type="number" id="af-count" class="input input-bordered" min="1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">价格</span></label><input type="number" id="af-price" class="input input-bordered" step="0.01"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input type="text" id="af-desc" class="input input-bordered"></div>
+            <div class="modal-action">
+                <button class="btn" onclick="document.getElementById('addonFormModal').close()">取消</button>
+                <button class="btn btn-primary" onclick="submitAddonForm()">保存</button>
+            </div>
+        </div>
+    </dialog>
+
+    <script src="/js/admin.js"></script>
+</body>
+</html>

@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>用户中心 - TikTok Live Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/auth.js"></script>
+</head>
+<body class="bg-base-300 min-h-screen">
+    <!-- Navbar -->
+    <div class="navbar bg-base-100 shadow-lg">
+        <div class="flex-1">
+            <a class="btn btn-ghost text-xl text-primary font-bold" href="/">TikTok Monitor</a>
+        </div>
+        <div class="flex-none">
+            <ul id="auth-nav-area" class="menu menu-horizontal gap-1"></ul>
+        </div>
+    </div>
+
+    <div class="max-w-6xl mx-auto px-4 py-6">
+        <h1 class="text-2xl font-bold mb-6">用户中心</h1>
+
+        <!-- Tabs -->
+        <div class="tabs tabs-boxed mb-6">
+            <a class="tab tab-active" onclick="switchTab('overview')">概览</a>
+            <a class="tab" onclick="switchTab('subscription')">我的订阅</a>
+            <a class="tab" onclick="switchTab('orders')">订单记录</a>
+            <a class="tab" onclick="switchTab('balance')">余额明细</a>
+            <a class="tab" onclick="switchTab('settings')">账号设置</a>
+        </div>
+
+        <!-- Tab: Overview -->
+        <div id="tab-overview" class="tab-content">
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+                <div class="stat bg-base-100 rounded-box shadow">
+                    <div class="stat-title">账户余额</div>
+                    <div class="stat-value text-primary" id="ov-balance">--</div>
+                    <div class="stat-desc">联系管理员充值</div>
+                </div>
+                <div class="stat bg-base-100 rounded-box shadow">
+                    <div class="stat-title">当前套餐</div>
+                    <div class="stat-value text-secondary" id="ov-plan">--</div>
+                    <div class="stat-desc" id="ov-plan-expire"></div>
+                </div>
+                <div class="stat bg-base-100 rounded-box shadow">
+                    <div class="stat-title">房间配额</div>
+                    <div class="stat-value" id="ov-rooms">--</div>
+                    <div class="stat-desc" id="ov-rooms-detail"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Subscription -->
+        <div id="tab-subscription" class="tab-content hidden">
+            <!-- Current subscription -->
+            <div class="card bg-base-100 shadow mb-6">
+                <div class="card-body">
+                    <h3 class="card-title">当前订阅</h3>
+                    <div id="current-sub-info">加载中...</div>
+                </div>
+            </div>
+            <!-- Available plans -->
+            <h3 class="text-lg font-bold mb-4">可用套餐</h3>
+            <div id="plans-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">加载中...</div>
+            <!-- Addon packages -->
+            <h3 class="text-lg font-bold mb-4">房间扩容包</h3>
+            <div id="addons-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6">加载中...</div>
+        </div>
+
+        <!-- Tab: Orders -->
+        <div id="tab-orders" class="tab-content hidden">
+            <div class="card bg-base-100 shadow">
+                <div class="card-body">
+                    <h3 class="card-title">订单记录</h3>
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra">
+                            <thead><tr><th>订单号</th><th>类型</th><th>内容</th><th>金额</th><th>状态</th><th>时间</th></tr></thead>
+                            <tbody id="orders-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div id="orders-pagination" class="flex justify-center mt-4"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Balance -->
+        <div id="tab-balance" class="tab-content hidden">
+            <div class="card bg-base-100 shadow">
+                <div class="card-body">
+                    <h3 class="card-title">余额明细</h3>
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra">
+                            <thead><tr><th>类型</th><th>变动金额</th><th>变动前</th><th>变动后</th><th>备注</th><th>时间</th></tr></thead>
+                            <tbody id="balance-tbody"></tbody>
+                        </table>
+                    </div>
+                    <div id="balance-pagination" class="flex justify-center mt-4"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab: Settings -->
+        <div id="tab-settings" class="tab-content hidden">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <!-- Profile -->
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body">
+                        <h3 class="card-title">个人信息</h3>
+                        <div class="form-control mb-3">
+                            <label class="label"><span class="label-text">用户名</span></label>
+                            <input type="text" id="set-username" class="input input-bordered" disabled>
+                        </div>
+                        <div class="form-control mb-3">
+                            <label class="label"><span class="label-text">昵称</span></label>
+                            <input type="text" id="set-nickname" class="input input-bordered">
+                        </div>
+                        <div class="form-control mb-4">
+                            <label class="label"><span class="label-text">邮箱</span></label>
+                            <input type="email" id="set-email" class="input input-bordered" placeholder="选填">
+                        </div>
+                        <button class="btn btn-primary" onclick="saveProfile()">保存修改</button>
+                    </div>
+                </div>
+                <!-- Password -->
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body">
+                        <h3 class="card-title">修改密码</h3>
+                        <div class="form-control mb-3">
+                            <label class="label"><span class="label-text">旧密码</span></label>
+                            <input type="password" id="old-password" class="input input-bordered">
+                        </div>
+                        <div class="form-control mb-3">
+                            <label class="label"><span class="label-text">新密码</span></label>
+                            <input type="password" id="new-password" class="input input-bordered" minlength="6">
+                        </div>
+                        <div class="form-control mb-4">
+                            <label class="label"><span class="label-text">确认新密码</span></label>
+                            <input type="password" id="confirm-new-password" class="input input-bordered">
+                        </div>
+                        <button class="btn btn-warning" onclick="changePassword()">修改密码</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Purchase modal -->
+    <dialog id="purchaseModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg" id="purchase-title">确认购买</h3>
+            <p class="py-4" id="purchase-detail"></p>
+            <div class="modal-action">
+                <button class="btn" onclick="document.getElementById('purchaseModal').close()">取消</button>
+                <button class="btn btn-primary" id="purchase-confirm-btn" onclick="confirmPurchase()">确认支付</button>
+            </div>
+        </div>
+    </dialog>
+
+    <script>
+    let currentTab = 'overview';
+    let pendingPurchase = null;
+
+    // Init
+    document.addEventListener('DOMContentLoaded', () => {
+        if (!Auth.requireAuth()) return;
+        Auth.updateNavbar();
+        loadOverview();
+    });
+
+    function switchTab(tab) {
+        currentTab = tab;
+        document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
+        document.getElementById(`tab-${tab}`).classList.remove('hidden');
+        document.querySelectorAll('.tabs .tab').forEach(el => el.classList.remove('tab-active'));
+        event.target.classList.add('tab-active');
+
+        if (tab === 'overview') loadOverview();
+        else if (tab === 'subscription') loadSubscription();
+        else if (tab === 'orders') loadOrders(1);
+        else if (tab === 'balance') loadBalanceLogs(1);
+        else if (tab === 'settings') loadSettings();
+    }
+
+    async function loadOverview() {
+        try {
+            const res = await Auth.apiFetch('/api/user/profile');
+            const data = await res.json();
+            if (!res.ok) return;
+
+            const { user, quota } = data;
+            document.getElementById('ov-balance').textContent = `¥${parseFloat(user.balance).toFixed(2)}`;
+
+            if (quota.subscription) {
+                document.getElementById('ov-plan').textContent = quota.subscription.planName;
+                const endAt = new Date(quota.subscription.endAt);
+                document.getElementById('ov-plan-expire').textContent = `有效期至 ${endAt.toLocaleDateString('zh-CN')}`;
+            } else {
+                document.getElementById('ov-plan').textContent = '未订阅';
+                document.getElementById('ov-plan-expire').textContent = '购买套餐以开始使用';
+            }
+
+            document.getElementById('ov-rooms').textContent = `${quota.used} / ${quota.totalLimit}`;
+            document.getElementById('ov-rooms-detail').textContent =
+                `套餐${quota.subRooms} + 扩容${quota.addonRooms} + 默认${quota.defaultRooms}`;
+        } catch (err) {
+            console.error('Load overview error:', err);
+        }
+    }
+
+    async function loadSubscription() {
+        try {
+            // Current subscription
+            const subRes = await Auth.apiFetch('/api/user/subscription');
+            const subData = await subRes.json();
+
+            const subInfo = document.getElementById('current-sub-info');
+            if (subData.subscription) {
+                const s = subData.subscription;
+                const endAt = new Date(s.endAt);
+                const cycleNames = { monthly: '月付', quarterly: '季付', yearly: '年付' };
+                subInfo.innerHTML = `
+                    <div class="flex gap-4 items-center">
+                        <span class="badge badge-primary badge-lg">${s.planName}</span>
+                        <span>房间上限: ${s.roomLimit}</span>
+                        <span>计费周期: ${cycleNames[s.billingCycle] || s.billingCycle}</span>
+                        <span>到期: ${endAt.toLocaleDateString('zh-CN')}</span>
+                    </div>
+                    <div class="mt-2 text-sm text-base-content/60">
+                        已用 ${subData.used} / ${subData.totalLimit} 房间 (含扩容包 ${subData.addonRooms} 间)
+                    </div>`;
+            } else {
+                subInfo.innerHTML = '<p class="text-base-content/60">暂无有效订阅</p>';
+            }
+
+            // Plans
+            const plansRes = await Auth.apiFetch('/api/subscription/plans');
+            const plansData = await plansRes.json();
+            const plansGrid = document.getElementById('plans-grid');
+            if (plansData.plans && plansData.plans.length > 0) {
+                plansGrid.innerHTML = plansData.plans.map(p => `
+                    <div class="card bg-base-100 border border-base-300">
+                        <div class="card-body">
+                            <h4 class="card-title">${p.name}</h4>
+                            <p class="text-sm text-base-content/60">最多 ${p.roomLimit} 个监控房间</p>
+                            <div class="mt-3 space-y-2">
+                                <button class="btn btn-sm btn-outline btn-block" onclick="initPurchase('plan', ${p.id}, '${p.name} - 月付', ${p.priceMonthly}, 'monthly')">
+                                    月付 ¥${p.priceMonthly}
+                                </button>
+                                <button class="btn btn-sm btn-outline btn-block" onclick="initPurchase('plan', ${p.id}, '${p.name} - 季付', ${p.priceQuarterly}, 'quarterly')">
+                                    季付 ¥${p.priceQuarterly} <span class="badge badge-sm badge-success">省${Math.round((1 - p.priceQuarterly / (p.priceMonthly * 3)) * 100)}%</span>
+                                </button>
+                                <button class="btn btn-sm btn-primary btn-block" onclick="initPurchase('plan', ${p.id}, '${p.name} - 年付', ${p.priceYearly}, 'yearly')">
+                                    年付 ¥${p.priceYearly} <span class="badge badge-sm badge-success">省${Math.round((1 - p.priceYearly / (p.priceMonthly * 12)) * 100)}%</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>`).join('');
+            } else {
+                plansGrid.innerHTML = '<p class="text-base-content/60">暂无可用套餐</p>';
+            }
+
+            // Addons
+            const addonsRes = await Auth.apiFetch('/api/subscription/addons');
+            const addonsData = await addonsRes.json();
+            const addonsGrid = document.getElementById('addons-grid');
+            if (addonsData.addons && addonsData.addons.length > 0) {
+                addonsGrid.innerHTML = addonsData.addons.map(a => `
+                    <div class="card bg-base-100 border border-base-300">
+                        <div class="card-body">
+                            <h4 class="card-title">${a.name}</h4>
+                            <p class="text-sm text-base-content/60">增加 ${a.roomCount} 个房间</p>
+                            <p class="text-lg font-bold mt-2">¥${a.price}</p>
+                            <button class="btn btn-primary btn-sm mt-2" onclick="initPurchase('addon', ${a.id}, '${a.name}', ${a.price})">购买</button>
+                        </div>
+                    </div>`).join('');
+            } else {
+                addonsGrid.innerHTML = '<p class="text-base-content/60">暂无可用扩容包</p>';
+            }
+        } catch (err) {
+            console.error('Load subscription error:', err);
+        }
+    }
+
+    function initPurchase(type, id, name, price, cycle) {
+        pendingPurchase = { type, id, name, price, cycle };
+        document.getElementById('purchase-title').textContent = `确认购买 - ${name}`;
+        document.getElementById('purchase-detail').textContent = `将从余额中扣除 ¥${price}`;
+        document.getElementById('purchaseModal').showModal();
+    }
+
+    async function confirmPurchase() {
+        if (!pendingPurchase) return;
+        const btn = document.getElementById('purchase-confirm-btn');
+        btn.classList.add('loading');
+
+        try {
+            let url, body;
+            if (pendingPurchase.type === 'plan') {
+                url = '/api/subscription/purchase';
+                body = { planId: pendingPurchase.id, billingCycle: pendingPurchase.cycle };
+            } else {
+                url = '/api/subscription/purchase-addon';
+                body = { addonId: pendingPurchase.id };
+            }
+
+            const res = await Auth.apiFetch(url, {
+                method: 'POST',
+                body: JSON.stringify(body)
+            });
+            const data = await res.json();
+            btn.classList.remove('loading');
+            document.getElementById('purchaseModal').close();
+
+            if (res.ok) {
+                alert('购买成功！');
+                loadSubscription();
+                // Refresh user data
+                const meRes = await Auth.apiFetch('/api/auth/me');
+                if (meRes.ok) {
+                    const meData = await meRes.json();
+                    Auth.setTokens(Auth.getAccessToken(), Auth.getRefreshToken(), meData.user);
+                }
+            } else {
+                alert(data.error || '购买失败');
+            }
+        } catch (err) {
+            btn.classList.remove('loading');
+            alert('操作失败: ' + err.message);
+        }
+        pendingPurchase = null;
+    }
+
+    const typeLabels = { plan: '套餐', addon: '扩容包', recharge: '充值' };
+    const statusLabels = { paid: '已支付', pending: '待支付', cancelled: '已取消', refunded: '已退款' };
+    const balanceTypeLabels = { recharge: '充值', purchase: '消费', refund: '退款', admin_adjust: '管理员调整' };
+
+    async function loadOrders(page) {
+        try {
+            const res = await Auth.apiFetch(`/api/user/orders?page=${page}&limit=15`);
+            const data = await res.json();
+            const tbody = document.getElementById('orders-tbody');
+
+            if (!data.orders || data.orders.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/60">暂无订单</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.orders.map(o => `
+                <tr>
+                    <td class="text-xs">${o.orderNo}</td>
+                    <td>${typeLabels[o.type] || o.type}</td>
+                    <td>${o.itemName || '-'}</td>
+                    <td class="font-mono">¥${parseFloat(o.amount).toFixed(2)}</td>
+                    <td><span class="badge badge-sm ${o.status === 'paid' ? 'badge-success' : 'badge-ghost'}">${statusLabels[o.status] || o.status}</span></td>
+                    <td class="text-xs">${new Date(o.createdAt).toLocaleString('zh-CN')}</td>
+                </tr>`).join('');
+
+            renderPagination('orders-pagination', data.pagination, loadOrders);
+        } catch (err) {
+            console.error('Load orders error:', err);
+        }
+    }
+
+    async function loadBalanceLogs(page) {
+        try {
+            const res = await Auth.apiFetch(`/api/user/balance-logs?page=${page}&limit=15`);
+            const data = await res.json();
+            const tbody = document.getElementById('balance-tbody');
+
+            if (!data.logs || data.logs.length === 0) {
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/60">暂无记录</td></tr>';
+                return;
+            }
+
+            tbody.innerHTML = data.logs.map(l => `
+                <tr>
+                    <td>${balanceTypeLabels[l.type] || l.type}</td>
+                    <td class="font-mono ${parseFloat(l.amount) >= 0 ? 'text-success' : 'text-error'}">${parseFloat(l.amount) >= 0 ? '+' : ''}${parseFloat(l.amount).toFixed(2)}</td>
+                    <td class="font-mono">¥${parseFloat(l.balanceBefore).toFixed(2)}</td>
+                    <td class="font-mono">¥${parseFloat(l.balanceAfter).toFixed(2)}</td>
+                    <td class="text-sm">${l.remark || '-'}</td>
+                    <td class="text-xs">${new Date(l.createdAt).toLocaleString('zh-CN')}</td>
+                </tr>`).join('');
+
+            renderPagination('balance-pagination', data.pagination, loadBalanceLogs);
+        } catch (err) {
+            console.error('Load balance logs error:', err);
+        }
+    }
+
+    function renderPagination(containerId, pagination, loadFn) {
+        const container = document.getElementById(containerId);
+        if (!pagination || pagination.total <= pagination.limit) {
+            container.innerHTML = '';
+            return;
+        }
+        const totalPages = Math.ceil(pagination.total / pagination.limit);
+        let html = '<div class="join">';
+        for (let i = 1; i <= totalPages && i <= 10; i++) {
+            html += `<button class="join-item btn btn-sm ${i === pagination.page ? 'btn-active' : ''}" onclick="(${loadFn.name})(${i})">${i}</button>`;
+        }
+        html += '</div>';
+        container.innerHTML = html;
+    }
+
+    function loadSettings() {
+        const user = Auth.getUser();
+        if (user) {
+            document.getElementById('set-username').value = user.username || '';
+            document.getElementById('set-nickname').value = user.nickname || '';
+            document.getElementById('set-email').value = user.email || '';
+        }
+    }
+
+    async function saveProfile() {
+        const nickname = document.getElementById('set-nickname').value.trim();
+        const email = document.getElementById('set-email').value.trim();
+
+        const res = await Auth.apiFetch('/api/user/profile', {
+            method: 'PUT',
+            body: JSON.stringify({ nickname, email })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert('保存成功');
+            Auth.setTokens(Auth.getAccessToken(), Auth.getRefreshToken(), data.user);
+            Auth.updateNavbar();
+        } else {
+            alert(data.error || '保存失败');
+        }
+    }
+
+    async function changePassword() {
+        const oldPwd = document.getElementById('old-password').value;
+        const newPwd = document.getElementById('new-password').value;
+        const confirmPwd = document.getElementById('confirm-new-password').value;
+
+        if (!oldPwd || !newPwd) { alert('请填写密码'); return; }
+        if (newPwd.length < 6) { alert('新密码至少6个字符'); return; }
+        if (newPwd !== confirmPwd) { alert('两次密码不一致'); return; }
+
+        const res = await Auth.apiFetch('/api/auth/change-password', {
+            method: 'PUT',
+            body: JSON.stringify({ oldPassword: oldPwd, newPassword: newPwd })
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert('密码修改成功，请重新登录');
+            Auth.clearTokens();
+            window.location.href = '/login.html';
+        } else {
+            alert(data.error || '修改失败');
+        }
+    }
+    </script>
+</body>
+</html>

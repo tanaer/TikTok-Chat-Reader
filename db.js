@@ -322,6 +322,13 @@ async function initDb() {
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS recording_account_id INTEGER`);
 
 
+        // ========== SaaS Tables (use existing production tables: users, subscription_plans, etc.) ==========
+        // No CREATE TABLE here - production tables already exist.
+        // Run migrate_saas.js to add any missing columns on production.
+
+        // Seed default admin and plans (into production tables)
+        await seedDefaultData();
+
         // Migration: Add group_id column if proxy_node has subscription_id instead
         try {
             const colCheck = await pool.query(`
@@ -360,6 +367,66 @@ async function initDb() {
     } catch (e) {
         console.error('[DB] Initialization error:', e);
         throw e;
+    }
+}
+
+/**
+ * Seed default admin account and subscription plans
+ */
+async function seedDefaultData() {
+    try {
+        const bcrypt = require('bcrypt');
+        const adminPassword = process.env.ADMIN_PASSWORD || 'admin123';
+
+        // Check if admin already exists (production table: users)
+        const adminCheck = await pool.query(`SELECT id FROM users WHERE username = 'admin'`);
+        if (adminCheck.rows.length === 0) {
+            const hash = await bcrypt.hash(adminPassword, 10);
+            await pool.query(
+                `INSERT INTO users (username, email, password_hash, nickname, role, status)
+                 VALUES ('admin', 'admin@local', $1, '管理员', 'admin', 'active')
+                 ON CONFLICT DO NOTHING`,
+                [hash]
+            );
+            console.log('[DB] Default admin account created (username: admin)');
+        }
+
+        // Seed default plans (production table: subscription_plans)
+        const plans = [
+            ['基础版', 'basic', 5, 99, 269, 899, 1],
+            ['专业版', 'pro', 20, 299, 799, 2699, 2],
+            ['企业版', 'enterprise', 100, 999, 2699, 8999, 3],
+        ];
+        for (const [name, code, roomLimit, pm, pq, py, sort] of plans) {
+            await pool.query(
+                `INSERT INTO subscription_plans (name, code, room_limit, price_monthly, price_quarterly, price_annual, sort_order)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (code) DO NOTHING`,
+                [name, code, roomLimit, pm, pq, py, sort]
+            );
+        }
+
+        // Seed default addon packages (production table: room_addon_packages)
+        // [name, room_count, price_monthly, price_quarterly, price_annual]
+        const addons = [
+            ['5房间扩容包', 5, 49, 129, 469],
+            ['10房间扩容包', 10, 89, 239, 849],
+            ['20房间扩容包', 20, 159, 429, 1519],
+        ];
+        for (const [name, count, pm, pq, pa] of addons) {
+            const exists = await pool.query(
+                `SELECT id FROM room_addon_packages WHERE name = $1`, [name]
+            );
+            if (exists.rows.length === 0) {
+                await pool.query(
+                    `INSERT INTO room_addon_packages (name, room_count, price_monthly, price_quarterly, price_annual) VALUES ($1, $2, $3, $4, $5)`,
+                    [name, count, pm, pq, pa]
+                );
+            }
+        }
+
+        console.log('[DB] Default plans and addons seeded.');
+    } catch (e) {
+        console.warn('[DB] Seed data note:', e.message);
     }
 }
 
@@ -570,6 +637,6 @@ module.exports = {
     getSystemSettings,
     saveDb,
     backupDb,
-    // Expose pool for direct access if needed
+    toCamelCase,
     pool
 };

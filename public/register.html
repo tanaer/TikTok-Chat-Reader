@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册 - TikTok Live Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/js/auth.js"></script>
+</head>
+<body class="bg-base-300 min-h-screen flex items-center justify-center">
+    <div class="card w-full max-w-md bg-base-100 shadow-xl">
+        <div class="card-body">
+            <h2 class="card-title text-2xl font-bold justify-center mb-2">TikTok Live Monitor</h2>
+            <p class="text-center text-base-content/60 mb-6">创建新账户</p>
+
+            <div id="errorMsg" class="alert alert-error hidden mb-4">
+                <span id="errorText"></span>
+            </div>
+
+            <form id="registerForm" onsubmit="handleRegister(event)">
+                <div class="form-control mb-4">
+                    <label class="label"><span class="label-text">用户名 *</span></label>
+                    <input type="text" id="username" class="input input-bordered w-full" placeholder="3-50个字符" required autofocus minlength="3" maxlength="50">
+                </div>
+                <div class="form-control mb-4">
+                    <label class="label"><span class="label-text">昵称</span></label>
+                    <input type="text" id="nickname" class="input input-bordered w-full" placeholder="可选，显示名称">
+                </div>
+                <div class="form-control mb-4">
+                    <label class="label"><span class="label-text">邮箱</span></label>
+                    <input type="email" id="email" class="input input-bordered w-full" placeholder="可选">
+                </div>
+                <div class="form-control mb-4">
+                    <label class="label"><span class="label-text">密码 *</span></label>
+                    <input type="password" id="password" class="input input-bordered w-full" placeholder="至少6个字符" required minlength="6">
+                </div>
+                <div class="form-control mb-6">
+                    <label class="label"><span class="label-text">确认密码 *</span></label>
+                    <input type="password" id="confirmPassword" class="input input-bordered w-full" placeholder="再次输入密码" required>
+                </div>
+                <button type="submit" id="registerBtn" class="btn btn-primary w-full">注册</button>
+            </form>
+
+            <div class="divider">或</div>
+            <p class="text-center text-sm">
+                已有账户？<a href="/login.html" class="link link-primary">立即登录</a>
+            </p>
+        </div>
+    </div>
+
+    <script>
+        if (Auth.isLoggedIn()) {
+            window.location.href = '/';
+        }
+
+        async function handleRegister(e) {
+            e.preventDefault();
+            const btn = document.getElementById('registerBtn');
+            const errorMsg = document.getElementById('errorMsg');
+            const errorText = document.getElementById('errorText');
+            errorMsg.classList.add('hidden');
+
+            const username = document.getElementById('username').value.trim();
+            const nickname = document.getElementById('nickname').value.trim();
+            const email = document.getElementById('email').value.trim();
+            const password = document.getElementById('password').value;
+            const confirmPassword = document.getElementById('confirmPassword').value;
+
+            if (password !== confirmPassword) {
+                errorText.textContent = '两次输入的密码不一致';
+                errorMsg.classList.remove('hidden');
+                return;
+            }
+
+            btn.classList.add('loading');
+            const { ok, data } = await Auth.register(username, password, nickname, email);
+            btn.classList.remove('loading');
+
+            if (ok) {
+                window.location.href = '/';
+            } else {
+                errorText.textContent = data.error || '注册失败';
+                errorMsg.classList.remove('hidden');
+            }
+        }
+    </script>
+</body>
+</html>

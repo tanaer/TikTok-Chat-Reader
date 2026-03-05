@@ -10,6 +10,11 @@ let connectedRoomId = null; // Track actually connected room to prevent cross-ro
 
 // Initialization
 $(document).ready(() => {
+    // Update auth navbar
+    if (typeof Auth !== 'undefined') {
+        Auth.updateNavbar();
+    }
+
     initSocket();
 
     // Initial Load

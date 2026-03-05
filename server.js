@@ -12,6 +12,7 @@ const { manager } = require('./manager');
 const { AutoRecorder } = require('./auto_recorder');
 const recordingManager = require('./recording_manager');
 const ffmpegManager = require('./utils/ffmpeg_manager');
+const { router: userManagementRouter, startPeriodicTasks } = require('./routes/index');
 
 
 const app = express();
@@ -26,6 +27,9 @@ recordingManager.startMonitoring(); // Start stall detection for recordings
 // Enable CORS & JSON parsing
 app.use(express.json());
 app.use(express.static('public')); // Serve static files first for performance
+
+// Mount user management routes (auth, user center, subscription, admin)
+app.use(userManagementRouter);
 
 const io = new Server(httpServer, {
     cors: {
@@ -1392,6 +1396,9 @@ httpServer.listen(PORT, async () => {
 
     // Cleanup orphaned recording tasks from previous session (crashed or force-closed)
     await recordingManager.cleanupOrphanedTasks();
+
+    // Start user management periodic tasks (subscription expiry, token cleanup)
+    startPeriodicTasks();
 
     // Scheduled jobs
     // Run user language analysis every hour
