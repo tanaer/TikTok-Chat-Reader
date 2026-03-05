@@ -1,120 +1,174 @@
-# 数据模型（data.db）
+# 数据模型
 
-后端使用 SQLite 数据库文件：`data.db`
+后端使用 PostgreSQL 数据库，通过 `db.js` 的 `pg.Pool` 连接。
+
+> **重要**：`db.js` 的 `query()` 函数对所有结果应用 `toCamelCase`，API 返回 camelCase 字段名。
 
 ## 存储方式与特点
 
-- `db.js` 使用 `sql.js` 把 SQLite 文件加载到内存中操作，然后定期/批量落盘回 `data.db`
-- 文件级备份：`data.db.backup`
-- 迁移策略：启动时执行 `CREATE TABLE IF NOT EXISTS ...` + `ALTER TABLE ... ADD COLUMN ...`
+- `db.js` 使用 `pg` 连接池（默认 20 连接）
+- 迁移文件在 `migrations/` 目录，通过 `run_migration.js` 执行
+- 核心表在 `db.js` 的 `initDb()` 中通过 `CREATE TABLE IF NOT EXISTS` 维护
 
-## 表结构概览
+## 核心监控表
 
-> 下面字段来自 `db.js` 中的建表 SQL；实际库可能因为历史迁移存在额外列（例如某些修复脚本/旧版本写入的字段）。
-
-### 1) `room`（监控房间配置）
+### `room`（监控房间配置）
 
 | 字段 | 含义 |
 |---|---|
 | `id` | 自增主键 |
-| `room_id` | 房间标识（主要作为“主播 uniqueId/用户名”使用，唯一） |
-| `numeric_room_id` | TikTok 实际 numeric roomId（连接成功时保存，用于迁移/兼容） |
-| `name` | 房间名称（用户配置，用于 UI 展示；AutoRecorder 也用它判断“是否已配置”） |
-| `address` | 备注/地址（业务含义以 UI 为准） |
-| `updated_at` | 最近更新（默认 localtime） |
+| `room_id` | 房间标识（唯一） |
+| `numeric_room_id` | TikTok numeric roomId |
+| `name` | 房间名称 |
+| `address` | 备注 |
+| `updated_at` | 最近更新 |
 | `is_monitor_enabled` | 是否自动监控（1/0） |
 
 关键点：
+- AutoRecorder 扫描时只选择 `name` 非空的房间作为"目标房间"
+- UI 的"录制开关"对应 `is_monitor_enabled`
 
-- AutoRecorder 扫描时只会选择 `name` 非空的房间作为“目标房间”
-- UI 的“录制开关”对应 `is_monitor_enabled`
-
-### 2) `event`（事件明细：聊天/礼物/点赞/进房等）
-
-| 字段 | 含义 |
-|---|---|
-| `id` | 自增主键 |
-| `room_id` | 逻辑房间 id（通常是用户名/uniqueId） |
-| `session_id` | 会话 id；`NULL` 表示“当前 LIVE（未归档）” |
-| `type` | 事件类型（`chat`/`gift`/`like`/`member`/`roomUser` 等） |
-| `timestamp` | 事件时间（TEXT，默认 localtime；`manager.js` 用北京时间字符串写入） |
-| `user_id` / `unique_id` / `nickname` | 用户维度的展开字段（便于直接查询） |
-| `gift_id` / `diamond_count` / `repeat_count` | 礼物维度字段（礼物价值 = `diamond_count * repeat_count`） |
-| `like_count` / `total_like_count` | 点赞字段（单次 + 累计） |
-| `comment` | 弹幕内容（`chat`） |
-| `viewer_count` | 在线人数（通常来自 `roomUser` 或其他事件的展开） |
-| `data_json` | 原始 JSON（保留扩展字段，便于后续补列/回填） |
-
-索引（`db.js` 创建）：
-
-- `idx_event_room_session`：`(room_id, session_id)`
-- `idx_event_timestamp`：`(timestamp)`
-- `idx_event_user_id`：`(user_id)`
-- `idx_event_type`：`(type)`
-- `idx_event_type_user`：`(type, user_id)`
-
-关键点：
-
-- 事件写入统一走 `manager.logEvent(roomId, type, data)`
-- 写入时既写展开字段，也把完整结构存 `data_json`
-- 启动迁移阶段会尝试用 `json_extract(data_json, '$....')` 回填展开字段
-
-### 3) `session`（会话/场次）
+### `event`（事件明细：聊天/礼物/点赞/进房等）
 
 | 字段 | 含义 |
 |---|---|
 | `id` | 自增主键 |
-| `session_id` | 会话 id（`YYYYMMDDNN` 形式，唯一） |
-| `room_id` | 对应房间 |
-| `snapshot_json` | 会话快照（JSON 字符串；目前主要用于存一些“备注/标记”，不是事件列表） |
-| `created_at` | 创建时间（localtime） |
+| `room_id` | 逻辑房间 id |
+| `session_id` | 会话 id；`NULL` 表示当前 LIVE |
+| `type` | chat/gift/like/member/roomUser |
+| `timestamp` | 事件时间（TEXT） |
+| `user_id` / `unique_id` / `nickname` | 用户字段 |
+| `gift_id` / `diamond_count` / `repeat_count` | 礼物字段（价值 = diamond × repeat） |
+| `like_count` / `total_like_count` | 点赞字段 |
+| `comment` | 弹幕内容 |
+| `viewer_count` | 在线人数 |
+| `data_json` | 原始 JSON |
 
-会话与事件的关系：
+索引：`idx_event_room_session`、`idx_event_timestamp`、`idx_event_user_id`、`idx_event_type`、`idx_event_type_user`
 
-- “实时 LIVE”时：事件 `event.session_id IS NULL`
-- 归档时：创建 `session` 记录，并把某段时间内的事件打上 `session_id`
-- UI 在房间详情页可以在 `live` 与 `session_id` 之间切换查看统计
+### `session`（会话/场次）
 
-### 4) `user`（用户画像/聚合属性）
+| 字段 | 含义 |
+|---|---|
+| `session_id` | 唯一（`YYYYMMDDNN`） |
+| `room_id` | 房间 |
+| `snapshot_json` | 快照 JSON |
+| `created_at` | 创建时间 |
+
+### `user`（用户画像）
 
 | 字段 | 含义 |
 |---|---|
 | `user_id` | 主键（TikTok userId） |
-| `unique_id` | 账号名/handle（可能随迁移脚本调整，见 `fix_db.js`） |
+| `unique_id` | 账号名 |
 | `nickname` | 昵称 |
 | `avatar` | 头像 |
-| `updated_at` | 最近更新 |
-| `common_language` | 常用语种（AI 分析写入） |
-| `mastered_languages` | 掌握语种（AI 分析写入） |
+| `common_language` | 常用语种（AI 写入） |
+| `mastered_languages` | 掌握语种（AI 写入） |
 
-来源：
-
-- `manager.logEvent(...)` 在写 event 时会同步 `ensureUser(...)` upsert 到 user 表
-- AI 分析接口会更新 `common_language` / `mastered_languages`
-
-### 5) `settings`（系统配置）
+### `settings`（系统配置）
 
 | 字段 | 含义 |
 |---|---|
 | `key` | 主键 |
-| `value` | 字符串值（布尔会被转成 `'true'/'false'`） |
-| `updated_at` | 更新时间 |
+| `value` | 字符串值 |
 
-使用方：
+key 命名不一致说明：`interval` vs `scan_interval`、`proxy` vs `proxy_url`，详见 `doc/config.md`。
 
-- `server.js`：读取 `port`、AI 配置等
-- `auto_recorder.js`：读取监控间隔与自动监控开关
-- 前端 `public/config.js`：读写配置项
+## SaaS 表（来自 migrations）
 
-注意：当前存在 key 命名不一致（例如 `interval` vs `scan_interval`、`proxy` vs `proxy_url`），详见 `doc/config.md`。
+### `users`（注册用户）
 
-## 时间与时区（重要）
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | SERIAL PK | |
+| email | VARCHAR(255) UNIQUE | 登录邮箱 |
+| password_hash | VARCHAR(255) | bcrypt 哈希 |
+| nickname | VARCHAR(100) | |
+| balance | INTEGER DEFAULT 0 | 余额（分） |
+| role | VARCHAR(20) DEFAULT 'user' | user/admin |
+| status | VARCHAR(20) DEFAULT 'active' | active/suspended |
+| refresh_token | TEXT | JWT Refresh Token |
+
+### `subscription_plans`（套餐方案）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| id | SERIAL PK | |
+| name | VARCHAR(50) | 免费版/基础版/专业版/企业版 |
+| code | VARCHAR(20) UNIQUE | free/basic/pro/enterprise |
+| price_monthly | INTEGER | 月价（分）|
+| price_quarterly | INTEGER | 季价（分）|
+| price_annual | INTEGER | 年价（分）|
+| room_limit | INTEGER | 房间限制（-1=无限）|
+| history_days | INTEGER | 数据保留天数 |
+| ai_credits_monthly | INTEGER | 月度 AI 额度 |
+| api_rate_limit | INTEGER | API 限频 |
+| feature_flags | JSONB | 功能开关 |
+| is_active | BOOLEAN | 上架 |
+| sort_order | INTEGER | 排序 |
+
+### `user_subscriptions`（用户订阅记录）
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| user_id | FK → users | |
+| plan_id | FK → subscription_plans | |
+| billing_cycle | VARCHAR(20) | monthly/quarterly/annual |
+| start_date / end_date | TIMESTAMP | 有效期 |
+| status | VARCHAR(20) | active/expired/cancelled |
+| auto_renew | BOOLEAN | 是否自动续费 |
+
+### `payment_records`（支付记录）
+
+| 字段 | 说明 |
+|------|------|
+| order_no | 内部订单号（唯一） |
+| amount | 金额（分） |
+| payment_method | alipay/wxpay/stripe/manual |
+| status | pending/paid/failed/refunded |
+
+### `user_room`（用户-房间关联）
+
+| 字段 | 说明 |
+|------|------|
+| user_id | FK → users |
+| room_id | FK → room |
+| created_at | 关联时间 |
+
+### `room_addon_packages`（加量包方案）
+
+| 字段 | 说明 |
+|------|------|
+| name | 加量包名称 |
+| room_count | 额外房间数 |
+| price_monthly | 月价（分） |
+
+### `balance_logs`（余额流水）
+
+| 字段 | 说明 |
+|------|------|
+| user_id | FK → users |
+| amount | 变动金额（正=入，负=出） |
+| balance_before / balance_after | 变动前后余额 |
+| type | recharge/subscription/addon/refund/admin_adjust |
+| description | 说明 |
+
+### `notifications`（站内通知）
+
+| 字段 | 说明 |
+|------|------|
+| user_id | FK → users |
+| title / message | 标题与内容 |
+| type | system/subscription/payment |
+| is_read | 是否已读 |
+
+## 时间与时区
 
 代码中存在多种时间来源：
 
-- `db.js` 默认时间：`datetime('now', 'localtime')`，格式 `YYYY-MM-DD HH:mm:ss`
-- `manager.js` 的 `getNowBeijing()`：用 `toISOString()` 计算 UTC+8 后替换 `'T'` 为 `' '`，同样是 `YYYY-MM-DD HH:mm:ss`
-- `AutoRecorder` 某些地方使用 `new Date().toISOString()`（包含 `T` 和 `Z`）
+- `db.js` 默认：`TIMESTAMP DEFAULT NOW()`（PostgreSQL UTC）
+- `manager.js` 的 `getNowBeijing()`：UTC+8 字符串 `YYYY-MM-DD HH:mm:ss`
+- `AutoRecorder` 某些地方使用 `new Date().toISOString()`
 
-由于 `event.timestamp` 是 TEXT，且查询里存在 `timestamp >= ?` 的比较逻辑，**需要特别注意比较双方的字符串格式是否一致**，否则可能导致过滤条件失效。
-
+`event.timestamp` 是 TEXT 类型，存在字符串格式不一致的风险，需注意比较操作。

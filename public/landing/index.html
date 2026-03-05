@@ -12,6 +12,7 @@
         rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
     <script src="/auth.js"></script>
+    <script src="/plan_service.js"></script>
     <script src="/nav_shared.js"></script>
     <style>
         .hero-glow {
@@ -229,69 +230,20 @@
             isAnnual = document.getElementById('cycleToggle').checked;
             document.getElementById('lblMonthly').className = `text-sm transition-colors ${isAnnual ? 'opacity-40' : 'font-bold text-primary'}`;
             document.getElementById('lblAnnual').className = `text-sm transition-colors ${isAnnual ? 'font-bold text-primary' : 'opacity-40'}`;
-            renderPlans();
+            loadPlans();
         }
 
         function fmtPrice(cents) { return (cents / 100).toFixed(0); }
 
-        function renderPlans() {
-            const c = document.getElementById('plansContainer');
-            const sorted = [...plansData].filter(p => p.status === 'active').sort((a, b) => a.base_price - b.base_price);
-            const actionUrl = isLoggedIn ? '/landing/user-center.html' : '/landing/register.html';
-            const actionText = isLoggedIn ? '用户中心' : '注册后购买';
-
-            c.innerHTML = sorted.map(plan => {
-                if (plan.plan_code === 'free') return `
-          <div class="plan-card">
-            <div class="badge badge-ghost badge-sm mb-4 self-start">免费版</div>
-            <h3 class="text-xl font-bold mb-2">${plan.plan_name}</h3>
-            <p class="text-sm opacity-40 mb-6 flex-grow">${plan.description || '免费体验基础监控功能'}</p>
-            <div class="text-4xl font-extrabold mb-6">¥0</div>
-            <ul class="space-y-3 mb-8 text-sm opacity-70">
-              <li class="flex items-center gap-2">✓ ${plan.max_rooms} 个监控房间</li>
-              <li class="flex items-center gap-2 opacity-40">✗ 不支持加量包</li>
-              <li class="flex items-center gap-2 opacity-40">✗ 录制/AI分析不可用</li>
-            </ul>
-            <a href="${isLoggedIn ? '/' : '/landing/register.html'}" class="btn btn-outline btn-block rounded-xl">免费使用</a>
-          </div>`;
-
-                const priceObj = isAnnual
-                    ? (plan.prices || []).find(p => p.billing_cycle === 'annual')
-                    : (plan.prices || []).find(p => p.billing_cycle === 'monthly');
-                const price = fmtPrice(priceObj?.price || plan.base_price);
-                const period = isAnnual ? '年' : '月';
-                const isFeatured = plan.max_rooms === 5 || plan.plan_code?.toLowerCase().includes('pro');
-                const cls = isFeatured ? 'plan-card featured' : 'plan-card';
-
-                return `
-          <div class="${cls} ${isFeatured ? 'relative' : ''}">
-            ${isFeatured ? '<div class="absolute -top-4 left-1/2 -translate-x-1/2"><span class="badge badge-primary px-4 py-2 font-bold shadow-lg shadow-indigo-500/20">最畅销</span></div>' : ''}
-            <h3 class="text-xl font-bold mb-2 ${isFeatured ? 'gradient-text-primary' : ''}">${plan.plan_name}</h3>
-            <p class="text-sm opacity-40 mb-6 flex-grow">${plan.description || ''}</p>
-            <div class="mb-6">
-              <span class="text-4xl font-extrabold">¥${price}</span>
-              <span class="opacity-40 text-sm">/${period}</span>
-            </div>
-            <ul class="space-y-3 mb-8 text-sm opacity-70">
-              <li class="flex items-center gap-2"><span class="text-primary">✓</span> 基础监控 <strong class="text-base-content">${plan.max_rooms === -1 ? '无限' : plan.max_rooms}</strong> 个房间</li>
-              <li class="flex items-center gap-2"><span class="text-primary">✓</span> 房间加量包 <strong>${plan.addon_room_price ? '¥' + fmtPrice(plan.addon_room_price) + '/' + period : '可购'}</strong></li>
-              <li class="flex items-center gap-2"><span class="text-primary">✓</span> 解锁自动录制功能</li>
-              <li class="flex items-center gap-2"><span class="text-primary">✓</span> AI 深度用户分析</li>
-            </ul>
-            <a href="${actionUrl}" class="btn ${isFeatured ? 'gradient-btn text-white' : 'btn-outline'} btn-block rounded-xl">${actionText}</a>
-          </div>`;
-            }).join('');
-
-            document.getElementById('plansContainer').classList.remove('hidden');
-        }
-
         async function loadPlans() {
             try {
-                const res = await fetch('/api/subscription/plans');
-                if (!res.ok) throw new Error();
-                plansData = await res.json();
+                const data = await PlanService.loadPlans();
                 document.getElementById('plansLoader').classList.add('hidden');
-                renderPlans();
+                const container = document.getElementById('plansContainer');
+                PlanService.renderLandingPlanCards(container, data.plans || [], {
+                    isAnnual,
+                    isLoggedIn
+                });
             } catch {
                 document.getElementById('plansLoader').innerHTML = '<span class="text-error text-sm">套餐加载失败，请刷新重试</span>';
             }

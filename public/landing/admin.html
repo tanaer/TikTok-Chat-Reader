@@ -11,6 +11,7 @@
         rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
     <script src="/auth.js"></script>
+    <script src="/plan_service.js"></script>
     <script src="/nav_shared.js"></script>
     <style>
         .admin-layout {
@@ -522,25 +523,15 @@
         // ── Plans ───────────────────────────────────────────────
         async function loadPlans() {
             try {
-                const [pubRes, adminRes] = await Promise.all([
-                    fetch('/api/subscription/plans'),
-                    fetch('/api/admin/plans')
-                ]);
-                const plans = pubRes.ok ? await pubRes.json() : await adminRes.json();
+                const data = await PlanService.loadPlans();
+                const plans = data.plans || [];
 
-                // Also populate modal dropdown
+                // Populate modal dropdown
                 const planSel = document.getElementById('modalPlanCode');
-                planSel.innerHTML = '<option value="">选择套餐...</option>' + plans.map(p => `<option value="${p.plan_code || p.code}">${p.plan_name || p.name}</option>`).join('');
+                planSel.innerHTML = '<option value="">选择套餐...</option>' + plans.map(p => `<option value="${p.code}">${p.name}</option>`).join('');
 
-                document.getElementById('plansTableBody').innerHTML = plans.length === 0
-                    ? '<tr><td colspan="5" class="text-center py-10 opacity-30">无套餐数据</td></tr>'
-                    : plans.map(p => `<tr>
-              <td class="font-semibold">${p.plan_name || p.name}</td>
-              <td class="font-mono text-xs opacity-60">${p.plan_code || p.code}</td>
-              <td>${p.max_rooms || p.room_limit === -1 ? '∞' : (p.max_rooms || p.room_limit)}</td>
-              <td class="font-bold">${fmtCny(p.base_price || p.price_monthly)}</td>
-              <td><span class="badge ${p.status === 'active' ? 'badge-success' : 'badge-ghost'} badge-xs">${p.status === 'active' ? '启用' : '禁用'}</span></td>
-            </tr>`).join('');
+                // Populate admin table
+                document.getElementById('plansTableBody').innerHTML = PlanService.renderPlanTableRows(plans);
             } catch { document.getElementById('plansTableBody').innerHTML = '<tr><td colspan="5" class="text-center py-8 text-error text-sm">加载失败</td></tr>'; }
         }
 
@@ -581,9 +572,9 @@
             onReady() {
                 loadStats();
                 // Lazy load: plans data for modal dropdown
-                fetch('/api/subscription/plans').then(r => r.json()).then(plans => {
+                PlanService.loadPlans().then(data => {
                     const sel = document.getElementById('modalPlanCode');
-                    sel.innerHTML = '<option value="">选择套餐...</option>' + plans.map(p => `<option value="${p.plan_code}">${p.plan_name}</option>`).join('');
+                    sel.innerHTML = '<option value="">选择套餐...</option>' + (data.plans || []).map(p => `<option value="${p.code}">${p.name}</option>`).join('');
                 }).catch(() => { });
             }
         });

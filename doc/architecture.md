@@ -120,3 +120,42 @@
 - 代理：SOCKS5（环境变量 `PROXY_URL` 或 settings/请求参数）
 - EulerStream：用于签名/绕过限制的 API Key（`EULER_API_KEY` 或 settings）
 - AI 分析：后端调用 `node-fetch` 请求第三方 `chat/completions` API（默认 ModelScope）
+
+## SaaS 商业层
+
+系统在核心监控之上构建了完整的 SaaS 层：
+
+### 认证（`auth/`）
+
+- `auth/middleware.js`：JWT 验证（`requireAuth`）、订阅加载（`loadSubscription`）、管理员检查（`requireAdmin`）
+- `auth/routes.js`：注册、登录、Token 刷新、Profile 管理
+- 前端 `public/auth.js`：Token 存储 + fetch/jQuery 双拦截器 + `initPage()` 页面保护
+
+### 订阅与套餐（`api/subscription.js`）
+
+- 套餐体系：`subscription_plans` 表，支持 monthly/quarterly/annual 三种计费周期
+- 余额购买：从用户余额扣费，支持按比例退款（proration）
+- 加量包：`room_addon_packages` 表，扩展房间配额
+- 前端 `public/plan_service.js`：集中管理套餐加载/渲染/购买
+
+### 支付（`api/payment.js` + `api/stripe.js` + `api/futongpay.js`）
+
+- 充值到账户余额
+- 支持 Stripe 和富通支付渠道
+
+### 多租户（`api/user_rooms.js`）
+
+- `user_room` 关联表隔离用户的房间数据
+- 房间配额由 `plan_room_limit + addon_rooms` 计算
+
+### 管理后台（`api/admin.js`）
+
+- 用户管理（列表、套餐分配、余额调整）
+- 系统设置
+- 套餐管理
+
+## 数据库
+
+当前使用 **PostgreSQL**（`db.js` 通过 `pg.Pool` 连接）。
+
+关键设计：`db.js` 的 `query()` 函数对所有查询结果执行 `toCamelCase` 转换，使 API 返回 camelCase 字段名（如 `roomLimit` 而非 `room_limit`）。

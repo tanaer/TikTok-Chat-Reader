@@ -148,3 +148,54 @@
 - `POST /api/rebuild-missing-sessions`
 
 这些接口分别对应 `manager.js` 内的数据迁移/修复方法，详见 `doc/runtime-flows.md` 的第 6 节。
+
+## 3) 认证 API（`auth/routes.js`）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/auth/register` | 注册（email, password, nickname）|
+| POST | `/api/auth/login` | 登录 → 返回 accessToken + refreshToken |
+| POST | `/api/auth/refresh` | 刷新 accessToken |
+| GET | `/api/auth/me` | 当前用户信息 |
+| PUT | `/api/auth/profile` | 更新昵称 |
+| PUT | `/api/auth/password` | 修改密码 |
+| GET | `/api/auth/notifications` | 通知列表 |
+| PUT | `/api/auth/notifications/:id/read` | 标记已读 |
+| PUT | `/api/auth/notifications/read-all` | 全部已读 |
+
+详见 `doc/auth.md`。
+
+## 4) 订阅 API（`api/subscription.js`）
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/subscription` | 当前订阅详情 + 余额 + 加量包 |
+| GET | `/api/subscription/plans` | 所有可用套餐 + 加量包 + 余额 → `{plans, addons, balance}` |
+| POST | `/api/subscription/purchase` | 购买/升级套餐 `{planCode, billingCycle}` |
+| POST | `/api/subscription/addon/purchase` | 购买加量包 `{addonId}` |
+
+> 注意：`/api/subscription/plans` 是 GET + requireAuth。首页定价页面通过 `server.js` 中间件白名单允许游客访问。
+
+详见 `doc/subscription.md`。
+
+## 5) 管理后台 API（`api/admin.js`）
+
+所有接口需要 `requireAdmin`。
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/admin/users` | 用户列表（分页 + 搜索）|
+| PUT | `/api/admin/users/:id/plan` | 分配套餐 `{planCode, billingCycle, months}` |
+| PUT | `/api/admin/users/:id/balance` | 调整余额 `{amount, description}` |
+| GET | `/api/admin/plans` | 套餐列表（简版：id, name, code, roomLimit, priceMonthly）|
+| GET | `/api/admin/settings` | 系统设置 |
+| PUT | `/api/admin/settings` | 更新系统设置 |
+| GET | `/api/admin/stats` | 管理统计面板 |
+
+## 6) 支付 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/payment/recharge` | 创建充值订单 `{amount, paymentMethod}` |
+| POST | `/api/stripe/webhook` | Stripe 回调 |
+| POST | `/api/futongpay/notify` | 富通支付回调 |

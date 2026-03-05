@@ -11,6 +11,7 @@
         rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
     <script src="/auth.js"></script>
+    <script src="/plan_service.js"></script>
     <script src="/nav_shared.js"></script>
     <style>
         .tab-content {
@@ -129,8 +130,8 @@
             <div class="glass-card p-6 mt-6">
                 <div class="flex items-center justify-between mb-4">
                     <h3 class="font-bold">房间加量包</h3>
-                    <a href="/landing/subscription.html#addons" class="btn btn-xs btn-outline rounded-lg" hidden></a>
-                    <button onclick="openPlanModal('addon')" class="btn btn-xs btn-outline rounded-lg">购买加量包</button>
+                    <button onclick="PlanService.openPlanModal('addon')"
+                        class="btn btn-xs btn-outline rounded-lg">购买加量包</button>
                 </div>
                 <div id="addonList">
                     <div class="text-center py-8 opacity-40"><span class="loading loading-spinner"></span></div>
@@ -428,8 +429,8 @@
             el.innerHTML = `<div class="space-y-2">${addons.map(a => `
         <div class="flex justify-between items-center p-3 rounded-xl" style="background:var(--glass-bg)">
           <div>
-            <div class="text-sm font-medium">+${a.room_count} 个房间</div>
-            <div class="text-xs opacity-40">${a.package_name} · 至 ${fmtDate(a.end_date)}</div>
+            <div class="text-sm font-medium">+${a.roomCount} 个房间</div>
+            <div class="text-xs opacity-40">${a.packageName} · 至 ${fmtDate(a.endDate)}</div>
           </div>
           ${statusBadge(a.status)}
         </div>`).join('')}</div>`;
@@ -604,169 +605,9 @@
         selectAmount(100, null);
     </script>
 
-    <!-- Plan Purchase Modal -->
-    <dialog id="planModal" class="modal modal-bottom sm:modal-middle">
-        <div class="modal-box max-w-4xl" style="background:rgba(15,15,25,0.97);border:1px solid rgba(255,255,255,0.08)">
-            <div class="flex justify-between items-center mb-6">
-                <div>
-                    <h3 class="font-bold text-xl">订阅套餐</h3>
-                    <p class="text-xs opacity-40 mt-0.5">当前余额：<span id="planModalBalance"
-                            class="text-accent font-bold">—</span></p>
-                </div>
-                <form method="dialog"><button class="btn btn-ghost btn-sm btn-circle">✕</button></form>
-            </div>
-
-            <!-- Billing cycle toggle -->
-            <div class="flex gap-1 p-1 rounded-xl w-fit mb-6" style="background:rgba(255,255,255,0.05)">
-                <button class="cycle-btn btn btn-sm rounded-lg active" data-cycle="monthly">月付</button>
-                <button class="cycle-btn btn btn-sm rounded-lg opacity-50" data-cycle="quarterly">季付 <span
-                        class="badge badge-success badge-xs ml-1">-10%</span></button>
-                <button class="cycle-btn btn btn-sm rounded-lg opacity-50" data-cycle="annual">年付 <span
-                        class="badge badge-warning badge-xs ml-1">-25%</span></button>
-            </div>
-
-            <!-- Plan cards -->
-            <div id="planCards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
-                <div class="text-center py-10 opacity-30 col-span-3"><span
-                        class="loading loading-spinner loading-lg"></span></div>
-            </div>
-
-            <!-- Addon section -->
-            <div id="addonSection">
-                <div class="divider my-4 opacity-20">加量包</div>
-                <div id="planModalAddons" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div class="text-center py-6 opacity-30 col-span-2"><span class="loading loading-spinner"></span>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>close</button></form>
-    </dialog>
-
     <script>
-        // Plan purchase modal
-        let _planData = null;
-        let _activeCycle = 'monthly';
-        let _planModalBalance = 0;
-
-        async function openPlanModal(scrollTo) {
-            const modal = document.getElementById('planModal');
-            modal.showModal();
-
-            // Set balance display
-            const balRaw = document.getElementById('balanceVal').textContent;
-            document.getElementById('planModalBalance').textContent = balRaw;
-
-            // Load plans if not cached
-            if (!_planData) {
-                try {
-                    const res = await fetch('/api/subscription/plans');
-                    _planData = await res.json();
-                    _planModalBalance = _planData.balance || 0;
-                } catch (e) {
-                    document.getElementById('planCards').innerHTML = '<p class="col-span-3 text-center text-error">加载失败</p>';
-                    return;
-                }
-            }
-
-            renderPlanCards(_activeCycle);
-            renderModalAddons(_planData.addons || []);
-
-            // Wire billing cycle buttons
-            document.querySelectorAll('.cycle-btn').forEach(btn => {
-                btn.onclick = () => {
-                    _activeCycle = btn.dataset.cycle;
-                    document.querySelectorAll('.cycle-btn').forEach(b => b.classList.toggle('active', b === btn));
-                    document.querySelectorAll('.cycle-btn').forEach(b => b.classList.toggle('opacity-50', b !== btn));
-                    renderPlanCards(_activeCycle);
-                };
-            });
-
-            if (scrollTo === 'addon') {
-                setTimeout(() => document.getElementById('addonSection').scrollIntoView({ behavior: 'smooth' }), 300);
-            }
-        }
-
-        function renderPlanCards(cycle) {
-            const col = { monthly: 'price_monthly', quarterly: 'price_quarterly', annual: 'price_annual' }[cycle];
-            const plans = _planData?.plans || [];
-            document.getElementById('planCards').innerHTML = plans.map(p => {
-                const price = (p[col] / 100).toFixed(2);
-                const canAfford = (_planData?.balance || 0) >= p[col];
-                const popular = p.code === 'pro';
-                return `
-                <div class="glass-card p-5 relative ${popular ? 'ring-1 ring-primary/40' : ''}">
-                    ${popular ? '<div class="badge badge-primary badge-sm absolute -top-2 left-4">最受欢迎</div>' : ''}
-                    <div class="font-bold text-base mb-1">${p.name}</div>
-                    <div class="text-3xl font-extrabold text-primary mb-3">¥${price}<span class="text-xs font-normal opacity-40">/${cycle === 'monthly' ? '月' : cycle === 'quarterly' ? '季' : '年'}</span></div>
-                    <ul class="text-xs opacity-60 space-y-1 mb-5">
-                        <li>📺 ${p.room_limit === -1 ? '无限' : p.room_limit} 个房间</li>
-                        <li>🤖 AI分析 ${p.ai_credits_monthly}/月</li>
-                        <li>📅 历史数据 ${p.history_days} 天</li>
-                    </ul>
-                    <button onclick="purchasePlan('${p.code}','${cycle}','${p.name}',${p[col]})"
-                        class="btn btn-primary btn-sm btn-block rounded-lg ${!canAfford ? 'btn-disabled opacity-40' : ''}">
-                        ${canAfford ? '立即订阅' : '余额不足'}
-                    </button>
-                </div>`;
-            }).join('') || '<p class="col-span-3 text-center opacity-40">暂无套餐</p>';
-        }
-
-        function renderModalAddons(addons) {
-            document.getElementById('planModalAddons').innerHTML = addons.map(a => {
-                const price = (a.price_monthly / 100).toFixed(2);
-                const canAfford = (_planData?.balance || 0) >= a.price_monthly;
-                return `
-                <div class="glass-card p-4 flex justify-between items-center">
-                    <div>
-                        <div class="font-semibold">+${a.room_count} 个房间</div>
-                        <div class="text-xs opacity-40">${a.name} · ¥${price}/月</div>
-                    </div>
-                    <button onclick="purchaseAddon(${a.id},'${a.name}',${a.price_monthly})"
-                        class="btn btn-sm btn-outline rounded-lg ${!canAfford ? 'btn-disabled opacity-40' : ''}">
-                        ${canAfford ? '购买' : '余额不足'}
-                    </button>
-                </div>`;
-            }).join('') || '<p class="col-span-2 text-center opacity-40 text-sm">暂无加量包</p>';
-        }
-
-        async function purchasePlan(planCode, billingCycle, planName, price) {
-            if (!confirm(`确认订阅「${planName}」？将从余额扣除 ¥${(price / 100).toFixed(2)}`)) return;
-            try {
-                const res = await fetch('/api/subscription/purchase', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ planCode, billingCycle })
-                });
-                const d = await res.json();
-                if (!res.ok) throw new Error(d.error);
-                showToast('订阅成功！', 'success');
-                document.getElementById('planModal').close();
-                _planData = null; // invalidate cache
-                setTimeout(loadData, 800);
-            } catch (e) { showToast(e.message || '订阅失败', 'error'); }
-        }
-
-        async function purchaseAddon(addonId, addonName, price) {
-            if (!confirm(`确认购买「${addonName}」？将从余额扣除 ¥${(price / 100).toFixed(2)}`)) return;
-            try {
-                const res = await fetch('/api/subscription/addon/purchase', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ addonId })
-                });
-                const d = await res.json();
-                if (!res.ok) throw new Error(d.error);
-                showToast('加量包购买成功！', 'success');
-                document.getElementById('planModal').close();
-                _planData = null;
-                setTimeout(loadData, 800);
-            } catch (e) { showToast(e.message || '购买失败', 'error'); }
-        }
-
-        window.openPlanModal = openPlanModal;
-        window.purchasePlan = purchasePlan;
-        window.purchaseAddon = purchaseAddon;
+        // Delegate to centralized PlanService
+        window.openPlanModal = function (scrollTo) { PlanService.openPlanModal(scrollTo); };
     </script>
 </body>
 
