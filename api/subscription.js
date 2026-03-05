@@ -6,9 +6,44 @@
 const express = require('express');
 const router = express.Router();
 const db = require('../db');
-const { requireAuth, loadSubscription } = require('../auth/middleware');
+const { requireAuth, loadSubscription, optionalAuth } = require('../auth/middleware');
 
-// All routes require authentication
+/**
+ * GET /api/subscription/plans
+ * Get all available subscription plans and addon packages (public, no auth required)
+ */
+router.get('/plans', optionalAuth, async (req, res) => {
+    try {
+        const plans = await db.query(
+            `SELECT id, name, code, price_monthly, price_quarterly, price_annual, room_limit, 
+                    history_days, api_rate_limit, feature_flags, ai_credits_monthly, description
+             FROM subscription_plans 
+             WHERE is_active = true 
+             ORDER BY sort_order`
+        );
+
+        const addons = await db.query(
+            `SELECT id, name, room_count, price_monthly, price_quarterly, price_annual
+             FROM room_addon_packages 
+             WHERE is_active = true 
+             ORDER BY sort_order`
+        );
+
+        // Get current user balance if logged in
+        let balance = 0;
+        if (req.user) {
+            const user = await db.get('SELECT balance FROM users WHERE id = $1', [req.user.id]);
+            balance = user?.balance || 0;
+        }
+
+        res.json({ plans, addons, balance });
+    } catch (err) {
+        console.error('[Subscription] Error getting plans:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// All remaining routes require authentication
 router.use(requireAuth);
 
 /**
@@ -77,37 +112,6 @@ router.get('/', loadSubscription, async (req, res) => {
         });
     } catch (err) {
         console.error('[Subscription] Error getting subscription:', err);
-        res.status(500).json({ error: err.message });
-    }
-});
-
-/**
- * GET /api/subscription/plans
- * Get all available subscription plans and addon packages (with 3 pricing tiers)
- */
-router.get('/plans', async (req, res) => {
-    try {
-        const plans = await db.query(
-            `SELECT id, name, code, price_monthly, price_quarterly, price_annual, room_limit, 
-                    history_days, api_rate_limit, feature_flags, ai_credits_monthly, description
-             FROM subscription_plans 
-             WHERE is_active = true 
-             ORDER BY sort_order`
-        );
-
-        const addons = await db.query(
-            `SELECT id, name, room_count, price_monthly, price_quarterly, price_annual
-             FROM room_addon_packages 
-             WHERE is_active = true 
-             ORDER BY sort_order`
-        );
-
-        // Get current user balance
-        const user = await db.get('SELECT balance FROM users WHERE id = $1', [req.user.id]);
-
-        res.json({ plans, addons, balance: user?.balance || 0 });
-    } catch (err) {
-        console.error('[Subscription] Error getting plans:', err);
         res.status(500).json({ error: err.message });
     }
 });

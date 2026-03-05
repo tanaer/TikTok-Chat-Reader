@@ -300,6 +300,55 @@ router.post('/logout', async (req, res) => {
 });
 
 /**
+ * PUT /api/auth/password
+ * Change password (requires old password) — frontend alias
+ */
+router.put('/password', requireAuth, async (req, res) => {
+    try {
+        const { oldPassword, newPassword } = req.body;
+
+        if (!oldPassword || !newPassword) {
+            return res.status(400).json({ error: '旧密码和新密码不能为空' });
+        }
+        if (newPassword.length < 6) {
+            return res.status(400).json({ error: '新密码长度至少6位' });
+        }
+
+        const user = await db.get(
+            'SELECT password_hash FROM users WHERE id = $1',
+            [req.user.id]
+        );
+
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        const isValid = await bcrypt.compare(oldPassword, user.passwordHash);
+        if (!isValid) {
+            return res.status(401).json({ error: '旧密码不正确' });
+        }
+
+        const newHash = await bcrypt.hash(newPassword, SALT_ROUNDS);
+        await db.run(
+            'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+            [newHash, req.user.id]
+        );
+
+        await db.run(
+            'UPDATE refresh_tokens SET revoked = true WHERE user_id = $1',
+            [req.user.id]
+        );
+
+        console.log(`[Auth] Password changed for user: ${req.user.email}`);
+
+        res.json({ success: true, message: '密码修改成功，请重新登录' });
+    } catch (err) {
+        console.error('[Auth] Change password error:', err);
+        res.status(500).json({ error: '密码修改失败' });
+    }
+});
+
+/**
  * POST /api/auth/change-password
  * Change password (requires old password)
  */
@@ -325,7 +374,7 @@ router.post('/change-password', requireAuth, async (req, res) => {
         }
 
         // Verify old password
-        const isValid = await bcrypt.compare(oldPassword, user.password_hash);
+        const isValid = await bcrypt.compare(oldPassword, user.passwordHash);
         if (!isValid) {
             return res.status(401).json({ error: '旧密码不正确' });
         }

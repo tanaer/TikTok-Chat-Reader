@@ -353,8 +353,9 @@
 
         function renderSubCard(sub) {
             const el = document.getElementById('subCard');
-            // Check if planCode is valid rather than 'none' or missing sub.plan
-            if (!sub.planCode || sub.planCode === 'none') {
+            // API returns sub.plan.code (nested object)
+            const planCode = sub.plan?.code || sub.planCode;
+            if (!planCode || planCode === 'none') {
                 el.innerHTML = `
           <div class="text-center py-6">
             <div class="text-4xl mb-3">📦</div>
@@ -363,12 +364,13 @@
           </div>`;
                 return;
             }
+            const planName = sub.plan?.name || sub.planName || planCode;
             const cycles = { monthly: '月付', quarterly: '季付', annual: '年付' };
             el.innerHTML = `
         <div class="space-y-3">
           <div class="flex justify-between">
             <span class="opacity-50 text-sm">套餐</span>
-            <strong class="text-primary">${sub.planName || sub.planCode}</strong>
+            <strong class="text-primary">${planName}</strong>
           </div>
           <div class="flex justify-between">
             <span class="opacity-50 text-sm">计费周期</span>
