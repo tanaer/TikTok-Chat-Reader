@@ -10,6 +10,7 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
         rel="stylesheet">
     <link rel="stylesheet" href="/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
     <script src="/auth.js"></script>
     <script src="/plan_service.js"></script>
     <script src="/nav_shared.js"></script>
@@ -198,7 +199,6 @@
                             <thead>
                                 <tr>
                                     <th>加量包名</th>
-                                    <th>Code</th>
                                     <th>房间数 (附加)</th>
                                     <th>月价</th>
                                     <th>操作</th>
@@ -453,17 +453,10 @@
             <h3 class="font-bold text-lg mb-6 text-accent">编辑 / 添加加量包</h3>
             <input type="hidden" id="editAddonId">
             <div class="space-y-4">
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="form-control">
-                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">加量包名称</span></label>
-                        <input type="text" id="editAddonName"
-                            class="input input-sm input-bordered glass-input rounded-xl" placeholder="如: +5房间">
-                    </div>
-                    <div class="form-control">
-                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">代码</span></label>
-                        <input type="text" id="editAddonCode"
-                            class="input input-sm input-bordered glass-input rounded-xl" placeholder="如: plus5">
-                    </div>
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text opacity-60 text-xs">加量包名称</span></label>
+                    <input type="text" id="editAddonName"
+                        class="input input-sm input-bordered glass-input rounded-xl" placeholder="如: +5房间">
                 </div>
                 <div class="form-control">
                     <label class="label pb-1"><span class="label-text opacity-60 text-xs">附加房间数</span></label>
@@ -781,7 +774,7 @@
                 const data = await PlanService.loadPlans();
                 document.getElementById('addonsTableBody').innerHTML = PlanService.renderAddonTableRows(data.addons || []);
             } catch {
-                document.getElementById('addonsTableBody').innerHTML = '<tr><td colspan="5" class="text-center py-8 text-error text-sm">加载失败</td></tr>';
+                document.getElementById('addonsTableBody').innerHTML = '<tr><td colspan="4" class="text-center py-8 text-error text-sm">加载失败</td></tr>';
             }
         }
 
@@ -811,14 +804,14 @@
             document.getElementById('editPlanId').value = p.id;
             document.getElementById('editPlanCode').value = p.code;
             document.getElementById('editPlanName').value = p.name || '';
-            document.getElementById('editPlanRoomLimit').value = p.roomLimit;
-            document.getElementById('editPlanPriceMonthly').value = p.priceMonthly || 0;
-            document.getElementById('editPlanPriceQuarterly').value = p.priceQuarterly || 0;
-            document.getElementById('editPlanPriceAnnual').value = p.priceAnnual || 0;
-            document.getElementById('editPlanType').value = p.plan_type || 'recurring';
-            document.getElementById('editPlanDurationDays').value = p.duration_days || 0;
-            document.getElementById('editPlanIsActive').checked = p.isActive !== false;
-            togglePlanType(p.plan_type || 'recurring');
+            document.getElementById('editPlanRoomLimit').value = p.roomLimit || p.room_limit || 1;
+            document.getElementById('editPlanPriceMonthly').value = p.priceMonthly || p.price_monthly || 0;
+            document.getElementById('editPlanPriceQuarterly').value = p.priceQuarterly || p.price_quarterly || 0;
+            document.getElementById('editPlanPriceAnnual').value = p.priceAnnual || p.price_annual || 0;
+            document.getElementById('editPlanType').value = p.planType || p.plan_type || 'recurring';
+            document.getElementById('editPlanDurationDays').value = p.durationDays || p.duration_days || 0;
+            document.getElementById('editPlanIsActive').checked = (p.isActive !== false) && (p.is_active !== false);
+            togglePlanType(p.planType || p.plan_type || 'recurring');
             document.getElementById('editPlanModal').showModal();
         };
 
@@ -866,7 +859,6 @@
         window.openAddonModal = function () {
             document.getElementById('editAddonId').value = 'new';
             document.getElementById('editAddonName').value = '';
-            document.getElementById('editAddonCode').value = '';
             document.getElementById('editAddonRoomCount').value = 1;
             document.getElementById('editAddonPriceMonthly').value = 0;
             document.getElementById('editAddonPriceQuarterly').value = 0;
@@ -877,11 +869,10 @@
         window.editAddon = function (a) {
             document.getElementById('editAddonId').value = a.id;
             document.getElementById('editAddonName').value = a.name || '';
-            document.getElementById('editAddonCode').value = a.code || '';
-            document.getElementById('editAddonRoomCount').value = a.roomCount || 1;
-            document.getElementById('editAddonPriceMonthly').value = a.priceMonthly || 0;
-            document.getElementById('editAddonPriceQuarterly').value = a.priceQuarterly || 0;
-            document.getElementById('editAddonPriceAnnual').value = a.priceAnnual || 0;
+            document.getElementById('editAddonRoomCount').value = a.roomCount || a.room_count || 1;
+            document.getElementById('editAddonPriceMonthly').value = a.priceMonthly || a.price_monthly || 0;
+            document.getElementById('editAddonPriceQuarterly').value = a.priceQuarterly || a.price_quarterly || 0;
+            document.getElementById('editAddonPriceAnnual').value = a.priceAnnual || a.price_annual || 0;
             document.getElementById('editAddonModal').showModal();
         };
 
@@ -889,11 +880,10 @@
             const id = document.getElementById('editAddonId').value;
             const payload = {
                 name: document.getElementById('editAddonName').value,
-                code: document.getElementById('editAddonCode').value,
-                room_count: parseInt(document.getElementById('editAddonRoomCount').value) || 1,
-                price_monthly: parseFloat(document.getElementById('editAddonPriceMonthly').value) || 0,
-                price_quarterly: parseFloat(document.getElementById('editAddonPriceQuarterly').value) || 0,
-                price_annual: parseFloat(document.getElementById('editAddonPriceAnnual').value) || 0
+                roomCount: parseInt(document.getElementById('editAddonRoomCount').value) || 1,
+                priceMonthly: parseFloat(document.getElementById('editAddonPriceMonthly').value) || 0,
+                priceQuarterly: parseFloat(document.getElementById('editAddonPriceQuarterly').value) || 0,
+                priceAnnual: parseFloat(document.getElementById('editAddonPriceAnnual').value) || 0
             };
 
             try {

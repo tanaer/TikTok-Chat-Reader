@@ -188,15 +188,24 @@
               ${isAdm ? '<span class="badge badge-warning badge-xs">Admin</span>' : ''}
               <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
             </div>
-            <ul tabindex="0" class="dropdown-content menu bg-base-300/90 backdrop-blur-xl rounded-xl z-50 w-52 p-2 shadow-2xl border border-white/8 mt-2 animate-scale-in">
+            <ul class="dropdown-content menu bg-base-300/90 backdrop-blur-xl rounded-xl z-50 w-52 p-2 shadow-2xl border border-white/8 mt-2">
               <li class="menu-title text-xs opacity-40 pt-1">账户</li>
               <li><a href="/landing/user-center.html" class="rounded-lg">👤 用户中心</a></li>
               ${isAdm ? `<li class="menu-title text-xs opacity-40">管理员</li><li><a href="/landing/admin.html" class="rounded-lg text-warning">⚙️ 后台管理</a></li>` : ''}
-              
-              <li><a onclick="window.logout()" class="rounded-lg text-error cursor-pointer">🚪 退出登录</a></li>
+              <li id="logoutBtn"><a class="rounded-lg text-error cursor-pointer">🚪 退出登录</a></li>
             </ul>
           </div>
         `;
+
+        // Bind logout click event after DOM insertion
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+            logoutBtn.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                window.logout();
+            });
+        }
     };
 
     // ── 7. Global Helpers ────────────────────────────────────────────────────
