@@ -17,6 +17,19 @@ function getBeijingTime() {
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+function getStreamType(streamUrl) {
+    const lower = String(streamUrl || '').toLowerCase();
+    if (lower.includes('.m3u8')) return 'hls';
+    if (lower.includes('.flv')) return 'flv';
+    return 'unknown';
+}
+
+function pushLogLine(list, line, max = 6) {
+    if (!line || !list) return;
+    list.push(line);
+    if (list.length > max) list.shift();
+}
+
 class RecordingManager {
     constructor() {
         this.activeRecordings = new Map(); // roomId -> { process, filePath, startTime, request }
@@ -140,7 +153,11 @@ class RecordingManager {
      * Spawn the curl -> ffmpeg pipeline for recording.
      * Extracted so it can be re-used for auto-reconnect.
      */
-    _spawnRecordingPipeline(roomId, uniqueId, accountId, streamUrl, filePath, proxyUrl, cookie) {
+    _spawnRecordingPipeline(roomId, uniqueId, accountId, streamUrl, filePath, proxyUrl, cookie, options = {}) {
+        const streamType = getStreamType(streamUrl);
+        const forceDirect = options.forceDirect === true;
+        const useDirectFfmpeg = forceDirect || streamType !== 'flv';
+
         // Use curl to download stream (bypasses Node.js TLS fingerprinting/IPv6 issues)
         const curlArgs = [
             '-4',                   // FORCE IPv4 to avoid proxy IPv6 issues
@@ -161,84 +178,96 @@ class RecordingManager {
             '-H', 'Connection: keep-alive'
         ];
 
-        if (cookie) {
-            curlArgs.push('--cookie', cookie);
-        }
+        let curlProcess = null;
+        let ffmpegArgs = [];
+        let ffmpegEnv = { ...process.env };
 
-        if (proxyUrl) {
-            console.log(`[Recorder] Using proxy for stream download: ${proxyUrl}`);
-            // Use socks5h to force remote DNS resolution
-            const curlProxy = proxyUrl.replace('socks5://', 'socks5h://');
-            curlArgs.push('-x', curlProxy);
-        }
+        if (useDirectFfmpeg) {
+            console.log(`[Recorder] Detected HLS stream for ${roomId}. Using FFmpeg direct input.`);
+            ffmpegArgs = [
+                '-y',
+                '-v', 'warning',
+                '-user_agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                '-headers', `Referer: https://www.tiktok.com/@${uniqueId}/live\r\n`,
+                '-reconnect', '1',
+                '-reconnect_streamed', '1',
+                '-reconnect_delay_max', '5',
+                '-rw_timeout', '20000000',
+                '-i', streamUrl,
+                '-c', 'copy',
+                '-movflags', 'frag_keyframe+empty_moov+default_base_moof',
+                '-f', 'mp4',
+                filePath
+            ];
 
-        curlArgs.push(streamUrl);
-
-        // Spawn Curl
-        const curlProcess = spawn('curl', curlArgs);
-
-        // Handle Curl Errors (initial startup)
-        curlProcess.on('error', (err) => {
-            console.error(`[Recorder] Curl failed to start: ${err.message}`);
-            db.run(`INSERT INTO recording_task (room_id, account_id, start_time, status, error_msg) VALUES ($1, $2, $3, $4, $5)`,
-                [roomId, accountId || null, getBeijingTime(), 'failed', `Curl Error: ${err.message}`]);
-        });
-
-        // Log curl stderr for debugging
-        curlProcess.stderr.on('data', (data) => {
-            const msg = data.toString().trim();
-            if (msg) {
-                console.log(`[Curl:${roomId}] ${msg}`);
+            if (proxyUrl) {
+                if (proxyUrl.startsWith('http://') || proxyUrl.startsWith('https://')) {
+                    ffmpegArgs.unshift(proxyUrl);
+                    ffmpegArgs.unshift('-http_proxy');
+                } else if (proxyUrl.startsWith('socks5://') || proxyUrl.startsWith('socks5h://')) {
+                    ffmpegEnv.ALL_PROXY = proxyUrl;
+                }
             }
-        });
-
-        // Track curl exit for debugging
-        curlProcess.on('close', (code) => {
-            if (code !== 0 && code !== null) {
-                const curlErrors = {
-                    7: 'Connection refused',
-                    18: 'Partial transfer (server closed connection)',
-                    28: 'Timeout (--connect-timeout or --speed-time exceeded)',
-                    35: 'SSL/TLS handshake failed',
-                    52: 'Server returned empty response',
-                    56: 'Network recv error (connection reset)',
-                };
-                const reason = curlErrors[code] || 'Unknown error';
-                console.warn(`[Recorder] Curl for ${roomId} exited with code ${code}: ${reason}`);
+        } else {
+            if (cookie) {
+                curlArgs.push('--cookie', cookie);
             }
-        });
 
-        // Prepare FFmpeg
-        const ffmpegArgs = [
-            '-y',
-            '-v', 'warning',       // Show warnings too (was 'error' - helps debug)
-            '-f', 'flv',           // Specify input format (FLV stream from curl)
-            '-i', '-',             // Read from pipe
-            '-c', 'copy',          // Copy streams without re-encoding
-            '-movflags', 'frag_keyframe+empty_moov+default_base_moof', // Fragmented MP4
-            '-f', 'mp4',
-            filePath
-        ];
+            if (proxyUrl) {
+                console.log(`[Recorder] Using proxy for stream download: ${proxyUrl}`);
+                // Use socks5h to force remote DNS resolution
+                const curlProxy = proxyUrl.replace('socks5://', 'socks5h://');
+                curlArgs.push('-x', curlProxy);
+            }
+
+            curlArgs.push(streamUrl);
+
+            // Spawn Curl
+            curlProcess = spawn('curl', curlArgs);
+
+            // Handle Curl Errors (initial startup)
+            curlProcess.on('error', (err) => {
+                console.error(`[Recorder] Curl failed to start: ${err.message}`);
+                db.run(`UPDATE recording_task SET status = $1, end_time = $2, error_msg = $3 WHERE room_id = $4 AND status = 'recording'`,
+                    ['failed', getBeijingTime(), `Curl Error: ${err.message}`, roomId]);
+            });
+
+            // Prepare FFmpeg (curl -> ffmpeg)
+            ffmpegArgs = [
+                '-y',
+                '-v', 'warning',       // Show warnings too (was 'error' - helps debug)
+                '-f', 'flv',           // Specify input format (FLV stream from curl)
+                '-i', '-',             // Read from pipe
+                '-c', 'copy',          // Copy streams without re-encoding
+                '-movflags', 'frag_keyframe+empty_moov+default_base_moof', // Fragmented MP4
+                '-f', 'mp4',
+                filePath
+            ];
+        }
 
         const ffmpegPath = ffmpegManager.getFFmpegPath();
         if (!ffmpegPath) {
             console.error("FFmpeg not found");
-            curlProcess.kill();
+            if (curlProcess) curlProcess.kill();
             return { success: false, error: 'FFmpeg not found' };
         }
 
-        const ffmpeg = spawn(ffmpegPath, ffmpegArgs);
+        const ffmpeg = spawn(ffmpegPath, ffmpegArgs, { env: ffmpegEnv });
 
         // Pipe Curl -> FFmpeg
-        curlProcess.stdout.pipe(ffmpeg.stdin);
+        if (curlProcess) {
+            curlProcess.stdout.pipe(ffmpeg.stdin);
+        }
 
         // Handle pipe errors (prevent crash on broken pipe)
-        curlProcess.stdout.on('error', (err) => {
-            console.warn(`[Recorder] Curl stdout error for ${roomId}: ${err.message}`);
-        });
-        ffmpeg.stdin.on('error', (err) => {
-            console.warn(`[Recorder] FFmpeg stdin error for ${roomId}: ${err.message}`);
-        });
+        if (curlProcess) {
+            curlProcess.stdout.on('error', (err) => {
+                console.warn(`[Recorder] Curl stdout error for ${roomId}: ${err.message}`);
+            });
+            ffmpeg.stdin.on('error', (err) => {
+                console.warn(`[Recorder] FFmpeg stdin error for ${roomId}: ${err.message}`);
+            });
+        }
 
         // Track process
         this.activeRecordings.set(roomId, {
@@ -251,17 +280,57 @@ class RecordingManager {
             streamUrl: streamUrl,
             proxyUrl: proxyUrl,
             cookie: cookie,
+            streamType: streamType,
+            pipeline: useDirectFfmpeg ? 'ffmpeg' : 'curl',
+            forceDirect: forceDirect,
             reconnectAttempts: 0,
             lastSize: 0,
-            lastSizeChange: Date.now()
+            lastSizeChange: Date.now(),
+            lastCurlExit: null,
+            lastFfmpegExit: null,
+            lastCurlErrors: [],
+            lastFfmpegErrors: []
         });
 
         console.log(`[Recorder] FFmpeg started for ${roomId}, PID: ${ffmpeg.pid}`);
+
+        if (curlProcess) {
+            // Log curl stderr for debugging (capture last lines)
+            curlProcess.stderr.on('data', (data) => {
+                const msg = data.toString().trim();
+                if (msg) {
+                    console.log(`[Curl:${roomId}] ${msg}`);
+                    pushLogLine(this.activeRecordings.get(roomId)?.lastCurlErrors, msg);
+                }
+            });
+
+            // Track curl exit for debugging
+            curlProcess.on('close', (code) => {
+                if (code !== 0 && code !== null) {
+                    const curlErrors = {
+                        7: 'Connection refused',
+                        18: 'Partial transfer (server closed connection)',
+                        28: 'Timeout (--connect-timeout or --speed-time exceeded)',
+                        35: 'SSL/TLS handshake failed',
+                        52: 'Server returned empty response',
+                        56: 'Network recv error (connection reset)',
+                    };
+                    const reason = curlErrors[code] || 'Unknown error';
+                    console.warn(`[Recorder] Curl for ${roomId} exited with code ${code}: ${reason}`);
+                    const state = this.activeRecordings.get(roomId);
+                    if (state) state.lastCurlExit = { code, reason };
+                }
+            });
+        }
 
         ffmpeg.stderr.on('data', (data) => {
             const msg = data.toString().trim();
             if (msg) {
                 console.log(`[FFmpeg:${roomId}] ${msg}`);
+                const state = this.activeRecordings.get(roomId);
+                if (state) {
+                    pushLogLine(state.lastFfmpegErrors, msg);
+                }
             }
         });
 
@@ -275,6 +344,8 @@ class RecordingManager {
             if (!recordingState) {
                 return; // Already cleaned up
             }
+
+            recordingState.lastFfmpegExit = { code };
 
             // If manual stop, don't reconnect
             if (recordingState.manualStop) {
@@ -298,7 +369,12 @@ class RecordingManager {
                 console.log(`[Recorder] ⚡ Auto-reconnect for ${roomId} (attempt ${attempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
 
                 // Kill old curl just in case
-                try { curlProcess.kill(); } catch (e) { }
+                try { curlProcess?.kill(); } catch (e) { }
+
+                const ffmpegErrText = (recordingState.lastFfmpegErrors || []).join(' ');
+                const shouldForceDirect = recordingState.pipeline === 'curl' &&
+                    /could not find codec parameters|invalid data found|error opening input|end of file/i.test(ffmpegErrText);
+                const forceDirectNext = recordingState.forceDirect || shouldForceDirect;
 
                 // Remove from active recordings before reconnecting
                 this.activeRecordings.delete(roomId);
@@ -322,7 +398,8 @@ class RecordingManager {
 
                         const result = this._spawnRecordingPipeline(
                             roomId, recordingState.uniqueId, recordingState.accountId,
-                            newStreamUrl, newFilePath, newProxyUrl, recordingState.cookie
+                            newStreamUrl, newFilePath, newProxyUrl, recordingState.cookie,
+                            { forceDirect: forceDirectNext }
                         );
 
                         if (result.success) {
@@ -353,15 +430,40 @@ class RecordingManager {
             this.activeRecordings.delete(roomId);
 
             // Ensure curl is killed
-            try { curlProcess.kill(); } catch (e) { }
+            try { curlProcess?.kill(); } catch (e) { }
 
             // Determine Status: Success if code 0, 255 (kill)
             const isSuccess = (code === 0 || code === 255);
             const status = isSuccess ? 'completed' : 'failed';
             const endTime = getBeijingTime();
 
-            await db.run(`UPDATE recording_task SET status = $1, end_time = $2 WHERE room_id = $3 AND status = 'recording'`,
-                [status, endTime, roomId]);
+            let errorMsg = null;
+            if (!isSuccess) {
+                const errors = [];
+                if (recordingState.lastCurlExit?.code) {
+                    errors.push(`Curl exit ${recordingState.lastCurlExit.code}: ${recordingState.lastCurlExit.reason}`);
+                }
+                if (recordingState.lastCurlErrors?.length) {
+                    errors.push(`Curl: ${recordingState.lastCurlErrors.slice(-2).join(' | ')}`);
+                }
+                if (recordingState.lastFfmpegErrors?.length) {
+                    errors.push(`FFmpeg: ${recordingState.lastFfmpegErrors.slice(-3).join(' | ')}`);
+                }
+                const durationSec = Math.round((Date.now() - recordingState.startTime.getTime()) / 1000);
+                let sizeInfo = '';
+                try {
+                    const stats = fs.statSync(filePath);
+                    sizeInfo = `, size ${(stats.size / (1024 * 1024)).toFixed(2)}MB`;
+                } catch (e) { }
+                if (durationSec < 90) {
+                    errors.push(`Short recording (${durationSec}s${sizeInfo})`);
+                }
+                errors.push(`Pipeline=${recordingState.pipeline}, Stream=${recordingState.streamType}`);
+                errorMsg = errors.join(' || ') || `FFmpeg exit ${code}`;
+            }
+
+            await db.run(`UPDATE recording_task SET status = $1, end_time = $2, error_msg = $3 WHERE room_id = $4 AND status = 'recording'`,
+                [status, endTime, errorMsg, roomId]);
 
             // Process Highlights if completed
             if (isSuccess && recordingState) {
@@ -492,8 +594,12 @@ class RecordingManager {
 
                     // Don't call stopRecording (which sets manualStop) - instead kill processes
                     // to trigger the auto-reconnect in ffmpeg.on('close')
-                    try { recording.curlProcess.kill(); } catch (e) { }
-                    // FFmpeg will exit when its stdin closes (curl killed)
+                    if (recording.curlProcess) {
+                        try { recording.curlProcess.kill(); } catch (e) { }
+                        // FFmpeg will exit when its stdin closes (curl killed)
+                    } else {
+                        try { recording.process.kill('SIGINT'); } catch (e) { }
+                    }
                 }
 
                 // Periodic status log (every ~5 minutes based on 60s interval)

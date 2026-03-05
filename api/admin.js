@@ -541,7 +541,7 @@ router.delete('/plans/:id', async (req, res) => {
  */
 router.get('/addons', async (req, res) => {
     try {
-        const addons = await db.query('SELECT * FROM subscription_addons ORDER BY sort_order');
+        const addons = await db.query('SELECT * FROM room_addon_packages ORDER BY sort_order');
         res.json(addons);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -554,15 +554,15 @@ router.get('/addons', async (req, res) => {
  */
 router.post('/addons', async (req, res) => {
     try {
-        const { name, code, description, roomCount, priceMonthly, priceQuarterly, priceAnnual } = req.body;
+        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual } = req.body;
 
-        if (!name || !code || !roomCount) return res.status(400).json({ error: '缺少必填字段' });
+        if (!name || !roomCount) return res.status(400).json({ error: '缺少必填字段' });
 
         const newAddon = await db.query(
-            `INSERT INTO subscription_addons 
-            (name, code, description, room_count, price_monthly, price_quarterly, price_annual, sort_order) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, 99) RETURNING *`,
-            [name, code, description || '', parseInt(roomCount), parseFloat(priceMonthly) || 0, parseFloat(priceQuarterly) || 0, parseFloat(priceAnnual) || 0]
+            `INSERT INTO room_addon_packages
+            (name, room_count, price_monthly, price_quarterly, price_annual, sort_order)
+            VALUES ($1, $2, $3, $4, $5, 99) RETURNING *`,
+            [name, parseInt(roomCount), parseFloat(priceMonthly) || 0, parseFloat(priceQuarterly) || 0, parseFloat(priceAnnual) || 0]
         );
         res.json(newAddon[0]);
     } catch (err) {
@@ -577,14 +577,14 @@ router.post('/addons', async (req, res) => {
 router.put('/addons/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, code, description, roomCount, priceMonthly, priceQuarterly, priceAnnual } = req.body;
+        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual } = req.body;
 
         await db.run(
-            `UPDATE subscription_addons SET 
-                name = $1, code = $2, description = $3, room_count = $4, 
-                price_monthly = $5, price_quarterly = $6, price_annual = $7, updated_at = NOW() 
-            WHERE id = $8`,
-            [name, code, description, parseInt(roomCount), parseFloat(priceMonthly) || 0, parseFloat(priceQuarterly) || 0, parseFloat(priceAnnual) || 0, parseInt(id)]
+            `UPDATE room_addon_packages SET
+                name = $1, room_count = $2,
+                price_monthly = $3, price_quarterly = $4, price_annual = $5
+            WHERE id = $6`,
+            [name, parseInt(roomCount), parseFloat(priceMonthly) || 0, parseFloat(priceQuarterly) || 0, parseFloat(priceAnnual) || 0, parseInt(id)]
         );
         res.json({ success: true });
     } catch (err) {
@@ -599,7 +599,7 @@ router.put('/addons/:id', async (req, res) => {
 router.delete('/addons/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        await db.run('DELETE FROM subscription_addons WHERE id = $1', [parseInt(id)]);
+        await db.run('DELETE FROM room_addon_packages WHERE id = $1', [parseInt(id)]);
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });

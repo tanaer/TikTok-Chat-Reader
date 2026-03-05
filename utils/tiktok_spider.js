@@ -15,6 +15,175 @@ function getRandomUA() {
     return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
+function safeJsonParse(text, label) {
+    try {
+        return JSON.parse(text);
+    } catch (err) {
+        console.warn(`[Spider] Failed to parse ${label}: ${err.message}`);
+        return null;
+    }
+}
+
+function extractScriptJson(html, id) {
+    const regex = new RegExp(`<script[^>]*id="${id}"[^>]*>([\\s\\S]*?)<\\/script>`, 'i');
+    const match = html.match(regex);
+    if (!match) return null;
+    const jsonText = match[1]?.trim();
+    if (!jsonText) return null;
+    return safeJsonParse(jsonText, id);
+}
+
+function extractJsonFromAssignment(html, token) {
+    const tokenIndex = html.indexOf(token);
+    if (tokenIndex === -1) return null;
+
+    const startIndex = html.indexOf('{', tokenIndex);
+    if (startIndex === -1) return null;
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = startIndex; i < html.length; i++) {
+        const char = html[i];
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (char === '\\') {
+                escaped = true;
+            } else if (char === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (char === '"') {
+            inString = true;
+            continue;
+        }
+        if (char === '{') depth += 1;
+        if (char === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                const jsonText = html.slice(startIndex, i + 1);
+                return safeJsonParse(jsonText, token);
+            }
+        }
+    }
+
+    return null;
+}
+
+function decodeEscapedJsonString(raw) {
+    try {
+        const wrapped = `"${raw.replace(/\r/g, '').replace(/\n/g, '\\n')}"`;
+        return JSON.parse(wrapped);
+    } catch (err) {
+        return null;
+    }
+}
+
+function extractStreamUrlFromStreamDataRaw(streamDataRaw) {
+    if (!streamDataRaw) return null;
+    if (typeof streamDataRaw === 'object') {
+        return extractUrlFromStreamData(streamDataRaw);
+    }
+
+    try {
+        const parsed = JSON.parse(streamDataRaw);
+        return extractUrlFromStreamData(parsed);
+    } catch (err) {
+        const decoded = decodeEscapedJsonString(streamDataRaw);
+        if (decoded) {
+            try {
+                const parsed = JSON.parse(decoded);
+                return extractUrlFromStreamData(parsed);
+            } catch (e) {
+                console.warn('[Spider] Failed to parse decoded stream_data', e.message);
+            }
+        }
+    }
+    return null;
+}
+
+function extractStreamUrlFromNode(node) {
+    if (!node || typeof node !== 'object') return null;
+
+    if (node.streamData?.pull_data?.stream_data) {
+        return extractStreamUrlFromStreamDataRaw(node.streamData.pull_data.stream_data);
+    }
+    if (node.pull_data?.stream_data) {
+        return extractStreamUrlFromStreamDataRaw(node.pull_data.stream_data);
+    }
+    if (node.stream_data) {
+        return extractStreamUrlFromStreamDataRaw(node.stream_data);
+    }
+
+    if (node.flv_pull_url && typeof node.flv_pull_url === 'object') {
+        const urls = Object.values(node.flv_pull_url);
+        if (urls.length > 0) return urls[0];
+    }
+    if (node.hls_pull_url && typeof node.hls_pull_url === 'object') {
+        const urls = Object.values(node.hls_pull_url);
+        if (urls.length > 0) return urls[0];
+    }
+
+    if (node.flv) return node.flv;
+    if (node.m3u8) return node.m3u8;
+
+    return null;
+}
+
+function extractStreamUrlFromString(text) {
+    if (!text || typeof text !== 'string') return null;
+
+    const directUrlMatch = text.match(/https:\/\/[^"'\s]+?\.(?:flv|m3u8)[^"'\s]*/);
+    if (directUrlMatch) {
+        return directUrlMatch[0].replace(/\\\//g, '/');
+    }
+
+    if (text.startsWith('{') || text.startsWith('[')) {
+        const parsed = safeJsonParse(text, 'embedded JSON');
+        if (parsed) {
+            return extractStreamUrlFromObject(parsed);
+        }
+    }
+
+    return null;
+}
+
+function extractStreamUrlFromObject(root) {
+    if (!root) return null;
+    const visited = new Set();
+    const stack = [root];
+
+    while (stack.length > 0) {
+        const node = stack.pop();
+        if (!node) continue;
+
+        if (typeof node === 'string') {
+            const fromString = extractStreamUrlFromString(node);
+            if (fromString) return fromString;
+            continue;
+        }
+
+        if (typeof node !== 'object') continue;
+        if (visited.has(node)) continue;
+        visited.add(node);
+
+        const direct = extractStreamUrlFromNode(node);
+        if (direct) return direct;
+
+        if (Array.isArray(node)) {
+            for (const item of node) stack.push(item);
+        } else {
+            for (const value of Object.values(node)) stack.push(value);
+        }
+    }
+
+    return null;
+}
+
 /**
  * Get TikTok Stream URL
  * @param {string} uniqueId - The uniqueId of the user (e.g. 'username')
@@ -164,47 +333,66 @@ async function _fetchStreamUrl(uniqueId, proxyUrl = null, cookie = null) {
         }
 
         // 1. Try SIGI_STATE
-        const sigiStateMatch = html.match(/<script id="SIGI_STATE" type="application\/json">(.*?)<\/script>/);
-        if (sigiStateMatch) {
-            try {
-                const sigiData = JSON.parse(sigiStateMatch[1]);
-                console.log(`[Spider] Found SIGI_STATE, LiveRoom exists: ${!!sigiData.LiveRoom}`);
-                const streamUrl = extractFromSigiState(sigiData);
-                if (streamUrl) {
-                    console.log(`[Spider] Stream URL found via SIGI_STATE`);
-                    return streamUrl;
-                }
-            } catch (e) {
-                console.warn("[Spider] Failed to parse SIGI_STATE", e.message);
+        let sigiData = extractScriptJson(html, 'SIGI_STATE');
+        if (!sigiData && html.includes('SIGI_STATE')) {
+            sigiData = extractJsonFromAssignment(html, 'SIGI_STATE');
+        }
+        if (sigiData) {
+            console.log(`[Spider] Found SIGI_STATE, LiveRoom exists: ${!!sigiData.LiveRoom}`);
+            const streamUrl = extractFromSigiState(sigiData) || extractStreamUrlFromObject(sigiData);
+            if (streamUrl) {
+                console.log(`[Spider] Stream URL found via SIGI_STATE`);
+                return streamUrl;
             }
         }
 
         // 2. Try __UNIVERSAL_DATA_FOR_REHYDRATION__
-        const universalDataMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">(.*?)<\/script>/);
-        if (universalDataMatch) {
-            try {
-                const universalData = JSON.parse(universalDataMatch[1]);
-                console.log(`[Spider] Found UNIVERSAL_DATA`);
-                // Try to find stream URL in __DEFAULT_SCOPE__
-                const liveRoom = universalData?.['__DEFAULT_SCOPE__']?.['webapp.live-room'];
-                if (liveRoom?.streamData?.pull_data?.stream_data) {
-                    const streamData = JSON.parse(liveRoom.streamData.pull_data.stream_data);
-                    const url = extractUrlFromStreamData(streamData);
-                    if (url) {
-                        console.log(`[Spider] Stream URL found via UNIVERSAL_DATA`);
-                        return url;
-                    }
+        const universalData = extractScriptJson(html, '__UNIVERSAL_DATA_FOR_REHYDRATION__');
+        if (universalData) {
+            console.log(`[Spider] Found UNIVERSAL_DATA`);
+            // Try to find stream URL in __DEFAULT_SCOPE__
+            const liveRoom = universalData?.['__DEFAULT_SCOPE__']?.['webapp.live-room'];
+            if (liveRoom?.streamData?.pull_data?.stream_data) {
+                const url = extractStreamUrlFromStreamDataRaw(liveRoom.streamData.pull_data.stream_data);
+                if (url) {
+                    console.log(`[Spider] Stream URL found via UNIVERSAL_DATA`);
+                    return url;
                 }
-            } catch (e) {
-                console.warn("[Spider] Failed to parse UNIVERSAL_DATA", e.message);
+            }
+            const fallbackUrl = extractStreamUrlFromObject(universalData);
+            if (fallbackUrl) {
+                console.log(`[Spider] Stream URL found via UNIVERSAL_DATA fallback`);
+                return fallbackUrl;
             }
         }
 
-        // 3. Regex Fallback for "flv_pull_url" or "hls_pull_url" inside JSON string
-        const flvMatch = html.match(/\\?"flv_pull_url\\?":\s*({[^}]+})/);
+        // 3. Try __NEXT_DATA__ (newer TikTok pages)
+        const nextData = extractScriptJson(html, '__NEXT_DATA__');
+        if (nextData) {
+            console.log('[Spider] Found NEXT_DATA');
+            const nextUrl = extractStreamUrlFromObject(nextData);
+            if (nextUrl) {
+                console.log('[Spider] Stream URL found via NEXT_DATA');
+                return nextUrl;
+            }
+        }
+
+        // 4. Regex Fallback for "stream_data" JSON string
+        const streamDataMatch = html.match(/"stream_data"\s*:\s*"((?:\\.|[^"\\])*)"/s);
+        if (streamDataMatch) {
+            const decoded = decodeEscapedJsonString(streamDataMatch[1]) || streamDataMatch[1];
+            const url = extractStreamUrlFromStreamDataRaw(decoded);
+            if (url) {
+                console.log('[Spider] Stream URL found via stream_data regex');
+                return url;
+            }
+        }
+
+        // 5. Regex Fallback for "flv_pull_url" or "hls_pull_url" inside JSON string
+        const flvMatch = html.match(/\\?"flv_pull_url\\?"\s*:\s*({[^}]+})/s);
         if (flvMatch) {
             try {
-                let jsonStr = flvMatch[1].replace(/\\"/g, '"');
+                const jsonStr = flvMatch[1].replace(/\\"/g, '"');
                 const flvData = JSON.parse(jsonStr);
                 const urls = Object.values(flvData);
                 if (urls.length > 0) {
@@ -216,7 +404,22 @@ async function _fetchStreamUrl(uniqueId, proxyUrl = null, cookie = null) {
             }
         }
 
-        // 4. Try direct URL match (for .flv or .m3u8)
+        const hlsMatch = html.match(/\\?"hls_pull_url\\?"\s*:\s*({[^}]+})/s);
+        if (hlsMatch) {
+            try {
+                const jsonStr = hlsMatch[1].replace(/\\"/g, '"');
+                const hlsData = JSON.parse(jsonStr);
+                const urls = Object.values(hlsData);
+                if (urls.length > 0) {
+                    console.log(`[Spider] Stream URL found via hls_pull_url regex`);
+                    return urls[0];
+                }
+            } catch (e) {
+                console.warn("[Spider] Failed to parse hls_pull_url regex match", e.message);
+            }
+        }
+
+        // 6. Try direct URL match (for .flv or .m3u8)
         const directUrlMatch = html.match(/(https:\/\/[^"'\s]+\.(?:flv|m3u8)[^"'\s]*)/);
         if (directUrlMatch) {
             console.log(`[Spider] Stream URL found via direct regex`);
@@ -305,10 +508,9 @@ async function _tryApiEndpoint(uniqueId, proxyUrl = null, cookie = null) {
                     || liveRoomInfo?.streamData?.pull_data?.stream_data;
 
                 if (streamDataRaw) {
-                    const streamData = JSON.parse(streamDataRaw);
-                    const url = extractUrlFromStreamData(streamData);
+                    const url = extractStreamUrlFromStreamDataRaw(streamDataRaw);
                     if (url) {
-                        console.log(`[Spider] ✅ Stream URL found via API fallback!`);
+                        console.log(`[Spider] [OK] Stream URL found via API fallback`);
                         return url;
                     }
                 }
@@ -316,8 +518,14 @@ async function _tryApiEndpoint(uniqueId, proxyUrl = null, cookie = null) {
                 // Try direct stream URL fields
                 const streamUrl = liveRoomInfo?.liveUrl || liveRoomInfo?.streamUrl;
                 if (streamUrl) {
-                    console.log(`[Spider] ✅ Stream URL found via API liveUrl field!`);
+                    console.log(`[Spider] [OK] Stream URL found via API liveUrl field`);
                     return streamUrl;
+                }
+
+                const fallbackUrl = extractStreamUrlFromObject(liveRoomInfo);
+                if (fallbackUrl) {
+                    console.log(`[Spider] [OK] Stream URL found via API fallback scan`);
+                    return fallbackUrl;
                 }
             }
 
@@ -340,8 +548,7 @@ function extractFromSigiState(sigiData) {
 
         const streamDataRaw = liveRoomUserInfo.liveRoom?.streamData?.pull_data?.stream_data;
         if (streamDataRaw) {
-            const streamData = JSON.parse(streamDataRaw);
-            return extractUrlFromStreamData(streamData);
+            return extractStreamUrlFromStreamDataRaw(streamDataRaw);
         }
     } catch (e) {
         console.warn("[Spider] Error exploring SIGI_STATE", e.message);

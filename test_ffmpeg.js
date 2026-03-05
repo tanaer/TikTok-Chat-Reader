@@ -32,9 +32,10 @@ async function runTest() {
 
     // 3. Verify File
     console.log('\n[3] Verifying File...');
-    const binPath = path.join(__dirname, 'bin', 'ffmpeg.exe');
+    const binName = process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg';
+    const binPath = path.join(__dirname, 'bin', binName);
     if (fs.existsSync(binPath)) {
-        console.log('SUCCESS: ffmpeg.exe found at', binPath);
+        console.log(`SUCCESS: ${binName} found at`, binPath);
 
         // 4. Final Status Check
         const status2 = await ffmpegManager.checkFFmpegStatus();
@@ -48,7 +49,7 @@ async function runTest() {
         }
 
     } else {
-        console.error('TEST FAILED: ffmpeg.exe not found after install.');
+        console.error(`TEST FAILED: ${binName} not found after install.`);
         process.exit(1);
     }
 }

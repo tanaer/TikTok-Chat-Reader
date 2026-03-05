@@ -3,6 +3,8 @@
  * Updated for TikTok-Live-Connector 2.x API
  */
 require('dotenv').config();
+const { registerTikTokConnectorAlias } = require('./utils/register_tiktok_connector_alias');
+registerTikTokConnectorAlias();
 const { TikTokLiveConnection, SignConfig } = require('tiktok-live-connector');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const { EventEmitter } = require('events');

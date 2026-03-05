@@ -4,7 +4,7 @@ let roomListLimit = 20;
 let roomListSearch = '';
 let roomListSort = 'default';
 let roomListTotal = 0;
-let roomListViewMode = 'card'; // 'card' or 'list'
+let roomListViewMode = 'list'; // 'card' or 'list'
 let roomListRefreshTimer = null; // Timer for auto-refresh
 const ROOM_LIST_REFRESH_INTERVAL = 10000; // 10 seconds for listing is enough
 
