@@ -25,9 +25,9 @@ router.get('/plans', optionalAuth, async (req, res) => {
                  ORDER BY sort_order`
             ),
             db.query(
-                `SELECT id, name, code, room_count, price_monthly, price_quarterly, price_annual
-                 FROM room_addon_packages 
-                 WHERE is_active = true 
+                `SELECT id, name, room_count, price_monthly, price_quarterly, price_annual
+                 FROM room_addon_packages
+                 WHERE is_active = true
                  ORDER BY sort_order`
             ),
             req.user ? db.get('SELECT balance FROM users WHERE id = $1', [req.user.id]) : Promise.resolve(null)
@@ -336,6 +336,12 @@ router.post('/addon/purchase', loadSubscription, async (req, res) => {
             return res.status(400).json({ error: '无效的付费周期' });
         }
 
+        // Check if user has an active subscription (addon requires base plan)
+        const subscription = req.subscription;
+        if (!subscription || !subscription.planId || subscription.planId === 'none') {
+            return res.status(400).json({ error: '请先订阅套餐后再购买加量包' });
+        }
+
         const pkg = await db.get(
             'SELECT * FROM room_addon_packages WHERE id = $1 AND is_active = true',
             [packageId]
@@ -465,6 +471,25 @@ router.get('/orders', async (req, res) => {
         });
     } catch (err) {
         console.error('[Subscription] Orders error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /api/subscription/qr-codes
+ * Get active QR codes for payment (authenticated users only, not admin)
+ */
+router.get('/qr-codes', requireAuth, async (req, res) => {
+    try {
+        const qrCodes = await db.query(
+            `SELECT id, name, image_data, image_url, payment_type 
+             FROM payment_qr_codes 
+             WHERE is_active = true 
+             ORDER BY sort_order, id`
+        );
+        res.json(qrCodes);
+    } catch (err) {
+        console.error('[Subscription] QR codes error:', err);
         res.status(500).json({ error: err.message });
     }
 });

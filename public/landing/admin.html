@@ -721,12 +721,12 @@
                 body.innerHTML = ords.length === 0
                     ? '<tr><td colspan="7" class="text-center py-10 opacity-30">没有找到订单</td></tr>'
                     : ords.map(o => `<tr>
-              <td class="font-mono text-xs opacity-50">${o.order_no}</td>
-              <td><div class="text-sm">${o.user_nickname || '—'}</div><div class="text-[10px] opacity-30">${o.user_email}</div></td>
+              <td class="font-mono text-xs opacity-50">${o.orderNo || o.order_no || '—'}</td>
+              <td><div class="text-sm">${o.userNickname || o.user_nickname || '—'}</div><div class="text-[10px] opacity-30">${o.userEmail || o.user_email || ''}</div></td>
               <td class="font-bold">${fmtCny(o.amount)}</td>
-              <td class="text-xs opacity-60">${o.payment_method || '—'}</td>
+              <td class="text-xs opacity-60">${o.paymentMethod || o.payment_method || '—'}</td>
               <td>${statusBadge(o.status)}</td>
-              <td class="text-xs opacity-40">${fmtTime(o.created_at)}</td>
+              <td class="text-xs opacity-40">${fmtTime(o.createdAt || o.created_at)}</td>
               <td>
                 <select class="select select-xs select-bordered glass-input rounded-lg" onchange="updateOrderStatus(${o.id}, this.value)">
                   <option value="">操作</option>
@@ -1001,24 +1001,28 @@
                     return;
                 }
                 
-                container.innerHTML = qrCodes.map(qr => `
+                container.innerHTML = qrCodes.map(qr => {
+                    const isActive = qr.isActive !== undefined ? qr.isActive : qr.is_active;
+                    const imageData = qr.imageData || qr.image_data;
+                    const paymentType = qr.paymentType || qr.payment_type;
+                    return `
                     <div class="glass-card p-3 relative">
                         <div class="absolute top-2 right-2 flex gap-1">
-                            <button onclick="toggleQrCode(${qr.id}, ${qr.isActive})" class="btn btn-xs btn-ghost ${qr.isActive ? 'text-success' : 'opacity-40'}">
-                                ${qr.isActive ? '✓' : '✗'}
+                            <button onclick="toggleQrCode(${qr.id}, ${isActive})" class="btn btn-xs btn-ghost ${isActive ? 'text-success' : 'opacity-40'}">
+                                ${isActive ? '✓' : '✗'}
                             </button>
                             <button onclick="deleteQrCode(${qr.id})" class="btn btn-xs btn-ghost text-error">✕</button>
                         </div>
                         <div class="aspect-square bg-base-200 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
-                            ${qr.imageData ? 
-                                `<img src="${qr.imageData}" class="w-full h-full object-contain" alt="${qr.name}">` :
+                            ${imageData ?
+                                `<img src="${imageData}" class="w-full h-full object-contain" alt="${qr.name}">` :
                                 `<span class="text-4xl opacity-20">📷</span>`
                             }
                         </div>
                         <div class="text-sm font-medium truncate">${qr.name || '未命名'}</div>
-                        <div class="text-xs opacity-40">${qr.paymentType === 'alipay' ? '支付宝' : qr.paymentType === 'wxpay' ? '微信' : '其他'}</div>
-                    </div>
-                `).join('');
+                        <div class="text-xs opacity-40">${paymentType === 'alipay' ? '支付宝' : paymentType === 'wxpay' ? '微信' : '其他'}</div>
+                    </div>`;
+                }).join('');
             } catch (err) {
                 document.getElementById('qrCodesList').innerHTML = '<div class="text-center py-8 text-error col-span-full">加载失败</div>';
             }

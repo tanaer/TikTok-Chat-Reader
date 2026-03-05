@@ -495,9 +495,11 @@ async function run(sql, params = []) {
         let paramIndex = 0;
         const pgSql = sql.replace(/\?/g, () => `$${++paramIndex}`);
 
-        await pool.query(pgSql, params);
+        const result = await pool.query(pgSql, params);
+        return { rowCount: result.rowCount, rows: result.rows };
     } catch (e) {
         console.error('[DB] Run error:', sql, e.message);
+        throw e; // Re-throw error so caller can handle it
     }
 }
 

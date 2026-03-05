@@ -178,7 +178,7 @@
 
         slot.innerHTML = `
           <div class="dropdown dropdown-end">
-            <div tabindex="0" role="button" class="btn btn-ghost gap-2 px-2">
+            <label tabindex="0" class="btn btn-ghost gap-2 px-2 cursor-pointer">
               <div class="avatar placeholder">
                 <div class="bg-primary/20 text-primary rounded-full w-8 ring-1 ring-primary/30 font-bold">
                   <span>${initial}</span>
@@ -187,25 +187,28 @@
               <span class="hidden md:inline text-sm opacity-80 max-w-[120px] truncate">${user.nickname || user.email}</span>
               ${isAdm ? '<span class="badge badge-warning badge-xs">Admin</span>' : ''}
               <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
-            </div>
-            <ul class="dropdown-content menu bg-base-300/90 backdrop-blur-xl rounded-xl z-50 w-52 p-2 shadow-2xl border border-white/8 mt-2">
+            </label>
+            <ul tabindex="0" class="dropdown-content z-[100] menu p-2 shadow-2xl bg-base-300 rounded-box w-52 border border-white/10">
               <li class="menu-title text-xs opacity-40 pt-1">账户</li>
-              <li><a href="/landing/user-center.html" class="rounded-lg">👤 用户中心</a></li>
-              ${isAdm ? `<li class="menu-title text-xs opacity-40">管理员</li><li><a href="/landing/admin.html" class="rounded-lg text-warning">⚙️ 后台管理</a></li>` : ''}
-              <li id="logoutBtn"><a class="rounded-lg text-error cursor-pointer">🚪 退出登录</a></li>
+              <li><a href="/landing/user-center.html">👤 用户中心</a></li>
+              ${isAdm ? `<li class="menu-title text-xs opacity-40">管理员</li><li><a href="/landing/admin.html" class="text-warning">⚙️ 后台管理</a></li>` : ''}
+              <li class="border-t border-white/10 mt-1 pt-1"><a class="text-error" id="logoutLink">🚪 退出登录</a></li>
             </ul>
           </div>
         `;
 
-        // Bind logout click event after DOM insertion
-        const logoutBtn = document.getElementById('logoutBtn');
-        if (logoutBtn) {
-            logoutBtn.addEventListener('click', function(e) {
-                e.preventDefault();
-                e.stopPropagation();
-                window.logout();
-            });
-        }
+        // Bind logout click using setTimeout to ensure DOM is ready
+        setTimeout(function() {
+            const logoutLink = document.getElementById('logoutLink');
+            if (logoutLink) {
+                logoutLink.onclick = function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    window.logout();
+                    return false;
+                };
+            }
+        }, 50);
     };
 
     // ── 7. Global Helpers ────────────────────────────────────────────────────
