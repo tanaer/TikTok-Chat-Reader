@@ -280,10 +280,9 @@
         let selectedAmount = 100;
         let selectedPayMethod = 'balance';
 
-        // ── Tab Switching ───────────────────────────────────────
         function switchTab(name, btn) {
             document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
-            document.querySelectorAll('.uc-tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.app-tab').forEach(b => b.classList.remove('active'));
             document.getElementById('tab-' + name).classList.add('active');
             btn.classList.add('active');
         }

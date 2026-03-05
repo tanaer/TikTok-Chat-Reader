@@ -127,7 +127,7 @@ router.post('/purchase', loadSubscription, async (req, res) => {
             return res.status(400).json({ error: '请选择套餐和付费周期' });
         }
 
-        if (!['monthly', 'quarterly', 'annual'].includes(billingCycle)) {
+        if (!['monthly', 'quarterly', 'annual', 'one_time'].includes(billingCycle)) {
             return res.status(400).json({ error: '无效的付费周期' });
         }
 
@@ -140,57 +140,94 @@ router.post('/purchase', loadSubscription, async (req, res) => {
             return res.status(404).json({ error: '套餐不存在' });
         }
 
-        // Determine price by cycle
-        let price;
-        if (billingCycle === 'monthly') price = plan.price_monthly;
-        else if (billingCycle === 'quarterly') price = plan.price_quarterly;
-        else price = plan.price_annual;
+        const isOneTime = plan.plan_type === 'one_time';
 
-        if (price === 0) {
+        // Determine price by cycle
+        let price = 0;
+        if (isOneTime) {
+            price = plan.price_monthly || 0;
+        } else {
+            if (billingCycle === 'monthly') price = plan.price_monthly;
+            else if (billingCycle === 'quarterly') price = plan.price_quarterly;
+            else if (billingCycle === 'annual') price = plan.price_annual;
+        }
+
+        if (price === 0 && plan.code !== 'free') {
             return res.status(400).json({ error: '该套餐暂不可购买' });
         }
 
-        // --- Proration: calculate refund for existing subscription ---
-        let prorationRefund = 0;
+        const user = await db.get('SELECT balance FROM users WHERE id = $1', [userId]);
+        const balance = user?.balance || 0;
+
+        // Fetch active subscription
         const existingSub = await db.get(`
             SELECT us.id, us.start_date, us.end_date, us.billing_cycle,
                    sp.price_monthly as old_price_monthly, sp.price_quarterly as old_price_quarterly,
-                   sp.price_annual as old_price_annual, sp.name as old_plan_name, sp.code as old_plan_code
+                   sp.price_annual as old_price_annual, sp.name as old_plan_name, sp.code as old_plan_code,
+                   sp.plan_type as old_plan_type
             FROM user_subscriptions us
             JOIN subscription_plans sp ON us.plan_id = sp.id
             WHERE us.user_id = $1 AND us.status = 'active' AND us.end_date > NOW()
             ORDER BY us.end_date DESC LIMIT 1
         `, [userId]);
 
-        if (existingSub && existingSub.oldPlanCode !== 'free') {
-            // Calculate remaining value
-            const now = new Date();
-            const endDate = new Date(existingSub.endDate);
-            const startDate = existingSub.startDate ? new Date(existingSub.startDate) : now;
+        let netCost = price;
+        let prorationMsg = '';
+        const now = new Date();
+        let newStartDate = now;
+        let newEndDate = now;
 
-            // Ensure valid numbers
-            const totalDays = Math.max(1, (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
-            const remainingDays = Math.max(0, (endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        const intervalMap = { monthly: 31, quarterly: 93, annual: 365 };
+        const cycleDays = isOneTime ? (plan.duration_days > 0 ? plan.duration_days : 36500) : intervalMap[billingCycle];
 
-            // Get original price paid
+        // LOGIC 1: Renewing the exact same plan
+        if (existingSub && existingSub.oldPlanCode === planCode) {
+            // Just extend the end date
+            newStartDate = new Date(existingSub.startDate);
+            newEndDate = new Date(existingSub.endDate);
+            newEndDate.setDate(newEndDate.getDate() + cycleDays);
+
+            // Full price charged
+            netCost = price;
+            prorationMsg = `（有效期已顺延 ${cycleDays > 3650 ? '永久' : cycleDays + '天'}）`;
+        }
+        // LOGIC 2: Upgrading/Changing to a different plan
+        else if (existingSub && existingSub.oldPlanCode !== 'free') {
+            const oldEndDate = new Date(existingSub.endDate);
+            const oldStartDate = existingSub.startDate ? new Date(existingSub.startDate) : now;
+
+            const totalDays = Math.max(1, (oldEndDate.getTime() - oldStartDate.getTime()) / (1000 * 60 * 60 * 24));
+            const remainingDays = Math.max(0, (oldEndDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
             let oldPrice = 0;
-            const oldCycle = existingSub.billingCycle;
-            if (oldCycle === 'monthly') oldPrice = Number(existingSub.oldPriceMonthly) || 0;
-            else if (oldCycle === 'quarterly') oldPrice = Number(existingSub.oldPriceQuarterly) || 0;
-            else if (oldCycle === 'annual') oldPrice = Number(existingSub.oldPriceAnnual) || 0;
+            if (existingSub.oldPlanType === 'one_time') {
+                oldPrice = Number(existingSub.oldPriceMonthly) || 0;
+            } else {
+                if (existingSub.billingCycle === 'monthly') oldPrice = Number(existingSub.oldPriceMonthly) || 0;
+                else if (existingSub.billingCycle === 'quarterly') oldPrice = Number(existingSub.oldPriceQuarterly) || 0;
+                else if (existingSub.billingCycle === 'annual') oldPrice = Number(existingSub.oldPriceAnnual) || 0;
+            }
 
-            if (oldPrice > 0 && remainingDays > 0) {
-                prorationRefund = Math.floor(oldPrice * (remainingDays / totalDays)) || 0;
+            // Buy new to replace old
+            const valueRemaining = Math.floor(oldPrice * (remainingDays / totalDays)) || 0;
+
+            netCost = Math.max(0, price - valueRemaining);
+
+            newStartDate = now;
+            newEndDate = new Date(now.getTime() + (cycleDays * 24 * 60 * 60 * 1000));
+
+            if (valueRemaining > 0) {
+                prorationMsg = `（旧套餐折算抵扣 ¥${(valueRemaining / 100).toFixed(2)}，实付 ¥${(netCost / 100).toFixed(2)}）`;
             }
         }
-
-        // Calculate net cost
-        const netCost = Math.max(0, price - prorationRefund);
+        // LOGIC 3: No existing active paid plan
+        else {
+            newStartDate = now;
+            newEndDate = new Date(now.getTime() + (cycleDays * 24 * 60 * 60 * 1000));
+            netCost = price;
+        }
 
         // Check balance against net cost
-        const user = await db.get('SELECT balance FROM users WHERE id = $1', [userId]);
-        const balance = user?.balance || 0;
-
         if (balance < netCost) {
             return res.status(400).json({
                 error: '余额不足，请先充值',
@@ -198,51 +235,38 @@ router.post('/purchase', loadSubscription, async (req, res) => {
                 balance,
                 required: netCost,
                 shortfall: netCost - balance,
-                prorationRefund,
                 originalPrice: price
             });
         }
 
-        const intervalMap = { monthly: '1 month', quarterly: '3 months', annual: '1 year' };
-        const intervalStr = intervalMap[billingCycle];
+        const cycleNames = { monthly: '月付', quarterly: '季付', annual: '年付', one_time: '一次性买断' };
+        const cycleName = isOneTime ? '一次性买断' : cycleNames[billingCycle];
         const orderNo = `SUB-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
-        const cycleNames = { monthly: '月付', quarterly: '季付', annual: '年付' };
-
         let currentBalance = balance;
 
-        // Step 1: If proration refund, credit it first
-        if (prorationRefund > 0) {
-            currentBalance += prorationRefund;
+        // Deduct balance
+        if (netCost > 0) {
+            currentBalance -= netCost;
             await db.run('UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2', [currentBalance, userId]);
+
             await db.run(
                 `INSERT INTO balance_log (user_id, type, amount, balance_after, description, ref_order_no)
-                 VALUES ($1, 'refund', $2, $3, $4, $5)`,
-                [userId, prorationRefund, currentBalance,
-                    `套餐变更退款(${existingSub.oldPlanName}剩余天数折算)`, orderNo]
+                 VALUES ($1, 'purchase', $2, $3, $4, $5)`,
+                [userId, -netCost, currentBalance, `开通/续费 ${plan.name} (${cycleName})`, orderNo]
+            );
+
+            // Create payment record (records net amount)
+            await db.run(
+                `INSERT INTO payment_records (user_id, order_no, amount, currency, payment_method, status, paid_at, metadata)
+                 VALUES ($1, $2, $3, 'CNY', 'balance', 'paid', NOW(), $4)`,
+                [userId, orderNo, netCost, JSON.stringify({
+                    type: 'subscription', plan_code: planCode, plan_name: plan.name,
+                    billing_cycle: billingCycle, original_price: price, net_cost: netCost
+                })]
             );
         }
 
-        // Step 2: Deduct new plan price
-        currentBalance -= price;
-        await db.run('UPDATE users SET balance = $1, updated_at = NOW() WHERE id = $2', [currentBalance, userId]);
-
-        await db.run(
-            `INSERT INTO balance_log (user_id, type, amount, balance_after, description, ref_order_no)
-             VALUES ($1, 'purchase', $2, $3, $4, $5)`,
-            [userId, -price, currentBalance, `购买${plan.name}(${cycleNames[billingCycle]})`, orderNo]
-        );
-
-        // Create payment record (records net amount)
-        await db.run(
-            `INSERT INTO payment_records (user_id, order_no, amount, currency, payment_method, status, paid_at, metadata)
-             VALUES ($1, $2, $3, 'CNY', 'balance', 'paid', NOW(), $4)`,
-            [userId, orderNo, netCost, JSON.stringify({
-                type: 'subscription', plan_code: planCode, plan_name: plan.name,
-                billing_cycle: billingCycle, proration_refund: prorationRefund, original_price: price
-            })]
-        );
-
-        // Cancel existing active subscription
+        // Cancel existing active subscription if any
         await db.run(
             `UPDATE user_subscriptions SET status = 'expired', updated_at = NOW()
              WHERE user_id = $1 AND status = 'active'`,
@@ -252,22 +276,17 @@ router.post('/purchase', loadSubscription, async (req, res) => {
         // Create new subscription
         await db.run(
             `INSERT INTO user_subscriptions (user_id, plan_id, billing_cycle, start_date, end_date, status, auto_renew, ai_credits_remaining)
-             VALUES ($1, $2, $3, NOW(), NOW() + INTERVAL '${intervalStr}', 'active', false, $4)`,
-            [userId, plan.id, billingCycle, plan.ai_credits_monthly || 0]
+             VALUES ($1, $2, $3, $4, $5, 'active', false, $6)`,
+            [userId, plan.id, billingCycle, newStartDate, newEndDate, plan.ai_credits_monthly || 0]
         );
 
-        const prorationMsg = prorationRefund > 0
-            ? `（原套餐退款 ¥${(prorationRefund / 100).toFixed(2)}，实付 ¥${(netCost / 100).toFixed(2)}）`
-            : '';
-
-        console.log(`[Subscription] Purchased: user=${userId}, plan=${planCode}, cycle=${billingCycle}, price=${price}, refund=${prorationRefund}, net=${netCost}`);
+        console.log(`[Subscription] Purchased: user=${userId}, plan=${planCode}, cycle=${billingCycle}, originalPrice=${price}, netCost=${netCost}`);
 
         res.json({
             success: true,
-            message: `已成功开通${plan.name}(${cycleNames[billingCycle]})${prorationMsg}`,
+            message: `成功开通 ${plan.name} (${cycleName})${prorationMsg}`,
             orderNo,
             amount: netCost,
-            prorationRefund,
             newBalance: currentBalance
         });
     } catch (err) {

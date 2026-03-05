@@ -361,6 +361,22 @@
                 </div>
                 <div class="grid grid-cols-2 gap-4">
                     <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">套餐类型</span></label>
+                        <select id="editPlanType" class="select select-sm select-bordered glass-input rounded-xl"
+                            onchange="togglePlanType(this.value)">
+                            <option value="recurring">周期订阅</option>
+                            <option value="one_time">一次性买断</option>
+                        </select>
+                    </div>
+                    <div class="form-control" id="durationDaysContainer" style="display: none;">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs text-primary">有效天数
+                                (0为永久)</span></label>
+                        <input type="number" id="editPlanDurationDays"
+                            class="input input-sm input-bordered glass-input rounded-xl" value="0">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
                         <label class="label pb-1"><span class="label-text opacity-60 text-xs">房间上限 (-1
                                 为无限)</span></label>
                         <input type="number" id="editPlanRoomLimit"
@@ -377,12 +393,13 @@
                 </div>
                 <!-- Prices -->
                 <div class="form-control">
-                    <label class="label pb-1"><span class="label-text opacity-60 text-xs text-primary">月付价格 (分) —
+                    <label class="label pb-1"><span id="priceLabelText"
+                            class="label-text opacity-60 text-xs text-primary">月付价格 (分) —
                             必填</span></label>
                     <input type="number" id="editPlanPriceMonthly"
                         class="input input-sm input-bordered glass-input rounded-xl text-primary font-bold">
                 </div>
-                <div class="grid grid-cols-2 gap-4">
+                <div class="grid grid-cols-2 gap-4" id="recurringPricesContainer">
                     <div class="form-control">
                         <label class="label pb-1"><span class="label-text opacity-60 text-xs">季付价格 (分)</span></label>
                         <input type="number" id="editPlanPriceQuarterly"
@@ -734,12 +751,19 @@
 
         async function loadAddons() {
             try {
-                const data = await PlanService.loadAddons();
+                const data = await PlanService.loadPlans();
                 document.getElementById('addonsTableBody').innerHTML = PlanService.renderAddonTableRows(data.addons || []);
             } catch {
                 document.getElementById('addonsTableBody').innerHTML = '<tr><td colspan="5" class="text-center py-8 text-error text-sm">加载失败</td></tr>';
             }
         }
+
+        window.togglePlanType = function (type) {
+            const isOneTime = type === 'one_time';
+            document.getElementById('durationDaysContainer').style.display = isOneTime ? 'block' : 'none';
+            document.getElementById('recurringPricesContainer').style.display = isOneTime ? 'none' : 'grid';
+            document.getElementById('priceLabelText').textContent = isOneTime ? '买断价格/单价 (分) — 必填' : '月付价格 (分) — 必填';
+        };
 
         window.openPlanModal = function () {
             document.getElementById('editPlanId').value = 'new';
@@ -749,7 +773,10 @@
             document.getElementById('editPlanPriceMonthly').value = 0;
             document.getElementById('editPlanPriceQuarterly').value = 0;
             document.getElementById('editPlanPriceAnnual').value = 0;
+            document.getElementById('editPlanType').value = 'recurring';
+            document.getElementById('editPlanDurationDays').value = 0;
             document.getElementById('editPlanIsActive').checked = true;
+            togglePlanType('recurring');
             document.getElementById('editPlanModal').showModal();
         };
 
@@ -761,7 +788,10 @@
             document.getElementById('editPlanPriceMonthly').value = p.priceMonthly || 0;
             document.getElementById('editPlanPriceQuarterly').value = p.priceQuarterly || 0;
             document.getElementById('editPlanPriceAnnual').value = p.priceAnnual || 0;
+            document.getElementById('editPlanType').value = p.plan_type || 'recurring';
+            document.getElementById('editPlanDurationDays').value = p.duration_days || 0;
             document.getElementById('editPlanIsActive').checked = p.isActive !== false;
+            togglePlanType(p.plan_type || 'recurring');
             document.getElementById('editPlanModal').showModal();
         };
 
@@ -774,6 +804,8 @@
                 price_monthly: parseInt(document.getElementById('editPlanPriceMonthly').value) || 0,
                 price_quarterly: parseInt(document.getElementById('editPlanPriceQuarterly').value) || 0,
                 price_annual: parseInt(document.getElementById('editPlanPriceAnnual').value) || 0,
+                plan_type: document.getElementById('editPlanType').value,
+                duration_days: parseInt(document.getElementById('editPlanDurationDays').value) || 0,
                 is_active: document.getElementById('editPlanIsActive').checked
             };
 

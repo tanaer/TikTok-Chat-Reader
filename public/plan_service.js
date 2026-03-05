@@ -83,16 +83,21 @@
         }
 
         container.innerHTML = plans.map(p => {
-            const price = p[field] || p.priceMonthly || 0;
+            const isOneTime = p.planType === 'one_time';
+            const price = isOneTime ? (p.priceMonthly || 0) : (p[field] || p.priceMonthly || 0);
+            const cycleSuffix = isOneTime ? (p.durationDays === 0 ? '永久' : `${p.durationDays}天`) : cycleName(cycle);
             const canAfford = balance >= price;
             const popular = p.code === 'pro';
 
             return `
             <div class="glass-card p-5 relative ${popular ? 'ring-1 ring-primary/40' : ''}">
                 ${popular ? '<div class="badge badge-primary badge-sm absolute -top-2 left-4">最受欢迎</div>' : ''}
-                <div class="font-bold text-base mb-1">${p.name}</div>
+                <div class="font-bold text-base mb-1 flex justify-between items-center">
+                    ${p.name}
+                    ${isOneTime ? '<span class="badge badge-accent badge-xs text-[10px]">一次性买断</span>' : ''}
+                </div>
                 <div class="text-3xl font-extrabold text-primary mb-1">
-                    ${fmtCny(price)}<span class="text-xs font-normal opacity-40">/${cycleName(cycle)}</span>
+                    ${fmtCny(price)}<span class="text-xs font-normal opacity-40">/${cycleSuffix}</span>
                 </div>
                 ${p.description ? `<p class="text-xs opacity-40 mb-3">${p.description}</p>` : '<div class="mb-3"></div>'}
                 <ul class="text-xs opacity-60 space-y-1.5 mb-5">
@@ -100,9 +105,9 @@
                     <li>🤖 AI分析 ${p.aiCreditsMonthly || 0}/月</li>
                     <li>📅 历史数据 ${p.historyDays === -1 ? '无限' : (p.historyDays || 7)} 天</li>
                 </ul>
-                <button onclick="PlanService.purchasePlan('${p.code}','${cycle}','${p.name}',${price})"
+                <button onclick="PlanService.purchasePlan('${p.code}','${isOneTime ? 'one_time' : cycle}','${p.name}',${price})"
                     class="btn btn-primary btn-sm btn-block rounded-lg ${!canAfford ? 'btn-disabled opacity-40' : ''}">
-                    ${canAfford ? '立即订阅' : '余额不足'}
+                    ${canAfford ? '立即购买' : '余额不足'}
                 </button>
             </div>`;
         }).join('');
@@ -138,8 +143,13 @@
         if (!plans || plans.length === 0) {
             return '<tr><td colspan="6" class="text-center py-10 opacity-30">无套餐数据</td></tr>';
         }
-        return plans.map(p => `<tr>
-            <td class="font-semibold">${p.name}</td>
+        return plans.map(p => {
+            const isOneTime = p.planType === 'one_time';
+            return `<tr>
+            <td>
+                <div class="font-semibold">${p.name}</div>
+                ${isOneTime ? '<div class="text-[10px] text-accent opacity-80">一次性买断</div>' : ''}
+            </td>
             <td class="font-mono text-xs opacity-60">${p.code}</td>
             <td>${p.roomLimit === -1 ? '∞' : p.roomLimit}</td>
             <td class="font-bold">${fmtCny(p.priceMonthly || 0)}</td>
@@ -150,7 +160,7 @@
                     ${p.code !== 'free' ? `<button class="btn btn-xs btn-error btn-outline rounded-lg" onclick="deletePlan(${p.id})">删除</button>` : ''}
                 </div>
             </td>
-        </tr>`).join('');
+        </tr>`}).join('');
     }
 
     function renderAddonTableRows(addons) {

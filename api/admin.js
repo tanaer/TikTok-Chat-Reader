@@ -440,16 +440,20 @@ router.get('/plans', async (req, res) => {
  */
 router.post('/plans', async (req, res) => {
     try {
-        const { name, code, description, roomLimit, historyDays, aiCredits, priceMonthly } = req.body;
+        const { name, code, description, room_limit, history_days, ai_credits, price_monthly, price_quarterly, price_annual, is_active, plan_type, duration_days } = req.body;
 
         // Basic validation
         if (!name || !code) return res.status(400).json({ error: '套餐名称和代号是必填项' });
 
         const newPlan = await db.query(
             `INSERT INTO subscription_plans 
-            (name, code, description, room_limit, history_days, ai_credits, price_monthly, features, sort_order) 
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 99) RETURNING *`,
-            [name, code, description || '', parseInt(roomLimit) || 1, parseInt(historyDays) || 30, parseInt(aiCredits) || 0, parseFloat(priceMonthly) || 0, '[]']
+            (name, code, description, room_limit, history_days, ai_credits, price_monthly, price_quarterly, price_annual, is_active, plan_type, duration_days, features, sort_order) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, 99) RETURNING *`,
+            [
+                name, code, description || '', parseInt(room_limit) || 1, parseInt(history_days) || 30, parseInt(ai_credits) || 0,
+                parseFloat(price_monthly) || 0, parseFloat(price_quarterly) || 0, parseFloat(price_annual) || 0,
+                is_active !== false, plan_type || 'recurring', parseInt(duration_days) || 0, '[]'
+            ]
         );
         res.json(newPlan[0]);
     } catch (err) {
@@ -465,14 +469,20 @@ router.post('/plans', async (req, res) => {
 router.put('/plans/:id', async (req, res) => {
     try {
         const { id } = req.params;
-        const { name, code, description, roomLimit, historyDays, aiCredits, priceMonthly } = req.body;
+        const { name, code, description, room_limit, history_days, ai_credits, price_monthly, price_quarterly, price_annual, is_active, plan_type, duration_days } = req.body;
 
         await db.run(
             `UPDATE subscription_plans SET 
                 name = $1, code = $2, description = $3, room_limit = $4, 
-                history_days = $5, ai_credits = $6, price_monthly = $7, updated_at = NOW() 
-            WHERE id = $8`,
-            [name, code, description, parseInt(roomLimit), parseInt(historyDays), parseInt(aiCredits), parseFloat(priceMonthly), parseInt(id)]
+                history_days = $5, ai_credits = $6, price_monthly = $7,
+                price_quarterly = $8, price_annual = $9, is_active = $10,
+                plan_type = $11, duration_days = $12, updated_at = NOW() 
+            WHERE id = $13`,
+            [
+                name, code, description || '', parseInt(room_limit) || 1, parseInt(history_days) || 30, parseInt(ai_credits) || 0,
+                parseFloat(price_monthly) || 0, parseFloat(price_quarterly) || 0, parseFloat(price_annual) || 0,
+                is_active !== false, plan_type || 'recurring', parseInt(duration_days) || 0, parseInt(id)
+            ]
         );
         res.json({ success: true });
     } catch (err) {
