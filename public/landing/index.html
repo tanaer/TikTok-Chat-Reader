@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="luxury">
+<html lang="zh-CN" data-theme="light">
 
 <head>
     <meta charset="UTF-8">
@@ -16,51 +16,20 @@
             left: 0;
             width: 100%;
             height: 100%;
-            background:
-                radial-gradient(ellipse at 30% 20%, rgba(212, 175, 55, 0.08) 0%, transparent 50%),
-                radial-gradient(ellipse at 70% 80%, rgba(184, 134, 11, 0.05) 0%, transparent 50%);
+            background: rgba(250, 250, 250, 0.5);
             pointer-events: none;
             z-index: -1;
         }
 
         .glass-panel {
-            background: rgba(20, 20, 30, 0.5);
+            background: rgba(255, 255, 255, 0.8);
             backdrop-filter: blur(16px);
             -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(255, 255, 255, 0.06);
+            border: 1px solid rgba(0, 0, 0, 0.05);
         }
 
         .hero-glow {
-            background: radial-gradient(circle at center, rgba(212, 175, 55, 0.15), transparent 50%);
-        }
-
-        .feature-card {
-            transition: transform 0.3s ease, box-shadow 0.3s ease;
-        }
-
-        .feature-card:hover {
-            transform: translateY(-4px);
-            box-shadow: 0 20px 60px -15px rgba(212, 175, 55, 0.15);
-        }
-
-        @keyframes float {
-
-            0%,
-            100% {
-                transform: translateY(0);
-            }
-
-            50% {
-                transform: translateY(-8px);
-            }
-        }
-
-        .animate-float {
-            animation: float 4s ease-in-out infinite;
-        }
-
-        .animate-float-delay {
-            animation: float 4s ease-in-out 1s infinite;
+            background: radial-gradient(circle at center, rgba(37, 99, 235, 0.05), transparent 60%);
         }
     </style>
 </head>
@@ -76,9 +45,9 @@
             </a>
         </div>
         <div class="flex-none gap-2">
-            <a href="/landing/pricing.html" class="btn btn-ghost btn-sm">💎 定价</a>
-            <a href="/landing/login.html" class="btn btn-ghost btn-sm">登录</a>
-            <a href="/landing/register.html" class="btn btn-primary btn-sm">立即注册</a>
+            <a href="#pricing" class="btn btn-ghost btn-sm">💎 定价</a>
+            <a href="/landing/user-center.html" class="btn btn-ghost btn-sm" id="navLoginBtn">登录</a>
+            <a href="/landing/register.html" class="btn btn-primary btn-sm" id="navRegBtn">立即注册</a>
         </div>
     </div>
 
@@ -87,7 +56,7 @@
         <div class="hero-glow absolute inset-0"></div>
         <div class="hero-content text-center py-20">
             <div class="max-w-3xl">
-                <div class="mb-8 animate-float">
+                <div class="mb-8">
                     <span class="text-7xl">📺</span>
                 </div>
                 <h1 class="text-5xl md:text-6xl font-extrabold mb-6 leading-tight">
@@ -125,54 +94,54 @@
 
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                 <!-- Feature 1 -->
-                <div class="card glass-panel feature-card">
+                <div class="card glass-panel shadow-sm border border-base-200">
                     <div class="card-body">
-                        <div class="text-4xl mb-4 animate-float">📊</div>
+                        <div class="text-4xl mb-4">📊</div>
                         <h3 class="card-title text-primary">实时数据追踪</h3>
                         <p class="text-base-content/60">实时监控直播间弹幕、礼物、进场、点赞等数据，毫秒级延迟推送。</p>
                     </div>
                 </div>
 
                 <!-- Feature 2 -->
-                <div class="card glass-panel feature-card">
+                <div class="card glass-panel shadow-sm border border-base-200">
                     <div class="card-body">
-                        <div class="text-4xl mb-4 animate-float-delay">💎</div>
+                        <div class="text-4xl mb-4">💎</div>
                         <h3 class="card-title text-warning">礼物收入分析</h3>
                         <p class="text-base-content/60">自动统计礼物价值、用户贡献排行、赚钱效率等核心指标，一目了然。</p>
                     </div>
                 </div>
 
                 <!-- Feature 3 -->
-                <div class="card glass-panel feature-card">
+                <div class="card glass-panel shadow-sm border border-base-200">
                     <div class="card-body">
-                        <div class="text-4xl mb-4 animate-float">👥</div>
+                        <div class="text-4xl mb-4">👥</div>
                         <h3 class="card-title text-secondary">用户画像分析</h3>
                         <p class="text-base-content/60">跨房间用户追踪，语言分析，活跃时段统计，发现高价值潜在用户。</p>
                     </div>
                 </div>
 
                 <!-- Feature 4 -->
-                <div class="card glass-panel feature-card">
+                <div class="card glass-panel shadow-sm border border-base-200">
                     <div class="card-body">
-                        <div class="text-4xl mb-4 animate-float-delay">📈</div>
+                        <div class="text-4xl mb-4">📈</div>
                         <h3 class="card-title text-accent">多房间对比</h3>
                         <p class="text-base-content/60">同时监控多个直播间，进行数据对比分析，发现最具潜力的主播。</p>
                     </div>
                 </div>
 
                 <!-- Feature 5 -->
-                <div class="card glass-panel feature-card">
+                <div class="card glass-panel shadow-sm border border-base-200">
                     <div class="card-body">
-                        <div class="text-4xl mb-4 animate-float">🤖</div>
+                        <div class="text-4xl mb-4">🤖</div>
                         <h3 class="card-title text-info">AI 智能分析</h3>
                         <p class="text-base-content/60">基于大语言模型的用户分析，自动生成用户画像和运营建议。</p>
                     </div>
                 </div>
 
                 <!-- Feature 6 -->
-                <div class="card glass-panel feature-card">
+                <div class="card glass-panel shadow-sm border border-base-200">
                     <div class="card-body">
-                        <div class="text-4xl mb-4 animate-float-delay">🎥</div>
+                        <div class="text-4xl mb-4">🎥</div>
                         <h3 class="card-title text-error">直播录制</h3>
                         <p class="text-base-content/60">支持自动录制直播内容，重要时刻不遗漏，方便后续回顾分析。</p>
                     </div>
@@ -209,6 +178,28 @@
         </div>
     </section>
 
+    <!-- Pricing Section -->
+    <section id="pricing" class="py-20 px-6 bg-base-200/50">
+        <div class="max-w-6xl mx-auto">
+            <h2 class="text-3xl font-bold text-center mb-4">
+                <span class="bg-gradient-to-r from-primary to-warning bg-clip-text text-transparent">灵活的定价方案</span>
+            </h2>
+            <p class="text-center text-base-content/50 mb-12 max-w-xl mx-auto">选择最适合您业务发展的套餐。所有套餐均支持专属房间加量包扩充。</p>
+
+            <div class="flex justify-center items-center gap-4 mb-12">
+                <span id="cycleLabelMonthly" class="font-bold text-primary transition-colors">月付</span>
+                <input type="checkbox" class="toggle toggle-primary toggle-lg shadow-sm" id="cycleToggle"
+                    onchange="toggleCycle()" />
+                <span id="cycleLabelAnnual" class="opacity-50 transition-colors">年付 <span
+                        class="badge badge-error badge-xs border-none text-white ml-1">省20%</span></span>
+            </div>
+
+            <div id="plansLoader" class="py-20 text-center opacity-50"><span
+                    class="loading loading-spinner loading-lg"></span></div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 items-stretch" id="plansContainer"></div>
+        </div>
+    </section>
+
     <!-- CTA Section -->
     <section class="py-20 px-6 text-center">
         <div class="max-w-2xl mx-auto">
@@ -219,7 +210,7 @@
                     class="btn btn-lg border-none bg-gradient-to-r from-primary to-warning text-white hover:scale-105 transition-all shadow-lg">
                     立即注册
                 </a>
-                <a href="/landing/pricing.html" class="btn btn-lg btn-outline border-primary/40 hover:bg-primary/10">
+                <a href="#pricing" class="btn btn-lg btn-outline border-primary/40 hover:bg-primary/10">
                     查看定价
                 </a>
             </div>
@@ -236,11 +227,108 @@
     </footer>
 
     <script>
-        // If already logged in, redirect to dashboard
-        if (localStorage.getItem('accessToken')) {
-            // Optionally redirect, but landing page is for marketing
-            // Only redirect if user explicitly navigates here
+        // Check Auth Status for Dynamic UI mapping
+        const token = localStorage.getItem('accessToken');
+        if (token) {
+            document.getElementById('navLoginBtn').innerHTML = '进入监控中心';
+            document.getElementById('navLoginBtn').href = '/';
+            document.getElementById('navRegBtn').innerHTML = '用户中心';
+            document.getElementById('navRegBtn').href = '/landing/user-center.html';
         }
+
+        // Pricing Rendering Logic
+        let plansData = [];
+        let isAnnual = false;
+
+        const actionBtnText = token ? '立即升级' : '注册即可抢购';
+        const actionBtnUrl = token ? '/landing/user-center.html' : '/landing/register.html';
+
+        async function loadPlans() {
+            try {
+                const res = await fetch('/api/subscription/plans');
+                if (!res.ok) throw new Error('Failed to load');
+                plansData = await res.json();
+
+                document.getElementById('plansLoader').classList.add('hidden');
+                renderPlans();
+            } catch (err) {
+                document.getElementById('plansLoader').innerHTML = '<span class="text-error">套餐加载失败，请刷新重试。</span>';
+            }
+        }
+
+        function toggleCycle() {
+            isAnnual = document.getElementById('cycleToggle').checked;
+            document.getElementById('cycleLabelMonthly').classList.toggle('opacity-50', isAnnual);
+            document.getElementById('cycleLabelMonthly').classList.toggle('text-primary', !isAnnual);
+            document.getElementById('cycleLabelMonthly').classList.toggle('font-bold', !isAnnual);
+
+            document.getElementById('cycleLabelAnnual').classList.toggle('opacity-50', !isAnnual);
+            document.getElementById('cycleLabelAnnual').classList.toggle('text-primary', isAnnual);
+            document.getElementById('cycleLabelAnnual').classList.toggle('font-bold', isAnnual);
+
+            renderPlans();
+        }
+
+        function renderPlans() {
+            const container = document.getElementById('plansContainer');
+            // Sort by absolute price
+            const sorted = [...plansData].sort((a, b) => a.base_price - b.base_price);
+
+            container.innerHTML = sorted.map(plan => {
+                if (plan.status !== 'active') return '';
+                if (plan.plan_code === 'free') {
+                    return `
+                        <div class="card glass-panel shadow-sm border border-base-200 flex sm:transform sm:hover:-translate-y-2 transition-transform duration-300">
+                            <div class="card-body p-8 pt-10">
+                                <h2 class="card-title text-2xl">${plan.plan_name} <span class="badge badge-outline">体验</span></h2>
+                                <p class="text-sm opacity-60 min-h-[40px] mt-2">${plan.description || ''}</p>
+                                <div class="my-6">
+                                    <span class="text-5xl font-extrabold text-base-content">¥0</span>
+                                </div>
+                                <ul class="space-y-4 mb-8 flex-grow">
+                                    <li class="flex items-center gap-3"><span class="text-primary text-xl">✓</span> <span>支持 <strong class="text-base-content">${plan.max_rooms}</strong> 个监控房间</span></li>
+                                    <li class="flex items-center gap-3 opacity-50"><span class="text-base-content/40 text-xl font-bold">×</span> <span>不支持房间配额扩充</span></li>
+                                    <li class="flex items-center gap-3 opacity-50"><span class="text-base-content/40 text-xl font-bold">×</span> <span>不支持直播录像/AI分析</span></li>
+                                </ul>
+                                <a href="${token ? '/' : '/landing/register.html'}" class="btn btn-outline btn-block mt-auto">免费使用</a>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                const priceObj = isAnnual ? plan.prices.find(p => p.billing_cycle === 'annual') : plan.prices.find(p => p.billing_cycle === 'monthly');
+                const priceCents = priceObj ? priceObj.price : plan.base_price;
+                const price = (priceCents / 100).toFixed(0);
+                const period = isAnnual ? '年' : '月';
+
+                const isPro = plan.max_rooms === 5 || plan.plan_code.toLowerCase().includes('pro');
+                const pColor = isPro ? 'text-primary' : (plan.max_rooms > 5 ? 'text-warning' : 'text-accent');
+
+                return `
+                    <div class="card glass-panel shadow-lg ${isPro ? 'border-primary ring-2 ring-primary/20 scale-[1.02] md:scale-105 z-10' : 'border-base-200'} flex transition-transform duration-300 relative">
+                        ${isPro ? '<div class="absolute -top-4 inset-x-0 flex justify-center"><span class="badge badge-primary font-bold shadow-md">最畅销</span></div>' : ''}
+                        <div class="card-body p-8 pt-10">
+                            <h2 class="card-title text-2xl ${pColor}">${plan.plan_name}</h2>
+                            <p class="text-sm opacity-60 min-h-[40px] mt-2">${plan.description || ''}</p>
+                            <div class="my-6">
+                                <span class="text-5xl font-extrabold text-base-content">¥${price}</span>
+                                <span class="text-lg opacity-50">/${period}</span>
+                            </div>
+                            <ul class="space-y-4 mb-8 flex-grow text-sm">
+                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>基础监控 <strong class="text-base-content text-lg">${plan.max_rooms === -1 ? '无限' : plan.max_rooms}</strong> 个房间</span></li>
+                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>支持 <strong class="text-base-content">¥${plan.addon_room_price / 100}/${period}</strong> 无限加购房间</span></li>
+                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>解锁 <strong>极速云端弹幕监控</strong></span></li>
+                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>专属 <strong>高优先级自动录制</strong></span></li>
+                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>大模型 <strong>AI数据深度解析</strong></span></li>
+                            </ul>
+                            <a href="${actionBtnUrl}" class="btn ${isPro ? 'btn-primary shadow-primary/20 shadow-lg' : 'btn-outline'} btn-block mt-auto text-base">${actionBtnText}</a>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        document.addEventListener('DOMContentLoaded', loadPlans);
     </script>
 </body>
 

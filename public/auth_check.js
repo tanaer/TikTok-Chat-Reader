@@ -37,6 +37,7 @@
                 addUserMenu(user);
                 setupRoleBasedUI(user);
             }
+            checkQuota(accessToken);
         })
         .catch(err => {
             console.log('[Auth] Token validation failed:', err.message);
@@ -74,6 +75,7 @@
                     addUserMenu(data.user);
                     setupRoleBasedUI(data.user);
                 }
+                checkQuota(data.accessToken);
             })
             .catch(() => redirectToLanding());
     }
@@ -82,6 +84,25 @@
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
         window.location.href = '/landing/';
+    }
+
+    function checkQuota(token) {
+        fetch('/api/subscription', { headers: { 'Authorization': `Bearer ${token}` } })
+            .then(r => r.ok ? r.json() : null)
+            .then(sub => {
+                const overlay = document.getElementById('quotaGateOverlay');
+                // Admins bypass quota gate usually, but script runs server side checks anyway. We block UI strictly just for UX gating.
+                if (!window.isAdmin && overlay && (!sub || !sub.plan || sub.plan.code === 'free' || sub.daysRemaining < 0)) {
+                    overlay.classList.remove('opacity-0', 'pointer-events-none');
+                    overlay.classList.add('opacity-100', 'pointer-events-auto');
+                    const card = document.getElementById('quotaGateCard');
+                    if (card) {
+                        card.classList.remove('scale-95');
+                        card.classList.add('scale-100');
+                    }
+                }
+            })
+            .catch(console.error);
     }
 
     function addUserMenu(user) {
@@ -144,6 +165,9 @@
 
             const recordingSection = document.getElementById('section-recording');
             if (recordingSection) recordingSection.innerHTML = '<div class="alert alert-warning"><span>仅限管理员访问</span></div>';
+
+            // Remove granular admin-only elements completely from DOM
+            document.querySelectorAll('.admin-only').forEach(el => el.remove());
         }
     }
 
@@ -176,21 +200,23 @@
     };
 
     // Auto-inject auth headers for jQuery AJAX
-    if (typeof $ !== 'undefined' && $.ajaxPrefilter) {
-        $.ajaxPrefilter(function (options, originalOptions, jqXHR) {
-            const token = localStorage.getItem('accessToken');
-            if (token && options.url && options.url.startsWith('/api/')) {
-                jqXHR.setRequestHeader('Authorization', `Bearer ${token}`);
-            }
-        });
-    }
+    document.addEventListener('DOMContentLoaded', () => {
+        if (typeof $ !== 'undefined' && $.ajaxPrefilter) {
+            $.ajaxPrefilter(function (options, originalOptions, jqXHR) {
+                const token = localStorage.getItem('accessToken');
+                if (token && options.url && options.url.startsWith('/api/')) {
+                    jqXHR.setRequestHeader('Authorization', `Bearer ${token}`);
+                }
+            });
+        }
 
-    // Setup jQuery global error handler for 401s 
-    if (typeof $ !== 'undefined') {
-        $(document).ajaxError(function (event, jqXHR) {
-            if (jqXHR.status === 401) {
-                redirectToLanding();
-            }
-        });
-    }
+        // Setup jQuery global error handler for 401s 
+        if (typeof $ !== 'undefined') {
+            $(document).ajaxError(function (event, jqXHR) {
+                if (jqXHR.status === 401) {
+                    redirectToLanding();
+                }
+            });
+        }
+    });
 })();

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="luxury">
+<html lang="zh-CN" data-theme="light">
 
 <head>
     <meta charset="UTF-8">
@@ -122,7 +122,7 @@
                     <div class="join join-horizontal flex-wrap">
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn active"
                             onclick="setRoomSort('default', this)">默认</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn admin-only"
                             onclick="setRoomSort('priority_desc', this)">优先级</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
                             onclick="setRoomSort('gift_desc', this)">本场💎</button>
@@ -490,7 +490,8 @@
                     </div>
                     <button class="btn btn-sm btn-accent mb-[2px]" onclick="renderUserList()">筛选</button>
                     <button class="btn btn-sm btn-success mb-[2px]" onclick="showExportModal()">📥 导出</button>
-                    <button class="btn btn-sm btn-info mb-[2px]" onclick="showBatchAIModal()">🤖 批量AI分析</button>
+                    <button class="btn btn-sm btn-info mb-[2px] admin-only" onclick="showBatchAIModal()">🤖
+                        批量AI分析</button>
                 </div>
 
 
@@ -954,23 +955,34 @@
                 </label>
             </div>
 
-            <div class="divider text-xs opacity-50">视频录制设置</div>
+            <div class="admin-only">
+                <!-- Priority Settings -->
+                <div class="form-control mb-4">
+                    <label class="label"><span class="label-text">优先级 (0-10，数字越大越优先)</span></label>
+                    <input type="number" id="roomPriority" class="input input-bordered" value="0" min="0" max="10">
+                    <label class="label"><span class="label-text-alt text-xs opacity-50">高优先级的房间会优先连接采集数据</span></label>
+                </div>
 
-            <div class="form-control w-full mb-2">
-                <label class="label cursor-pointer justify-start gap-4">
-                    <span class="label-text font-bold">自动录制 (开播即录)</span>
-                    <input type="checkbox" class="toggle toggle-secondary" id="roomAutoRecordToggle" />
-                </label>
+                <!-- Recording Settings -->
+                <div class="divider text-xs opacity-50">视频录制设置</div>
+
+                <div class="form-control mb-2">
+                    <label class="cursor-pointer label justify-start gap-4">
+                        <input type="checkbox" id="roomAutoRecordToggle" class="toggle toggle-secondary" />
+                        <span class="label-text font-bold">自动录制 (开播即录)</span>
+                    </label>
+                </div>
+
+                <div class="form-control mb-4">
+                    <label class="label"><span class="label-text">指定录制账号 (用于拉流)</span></label>
+                    <select id="roomRecordingAccount" class="select select-bordered w-full">
+                        <option value="">(无指定 / 匿名)</option>
+                        <!-- Populated by JS -->
+                    </select>
+                    <label class="label"><span
+                            class="label-text-alt text-xs opacity-50">选择一个活跃的TikTok账号用于拉取清晰度最高的视频流</span></label>
+                </div>
             </div>
-
-            <div class="form-control w-full mb-4">
-                <label class="label"><span class="label-text">指定录制账号 (用于拉流)</span></label>
-                <select id="roomRecordingAccount" class="select select-bordered w-full">
-                    <option value="">(无指定 / 匿名)</option>
-                    <!-- Populated by JS -->
-                </select>
-            </div>
-
 
             <div class="form-control w-full mb-4">
                 <label class="label"><span class="label-text">房间语种</span></label>
@@ -1293,6 +1305,26 @@
             <button>关闭</button>
         </form>
     </dialog>
+
+    <!-- Quota Gate Overlay -->
+    <div id="quotaGateOverlay"
+        class="fixed inset-0 z-[100] bg-base-100/90 backdrop-blur-md flex flex-col items-center justify-center p-6 transition-opacity duration-300 pointer-events-none opacity-0"
+        aria-hidden="true">
+        <div class="card bg-base-100 shadow-2xl border border-error/20 max-w-md w-full pointer-events-auto transform scale-95 transition-transform duration-500"
+            id="quotaGateCard">
+            <div class="card-body items-center text-center p-8">
+                <div class="text-6xl mb-4">⚠️</div>
+                <h2 class="card-title text-2xl mb-2">可用的房间配额耗尽</h2>
+                <p class="text-base-content/70 mb-6">您当前的体验配额已用完，或基础套餐已过期。请前往用户中心选购适合您的基础套餐，恢复实时监控特权。</p>
+                <div class="card-actions w-full">
+                    <a href="/landing/user-center.html" class="btn btn-primary btn-block shadow-lg">进入用户中心</a>
+                </div>
+                <div class="mt-4">
+                    <button onclick="logout()" class="btn btn-ghost btn-sm text-base-content/50">退出登录</button>
+                </div>
+            </div>
+        </div>
+    </div>
 
 </body>
 

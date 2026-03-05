@@ -109,7 +109,7 @@ router.post('/login', async (req, res) => {
         }
 
         // Verify password
-        const isValid = await bcrypt.compare(password, user.password_hash);
+        const isValid = await bcrypt.compare(password, user.passwordHash);
         if (!isValid) {
             return res.status(401).json({ error: '邮箱或密码错误' });
         }

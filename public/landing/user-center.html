@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="luxury">
+<html lang="zh-CN" data-theme="light">
 
 <head>
     <meta charset="UTF-8">
@@ -55,199 +55,333 @@
 
         <div id="alertBox" class="alert shadow-lg mb-6 hidden font-medium transition-all"></div>
 
-        <!-- Main Grid Layout -->
-        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Main Tab Navigation -->
+        <div role="tablist"
+            class="tabs tabs-boxed mb-6 bg-base-100/60 backdrop-blur-md shadow-lg border border-white/5 inline-flex p-2">
+            <a role="tab" class="tab tab-active h-10 px-6 font-bold text-base" onclick="switchTab('sub', this)">💎
+                我的订阅</a>
+            <a role="tab" class="tab h-10 px-6 font-bold text-base" onclick="switchTab('balance', this)">📊 余额明细</a>
+            <a role="tab" class="tab h-10 px-6 font-bold text-base" onclick="switchTab('orders', this)">📋 订单记录</a>
+            <a role="tab" class="tab h-10 px-6 font-bold text-base" onclick="switchTab('profile', this)">👤 个人设置</a>
+        </div>
 
-            <!-- Left Column: Core Actions & Stats -->
-            <div class="lg:col-span-2 space-y-6">
-                <!-- Stats Row -->
-                <div
-                    class="stats stats-vertical sm:stats-horizontal shadow-xl bg-base-100/60 backdrop-blur-md border border-white/5 w-full">
-                    <div class="stat">
-                        <div class="stat-title opacity-70">账户余额</div>
-                        <div class="stat-value text-accent text-3xl" id="balanceValue">-</div>
-                        <div class="stat-desc mt-1 opacity-50" id="balanceSub">可用代金券与充值本金</div>
+        <!-- Tab 1: Subscription -->
+        <div id="tab-sub" class="uc-tab block transition-opacity duration-300">
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                <!-- Left Column -->
+                <div class="lg:col-span-2 space-y-6">
+                    <!-- Stats Row -->
+                    <div
+                        class="stats stats-vertical sm:stats-horizontal shadow-xl bg-base-100/60 backdrop-blur-md border border-white/5 w-full">
+                        <div class="stat">
+                            <div class="stat-title opacity-70">账户余额</div>
+                            <div class="stat-value text-accent text-3xl" id="balanceValue">-</div>
+                            <div class="stat-desc mt-1 opacity-50 flex gap-2 items-center">
+                                <span id="balanceSub">可用代金券与本金</span>
+                                <button class="btn btn-xs btn-accent"
+                                    onclick="document.getElementById('rechargeModal').showModal()">充值</button>
+                            </div>
+                        </div>
+
+                        <div class="stat">
+                            <div class="stat-title opacity-70">当前套餐</div>
+                            <div class="stat-value text-3xl text-primary truncate" id="planValue">-</div>
+                            <div class="stat-desc mt-1 font-medium" id="planSub"></div>
+                        </div>
+
+                        <div class="stat">
+                            <div class="stat-title opacity-70">房间配额使用率</div>
+                            <div class="stat-value text-3xl" id="roomValue">-</div>
+                            <div class="stat-desc mt-1 font-medium text-warning" id="roomSub"></div>
+                        </div>
                     </div>
 
-                    <div class="stat">
-                        <div class="stat-title opacity-70">当前套餐</div>
-                        <div class="stat-value text-3xl text-primary truncate" id="planValue">-</div>
-                        <div class="stat-desc mt-1 font-medium" id="planSub"></div>
-                    </div>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <!-- Subscription Mini Card -->
+                        <div class="card bg-base-100/60 backdrop-blur-md shadow-xl border border-white/5 h-full">
+                            <div class="card-body p-6">
+                                <h2 class="card-title text-lg flex items-center gap-2 mb-2">
+                                    <span class="text-xl">💎</span> 我的订阅
+                                </h2>
+                                <div id="subscriptionCard" class="flex-grow flex flex-col justify-center min-h-[80px]">
+                                    <span class="loading loading-dots loading-sm opacity-50"></span>
+                                </div>
+                            </div>
+                        </div>
 
-                    <div class="stat">
-                        <div class="stat-title opacity-70">房间配额使用率</div>
-                        <div class="stat-value text-3xl" id="roomValue">-</div>
-                        <div class="stat-desc mt-1 font-medium text-warning" id="roomSub"></div>
+                        <!-- Addon Packages -->
+                        <div class="card bg-base-100/60 backdrop-blur-md shadow-xl border border-white/5 h-full">
+                            <div class="card-body p-6">
+                                <h2 class="card-title text-lg flex items-center justify-between mb-0">
+                                    <span class="flex items-center gap-2"><span class="text-xl">🧩</span> 房间加量包</span>
+                                </h2>
+                                <div id="addonList"
+                                    class="flex-grow flex flex-col gap-3 my-4 overflow-y-auto custom-scrollbar max-h-40">
+                                    <span class="loading loading-dots loading-sm opacity-50"></span>
+                                </div>
+                                <div class="card-actions justify-end mt-auto" style="display:none;"
+                                    id="addonPurchaseBox">
+                                    <a href="#buy-addon" class="btn btn-outline btn-sm btn-block hidden">购买加量包(暂未开放)</a>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
 
-                <!-- Recharge Section -->
-                <div class="card bg-base-100/60 backdrop-blur-md shadow-xl border border-white/5">
-                    <div class="card-body">
-                        <h2 class="card-title text-xl mb-4 flex items-center gap-2">
-                            <span class="text-2xl">💳</span> 余额充值
+                <!-- Right Column: Notifications -->
+                <div class="space-y-6">
+                    <div class="card bg-base-100/70 backdrop-blur-md shadow-xl border border-white/5">
+                        <div class="card-body p-0">
+                            <div
+                                class="px-5 py-4 flex justify-between items-center border-b border-base-content/10 bg-base-200/30 rounded-t-2xl">
+                                <h2 class="font-bold flex items-center gap-2">
+                                    <span class="text-xl">🔔</span> 系统通知
+                                    <span id="notifBadge"
+                                        class="badge badge-error badge-sm ml-1 hidden border-none text-white shadow-sm"></span>
+                                </h2>
+                                <button class="btn btn-xs btn-ghost text-accent hover:bg-accent/20"
+                                    onclick="markAllRead()" id="markAllBtn" style="display:none;">全部已读</button>
+                            </div>
+                            <div id="notifList" class="p-3 space-y-2 overflow-y-auto custom-scrollbar max-h-[400px]">
+                                <div class="py-10 text-center opacity-50 flex justify-center"><span
+                                        class="loading loading-spinner"></span></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 2: Balance Log -->
+        <div id="tab-balance" class="uc-tab hidden transition-opacity duration-300">
+            <div class="card bg-base-100/50 backdrop-blur-md shadow-xl border border-white/5">
+                <div class="card-body p-0">
+                    <h2
+                        class="px-5 py-4 font-bold border-b border-base-content/10 flex items-center gap-2 bg-base-200/30 rounded-t-2xl">
+                        <span class="text-xl">📊</span> 余额变动明细
+                    </h2>
+                    <div class="overflow-y-auto custom-scrollbar max-h-[600px]">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr class="text-base-content/60 sticky top-0 bg-base-100/90 backdrop-blur z-10">
+                                    <th class="pl-5">时间</th>
+                                    <th>金额/结余</th>
+                                    <th class="pr-5">说明</th>
+                                </tr>
+                            </thead>
+                            <tbody id="balanceLogBody">
+                                <tr>
+                                    <td colspan="3" class="text-center py-6 opacity-50">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 3: Orders -->
+        <div id="tab-orders" class="uc-tab hidden transition-opacity duration-300">
+            <div class="card bg-base-100/50 backdrop-blur-md shadow-xl border border-white/5">
+                <div class="card-body p-0">
+                    <h2
+                        class="px-6 py-4 text-lg font-bold border-b border-base-content/10 flex items-center gap-2 bg-base-200/30 rounded-t-2xl">
+                        <span class="text-xl">📋</span> 订单记录
+                    </h2>
+                    <div class="overflow-x-auto custom-scrollbar max-h-[600px]">
+                        <table class="table table-zebra table-sm">
+                            <thead>
+                                <tr
+                                    class="text-base-content/60 border-b border-base-content/20 sticky top-0 bg-base-100/90 backdrop-blur z-10">
+                                    <th class="pl-6 font-medium">订单号</th>
+                                    <th class="font-medium">金额</th>
+                                    <th class="font-medium">方式</th>
+                                    <th class="font-medium">状态</th>
+                                    <th class="pr-6 font-medium">时间</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orderBody">
+                                <tr>
+                                    <td colspan="5" class="text-center py-6 opacity-50">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tab 4: Profile Settings -->
+        <div id="tab-profile" class="uc-tab hidden transition-opacity duration-300">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 w-full lg:max-w-4xl">
+                <!-- Profile Settings Card -->
+                <div class="card bg-base-100/60 backdrop-blur-md shadow-lg border border-white/5">
+                    <div class="card-body p-6">
+                        <h2
+                            class="card-title text-lg flex items-center gap-2 mb-4 border-b border-base-content/10 pb-4">
+                            <span class="text-primary">👤</span> 基本信息
                         </h2>
 
-                        <div class="mb-5">
-                            <div class="text-sm opacity-60 mb-3">选择充值金额</div>
-                            <div class="flex flex-wrap gap-3" id="rechargeAmounts">
-                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
-                                    onclick="selectAmount(1000, this)">¥10</button>
-                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
-                                    onclick="selectAmount(5000, this)">¥50</button>
-                                <button class="btn btn-accent btn-sm shadow-md transition-all active-amount"
-                                    onclick="selectAmount(10000, this)">¥100</button>
-                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
-                                    onclick="selectAmount(30000, this)">¥300</button>
-                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
-                                    onclick="selectAmount(50000, this)">¥500</button>
-                                <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
-                                    onclick="selectAmount(100000, this)">¥1000</button>
+                        <form id="profileForm" class="space-y-4" onsubmit="handleUpdateProfile(event)">
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">邮箱账号</span></label>
+                                <input type="email" id="profileEmail"
+                                    class="input input-bordered bg-base-200/50 cursor-not-allowed text-base-content/60"
+                                    disabled />
                             </div>
-                        </div>
-
-                        <div class="mb-6">
-                            <div class="text-sm opacity-60 mb-3">选择支付方式</div>
-                            <div class="flex flex-wrap gap-3" id="payMethods">
-                                <button class="btn btn-outline btn-primary btn-sm active-method shadow-sm"
-                                    onclick="selectPayMethod('alipay', this)">
-                                    <svg viewBox="0 0 1024 1024" class="w-4 h-4 mr-1" fill="currentColor">
-                                        <path
-                                            d="M720.896 525.824c15.872-46.08 24.576-96.256 27.648-150.016l-206.336 0.512c0 0-4.096-78.336-4.096-80.384l230.912 0c21.504 0 38.912-17.408 38.912-38.912s-17.408-38.912-38.912-38.912L540.672 218.112C534.528 153.6 534.528 153.6 534.528 153.6c0-21.504-17.408-38.912-38.912-38.912s-38.912 17.408-38.912 38.912l0 65.536-193.024 0c-21.504 0-38.912 17.408-38.912 38.912s17.408 38.912 38.912 38.912l193.024 0 0 80.384L230.4 376.832c-21.504 0-38.912 17.408-38.912 38.912s17.408 38.912 38.912 38.912L456.704 454.656c-13.824 37.376-32.256 71.68-54.784 103.424-40.96-33.792-88.064-58.88-138.24-73.216-20.48-5.632-41.984 6.144-48.128 26.112-5.632 20.48 6.144 41.984 26.624 48.128 72.704 20.48 139.776 56.32 195.584 104.96-56.32 40.448-120.832 69.632-190.464 85.504-20.992 4.608-34.304 25.088-29.696 46.08 4.096 17.92 19.968 30.208 37.888 30.208 2.56 0 5.632-0.512 8.192-1.024 93.184-21.504 177.664-62.976 250.368-120.32 60.416 46.08 129.024 79.872 201.728 98.304 5.12 1.024 9.728 1.536 14.848 1.536 17.408 0 32.768-11.776 37.376-29.184 5.12-20.992-7.68-42.496-28.672-47.616-56.832-14.336-110.08-40.96-157.696-78.336 43.52-52.224 77.824-112.128 100.352-177.152l87.552 45.056c6.144 3.072 13.312 4.608 19.968 4.608 13.824 0 27.648-7.68 34.304-20.48 9.728-18.944 2.048-43.008-17.408-52.736L720.896 525.824zM503.296 612.864C471.552 562.176 432.128 516.608 387.072 478.72c21.504-32.256 38.912-67.072 50.176-103.424l46.08-0.512C481.28 471.552 489.984 547.328 503.296 612.864z">
-                                        </path>
-                                    </svg>
-                                    支付宝
-                                </button>
-                                <button
-                                    class="btn btn-outline btn-success btn-sm hover:btn-success hover:text-white transition-all"
-                                    onclick="selectPayMethod('wxpay', this)">
-                                    <svg viewBox="0 0 1024 1024" class="w-4 h-4 mr-1" fill="currentColor">
-                                        <path
-                                            d="M699.2 388.9c0-117.8-115.6-213.3-258.1-213.3s-258.1 95.5-258.1 213.3c0 62.6 32.7 118.8 84.1 157.5-6.6 22.3-21.7 65.6-25 76.6-4.5 14.8 11.2 13.8 20.2 8.6 12-7.1 76-46.6 92.2-56.9 27 7.7 55.9 11.9 86.2 11.9 142.1 0 258.5-95.2 258.5-213.1z.1-7.4-.1-14.8-.4-22 0-1.8 0-3.6-.1-5.3-2 1.3-4.1 2.5-6.2 3.7-22.3 12.5-47 22.8-73.6 30.7-3.6 1.1-7.2 2.1-10.9 3.1-40.8 11.1-84.3 17.5-129.9 18.6h-5.5c-30.8 0-60.8-4-89.6-11.7h-1.3c-23-6.1-45-14.2-65.7-24.3-15.5-7.6-30.4-16.1-44.5-25.5-3.6-2.4-7.2-4.9-10.7-7.4-48-34.9-79.6-86.4-86-145 0-1.3-.1-2.7-.1-4 0-142 138-257.6 308-257.6s308 115.6 308 257.6c.1 123.6-104.3 226.7-242.9 252 5.5-3.3 11-6.8 16.4-10.4 12.5-8.4 20.4-8 16.1 7-3.3 11.3-18.1 53-24.9 75.3 49-36.5 81-90.4 81-150.8M312.8 335.5c-19.8 0-35.8-16-35.8-35.8 0-19.8 16-35.8 35.8-35.8s35.8 16 35.8 35.8-16 35.8-35.8 35.8zm256.3 0c-19.8 0-35.8-16-35.8-35.8 0-19.8 16-35.8 35.8-35.8 19.8 0 35.8 16 35.8 35.8 0 19.8-16 35.8-35.8 35.8zm-155.6 94.7c17.5 0 31.7-14.2 31.7-31.7 0-17.5-14.2-31.7-31.7-31.7-17.5 0-31.7 14.2-31.7 31.7 0 17.5 14.2 31.7 31.7 31.7zm184.4 0c17.5 0 31.7-14.2 31.7-31.7s-14.2-31.7-31.7-31.7c-17.5 0-31.7 14.2-31.7 31.7.1 17.5 14.3 31.7 31.7 31.7z">
-                                        </path>
-                                    </svg>
-                                    微信支付
-                                </button>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">显示昵称</span></label>
+                                <input type="text" id="profileNickname" placeholder="您的显示名称"
+                                    class="input input-bordered bg-base-200/50 focus:border-primary transition-colors" />
                             </div>
-                        </div>
+                            <div class="flex justify-end mt-4 pt-2">
+                                <button type="submit" class="btn btn-primary px-8 shadow-sm"
+                                    id="profileBtn">保存更改</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
 
-                        <button class="btn btn-accent btn-block shadow-lg hover:scale-[1.01] transition-transform"
-                            onclick="doRecharge()" id="rechargeBtn">
-                            立即充值 <strong id="btnAmountText">¥100</strong>
+                <!-- Password Change Card -->
+                <div class="card bg-base-100/60 backdrop-blur-md shadow-lg border border-white/5">
+                    <div class="card-body p-6">
+                        <h2
+                            class="card-title text-lg flex items-center gap-2 mb-4 border-b border-base-content/10 pb-4">
+                            <span class="text-accent">🔒</span> 安全设置
+                        </h2>
+
+                        <form id="passwordForm" onsubmit="handleChangePassword(event)" class="space-y-4">
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">当前密码</span></label>
+                                <div class="relative">
+                                    <input type="password" id="oldPassword"
+                                        class="input input-bordered w-full bg-base-200/50 pr-10 focus:border-accent transition-colors"
+                                        placeholder="输入当前密码" required autocomplete="current-password" />
+                                    <button type="button"
+                                        class="absolute inset-y-0 right-0 px-3 flex items-center opacity-50 hover:opacity-100"
+                                        onclick="togglePwd('oldPassword')">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none"
+                                            viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">新密码</span></label>
+                                <div class="relative">
+                                    <input type="password" id="newPassword"
+                                        class="input input-bordered w-full bg-base-200/50 pr-10 focus:border-accent transition-colors"
+                                        placeholder="至少6位新密码" required minlength="6" autocomplete="new-password" />
+                                    <button type="button"
+                                        class="absolute inset-y-0 right-0 px-3 flex items-center opacity-50 hover:opacity-100"
+                                        onclick="togglePwd('newPassword')">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none"
+                                            viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="form-control">
+                                <label class="label"><span class="label-text">确认新密码</span></label>
+                                <div class="relative">
+                                    <input type="password" id="confirmNewPassword"
+                                        class="input input-bordered w-full bg-base-200/50 pr-10 focus:border-accent transition-colors"
+                                        placeholder="再次输入新密码" required minlength="6" autocomplete="new-password" />
+                                    <button type="button"
+                                        class="absolute inset-y-0 right-0 px-3 flex items-center opacity-50 hover:opacity-100"
+                                        onclick="togglePwd('confirmNewPassword')">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none"
+                                            viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </div>
+                            <div class="mt-4 pt-2 flex justify-end">
+                                <button type="submit" class="btn btn-accent px-8 shadow-sm" id="pwdBtn">修改密码</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Recharge Modal -->
+    <dialog id="rechargeModal" class="modal">
+        <div class="modal-box p-0 overflow-hidden bg-base-100/95 backdrop-blur-xl">
+            <h3
+                class="font-bold text-lg bg-base-200/50 px-6 py-4 border-b border-base-content/10 flex items-center gap-2">
+                <span class="text-2xl">💳</span> 余额充值
+            </h3>
+            <div class="p-6">
+                <div class="mb-5">
+                    <div class="text-sm opacity-60 mb-3">选择充值金额</div>
+                    <div class="flex flex-wrap gap-2 sm:gap-3" id="rechargeAmounts">
+                        <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                            onclick="selectAmount(1000, this)">¥10</button>
+                        <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                            onclick="selectAmount(5000, this)">¥50</button>
+                        <button class="btn btn-accent btn-sm shadow-md transition-all active-amount"
+                            onclick="selectAmount(10000, this)">¥100</button>
+                        <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                            onclick="selectAmount(30000, this)">¥300</button>
+                        <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                            onclick="selectAmount(50000, this)">¥500</button>
+                        <button class="btn btn-outline btn-sm hover:btn-accent transition-all"
+                            onclick="selectAmount(100000, this)">¥1000</button>
+                    </div>
+                </div>
+
+                <div class="mb-6">
+                    <div class="text-sm opacity-60 mb-3">选择支付方式</div>
+                    <div class="flex flex-wrap gap-3" id="payMethods">
+                        <button class="btn btn-outline btn-primary btn-sm active-method shadow-sm"
+                            onclick="selectPayMethod('alipay', this)">
+                            <svg viewBox="0 0 1024 1024" class="w-4 h-4 mr-1" fill="currentColor">
+                                <path
+                                    d="M720.896 525.824c15.872-46.08 24.576-96.256 27.648-150.016l-206.336 0.512c0 0-4.096-78.336-4.096-80.384l230.912 0c21.504 0 38.912-17.408 38.912-38.912s-17.408-38.912-38.912-38.912L540.672 218.112C534.528 153.6 534.528 153.6 534.528 153.6c0-21.504-17.408-38.912-38.912-38.912s-38.912 17.408-38.912 38.912l0 65.536-193.024 0c-21.504 0-38.912 17.408-38.912 38.912s17.408 38.912 38.912 38.912l193.024 0 0 80.384L230.4 376.832c-21.504 0-38.912 17.408-38.912 38.912s17.408 38.912 38.912 38.912L456.704 454.656c-13.824 37.376-32.256 71.68-54.784 103.424-40.96-33.792-88.064-58.88-138.24-73.216-20.48-5.632-41.984 6.144-48.128 26.112-5.632 20.48 6.144 41.984 26.624 48.128 72.704 20.48 139.776 56.32 195.584 104.96-56.32 40.448-120.832 69.632-190.464 85.504-20.992 4.608-34.304 25.088-29.696 46.08 4.096 17.92 19.968 30.208 37.888 30.208 2.56 0 5.632-0.512 8.192-1.024 93.184-21.504 177.664-62.976 250.368-120.32 60.416 46.08 129.024 79.872 201.728 98.304 5.12 1.024 9.728 1.536 14.848 1.536 17.408 0 32.768-11.776 37.376-29.184 5.12-20.992-7.68-42.496-28.672-47.616-56.832-14.336-110.08-40.96-157.696-78.336 43.52-52.224 77.824-112.128 100.352-177.152l87.552 45.056c6.144 3.072 13.312 4.608 19.968 4.608 13.824 0 27.648-7.68 34.304-20.48 9.728-18.944 2.048-43.008-17.408-52.736L720.896 525.824zM503.296 612.864C471.552 562.176 432.128 516.608 387.072 478.72c21.504-32.256 38.912-67.072 50.176-103.424l46.08-0.512C481.28 471.552 489.984 547.328 503.296 612.864z">
+                                </path>
+                            </svg>
+                            支付宝
+                        </button>
+                        <button
+                            class="btn btn-outline btn-success btn-sm hover:btn-success hover:text-white transition-all"
+                            onclick="selectPayMethod('wxpay', this)">
+                            <svg viewBox="0 0 1024 1024" class="w-4 h-4 mr-1" fill="currentColor">
+                                <path
+                                    d="M699.2 388.9c0-117.8-115.6-213.3-258.1-213.3s-258.1 95.5-258.1 213.3c0 62.6 32.7 118.8 84.1 157.5-6.6 22.3-21.7 65.6-25 76.6-4.5 14.8 11.2 13.8 20.2 8.6 12-7.1 76-46.6 92.2-56.9 27 7.7 55.9 11.9 86.2 11.9 142.1 0 258.5-95.2 258.5-213.1z.1-7.4-.1-14.8-.4-22 0-1.8 0-3.6-.1-5.3-2 1.3-4.1 2.5-6.2 3.7-22.3 12.5-47 22.8-73.6 30.7-3.6 1.1-7.2 2.1-10.9 3.1-40.8 11.1-84.3 17.5-129.9 18.6h-5.5c-30.8 0-60.8-4-89.6-11.7h-1.3c-23-6.1-45-14.2-65.7-24.3-15.5-7.6-30.4-16.1-44.5-25.5-3.6-2.4-7.2-4.9-10.7-7.4-48-34.9-79.6-86.4-86-145 0-1.3-.1-2.7-.1-4 0-142 138-257.6 308-257.6s308 115.6 308 257.6c.1 123.6-104.3 226.7-242.9 252 5.5-3.3 11-6.8 16.4-10.4 12.5-8.4 20.4-8 16.1 7-3.3 11.3-18.1 53-24.9 75.3 49-36.5 81-90.4 81-150.8M312.8 335.5c-19.8 0-35.8-16-35.8-35.8 0-19.8 16-35.8 35.8-35.8s35.8 16 35.8 35.8-16 35.8-35.8 35.8zm256.3 0c-19.8 0-35.8-16-35.8-35.8 0-19.8 16-35.8 35.8-35.8 19.8 0 35.8 16 35.8 35.8 0 19.8-16 35.8-35.8 35.8zm-155.6 94.7c17.5 0 31.7-14.2 31.7-31.7 0-17.5-14.2-31.7-31.7-31.7-17.5 0-31.7 14.2-31.7 31.7 0 17.5 14.2 31.7 31.7 31.7zm184.4 0c17.5 0 31.7-14.2 31.7-31.7s-14.2-31.7-31.7-31.7c-17.5 0-31.7 14.2-31.7 31.7.1 17.5 14.3 31.7 31.7 31.7z">
+                                </path>
+                            </svg>
+                            微信支付
                         </button>
                     </div>
                 </div>
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <!-- Subscription Mini Card -->
-                    <div class="card bg-base-100/60 backdrop-blur-md shadow-xl border border-white/5 h-full">
-                        <div class="card-body p-6">
-                            <h2 class="card-title text-lg flex items-center gap-2 mb-2">
-                                <span class="text-xl">💎</span> 我的订阅
-                            </h2>
-                            <div id="subscriptionCard" class="flex-grow flex flex-col justify-center min-h-[80px]">
-                                <span class="loading loading-dots loading-sm opacity-50"></span>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Addon Packages -->
-                    <div class="card bg-base-100/60 backdrop-blur-md shadow-xl border border-white/5 h-full">
-                        <div class="card-body p-6">
-                            <h2 class="card-title text-lg flex items-center justify-between mb-0">
-                                <span class="flex items-center gap-2"><span class="text-xl">🧩</span> 房间加量包</span>
-                            </h2>
-                            <div id="addonList"
-                                class="flex-grow flex flex-col gap-3 my-4 overflow-y-auto custom-scrollbar max-h-40">
-                                <span class="loading loading-dots loading-sm opacity-50"></span>
-                            </div>
-                            <div class="card-actions justify-end mt-auto">
-                                <a href="pricing.html" class="btn btn-outline btn-sm btn-block">购买或管理加量包</a>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Orders Table -->
-                <div class="card bg-base-100/50 backdrop-blur-md shadow-xl border border-white/5">
-                    <div class="card-body p-0">
-                        <h2 class="px-6 py-4 text-lg font-bold border-b border-base-content/10 flex items-center gap-2">
-                            <span class="text-xl">📋</span> 订单记录
-                        </h2>
-                        <div class="overflow-x-auto custom-scrollbar">
-                            <table class="table table-zebra table-sm">
-                                <thead>
-                                    <tr class="text-base-content/60 border-b border-base-content/20">
-                                        <th class="pl-6 font-medium">订单号</th>
-                                        <th class="font-medium">金额</th>
-                                        <th class="font-medium">方式</th>
-                                        <th class="font-medium">状态</th>
-                                        <th class="pr-6 font-medium">时间</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="orderBody">
-                                    <tr>
-                                        <td colspan="5" class="text-center py-6 opacity-50">加载中...</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-
-            </div>
-
-            <!-- Right Column: Notifications & Logs -->
-            <div class="space-y-6">
-                <!-- Notifications -->
-                <div class="card bg-base-100/70 backdrop-blur-md shadow-xl border border-white/5">
-                    <div class="card-body p-0">
-                        <div
-                            class="px-5 py-4 flex justify-between items-center border-b border-base-content/10 bg-base-200/30 rounded-t-2xl">
-                            <h2 class="font-bold flex items-center gap-2">
-                                <span class="text-xl">🔔</span> 系统通知
-                                <span id="notifBadge"
-                                    class="badge badge-error badge-sm ml-1 hidden border-none text-white shadow-sm"></span>
-                            </h2>
-                            <button class="btn btn-xs btn-ghost text-accent hover:bg-accent/20" onclick="markAllRead()"
-                                id="markAllBtn" style="display:none;">全部已读</button>
-                        </div>
-                        <div id="notifList" class="p-3 space-y-2 overflow-y-auto custom-scrollbar max-h-[400px]">
-                            <div class="py-10 text-center opacity-50 flex justify-center"><span
-                                    class="loading loading-spinner"></span></div>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Balance Log -->
-                <div class="card bg-base-100/50 backdrop-blur-md shadow-xl border border-white/5">
-                    <div class="card-body p-0">
-                        <h2
-                            class="px-5 py-4 font-bold border-b border-base-content/10 flex items-center gap-2 bg-base-200/30 rounded-t-2xl">
-                            <span class="text-xl">📊</span> 余额变动明细
-                        </h2>
-                        <div class="overflow-y-auto custom-scrollbar max-h-[350px]">
-                            <table class="table table-xs">
-                                <thead>
-                                    <tr class="text-base-content/60 sticky top-0 bg-base-100/90 backdrop-blur z-10">
-                                        <th class="pl-5">时间</th>
-                                        <th>金额/结余</th>
-                                        <th class="pr-5">说明</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="balanceLogBody">
-                                    <tr>
-                                        <td colspan="3" class="text-center py-6 opacity-50">加载中...</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
+                <div class="modal-action mt-6 gap-2">
+                    <form method="dialog">
+                        <button class="btn btn-ghost">取消</button>
+                    </form>
+                    <button class="btn btn-accent flex-grow shadow-lg" onclick="doRecharge()" id="rechargeBtn">
+                        去支付 <strong id="btnAmountText">¥100</strong>
+                    </button>
                 </div>
             </div>
-
         </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
     </div>
 
     <!-- Alert Modal (daisyUI native) -->
@@ -404,7 +538,7 @@
                         <div class="flex flex-col items-center justify-center p-4 text-center">
                             <div class="w-12 h-12 bg-base-200 rounded-full flex items-center justify-center mb-2"><svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 opacity-40" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg></div>
                             <p class="text-sm opacity-60 mb-4">当前未订阅高级套餐</p>
-                            <a href="pricing.html" class="btn btn-primary btn-sm rounded-full px-6">浏览所有套餐</a>
+                            <a href="/landing/index.html#pricing" class="btn btn-primary btn-sm rounded-full px-6">浏览所有套餐</a>
                         </div>`;
                 } else {
                     const cycleNames = { monthly: '月度', quarterly: '季度', annual: '年度', free: '不限' };
@@ -422,12 +556,18 @@
                         <a href="subscription.html" class="btn btn-outline btn-accent btn-sm mt-auto self-end px-6 rounded-lg shadow-sm">续费或管理</a>`;
                 }
 
-                // Addons
+                // Addons (Feature gating logic display)
                 const addonDiv = document.getElementById('addonList');
                 const pAddons = sub.addons || [];
-                if (pAddons.length === 0) {
+                const addonBox = document.getElementById('addonPurchaseBox');
+                if (!sub.plan || sub.plan.code === 'free') {
+                    addonDiv.innerHTML = '<div class="text-center text-sm opacity-40 py-6 border border-dashed border-base-content/10 rounded-xl">免费版不支持购买加量包</div>';
+                    if (addonBox) addonBox.style.display = 'none';
+                } else if (pAddons.length === 0) {
                     addonDiv.innerHTML = '<div class="text-center text-sm opacity-40 py-6 border border-dashed border-base-content/10 rounded-xl">无需加量目前够用</div>';
+                    if (addonBox) addonBox.style.display = 'block';
                 } else {
+                    if (addonBox) addonBox.style.display = 'block';
                     addonDiv.innerHTML = pAddons.map(a => `
                         <div class="flex justify-between items-center p-3 bg-base-200/50 rounded-lg hover:bg-base-200 transition-colors border border-base-content/5">
                             <div class="flex items-center gap-3">
@@ -518,6 +658,15 @@
                             </div>
                             ${n.content ? `<p class="mt-1.5 text-xs opacity-70 line-clamp-2 leading-relaxed break-words">${n.content}</p>` : ''}
                         </div>`).join('');
+                }
+
+                // Hydrate Profile Fields immediately with auth info
+                const meRes = await apiFetch('/api/auth/me');
+                if (meRes && meRes.ok) {
+                    const userData = await meRes.json();
+                    document.getElementById('profileEmail').value = userData.email || '';
+                    document.getElementById('profileNickname').value = userData.nickname || '';
+                    window.currentUser = userData;
                 }
             } catch (err) {
                 showAlert('仪表盘加载失败，请刷新重试', 'error');

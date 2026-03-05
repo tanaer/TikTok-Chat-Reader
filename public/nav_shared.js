@@ -7,7 +7,7 @@
 
     // Check auth for landing pages - redirect if no token on protected pages
     function checkLandingAuth() {
-        const publicPages = ['/landing/', '/landing/index.html', '/landing/login.html', '/landing/register.html', '/landing/pricing.html'];
+        const publicPages = ['/landing/', '/landing/index.html', '/landing/login.html', '/landing/register.html'];
         const currentPath = window.location.pathname;
         const isPublic = publicPages.some(p => currentPath === p || currentPath.endsWith(p));
 
@@ -37,8 +37,7 @@
         const navItems = [
             { href: '/', label: '监控中心', icon: '📺', auth: true },
             { href: '/landing/user-center.html', label: '用户中心', icon: '', auth: true, id: 'user-center' },
-            { href: '/landing/pricing.html', label: '套餐定价', icon: '', auth: false, id: 'pricing' },
-            { href: '/landing/profile.html', label: '个人设置', icon: '', auth: true, id: 'profile' },
+            { href: '/landing/index.html#pricing', label: '套餐定价', icon: '', auth: false, id: 'pricing' },
         ];
 
         const adminItems = isAdmin ? [
@@ -135,8 +134,6 @@
             const path = window.location.pathname;
             let active = '';
             if (path.includes('user-center')) active = 'user-center';
-            else if (path.includes('pricing')) active = 'pricing';
-            else if (path.includes('profile')) active = 'profile';
             else if (path.includes('admin')) active = 'admin';
             container.innerHTML = buildNavbar(active);
         }
