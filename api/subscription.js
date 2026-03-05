@@ -338,7 +338,7 @@ router.post('/addon/purchase', loadSubscription, async (req, res) => {
 
         // Check if user has an active subscription (addon requires base plan)
         const subscription = req.subscription;
-        if (!subscription || !subscription.planId || subscription.planId === 'none') {
+        if (!subscription || !subscription.plan_code || subscription.plan_code === 'none') {
             return res.status(400).json({ error: '请先订阅套餐后再购买加量包' });
         }
 

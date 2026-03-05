@@ -820,7 +820,10 @@
             const payload = {
                 name: document.getElementById('editPlanName').value,
                 code: document.getElementById('editPlanCode').value,
-                room_limit: parseInt(document.getElementById('editPlanRoomLimit').value),
+                description: '',
+                room_limit: parseInt(document.getElementById('editPlanRoomLimit').value) || 1,
+                history_days: 30,
+                ai_credits: 0,
                 price_monthly: parseInt(document.getElementById('editPlanPriceMonthly').value) || 0,
                 price_quarterly: parseInt(document.getElementById('editPlanPriceQuarterly').value) || 0,
                 price_annual: parseInt(document.getElementById('editPlanPriceAnnual').value) || 0,
@@ -831,17 +834,19 @@
 
             try {
                 const isNew = id === 'new';
-                await $.ajax({
+                const result = await $.ajax({
                     url: isNew ? '/api/admin/plans' : `/api/admin/plans/${id}`,
                     type: isNew ? 'POST' : 'PUT',
                     contentType: 'application/json',
                     data: JSON.stringify(payload)
                 });
+                console.log('[Admin] Plan saved:', result);
                 showAlert(isNew ? '套餐创建成功' : '套餐修改成功', 'success');
                 document.getElementById('editPlanModal').close();
                 PlanService.invalidateCache();
                 loadPlans();
             } catch (err) {
+                console.error('[Admin] Error saving plan:', err);
                 showAlert(err.responseJSON?.error || '操作失败', 'error');
             }
         }

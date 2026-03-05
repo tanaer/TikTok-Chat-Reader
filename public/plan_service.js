@@ -83,9 +83,18 @@
         }
 
         container.innerHTML = plans.map(p => {
-            const isOneTime = p.planType === 'one_time';
-            const price = isOneTime ? (p.priceMonthly || 0) : (p[field] || p.priceMonthly || 0);
-            const cycleSuffix = isOneTime ? (p.durationDays === 0 ? '永久' : `${p.durationDays}天`) : cycleName(cycle);
+            const planType = p.planType || p.plan_type;
+            const roomLimit = p.roomLimit !== undefined ? p.roomLimit : p.room_limit;
+            const priceMonthly = p.priceMonthly || p.price_monthly || 0;
+            const priceQuarterly = p.priceQuarterly || p.price_quarterly || 0;
+            const priceAnnual = p.priceAnnual || p.price_annual || 0;
+            const durationDays = p.durationDays !== undefined ? p.durationDays : p.duration_days;
+            const aiCreditsMonthly = p.aiCreditsMonthly || p.ai_credits_monthly || 0;
+            const historyDays = p.historyDays !== undefined ? p.historyDays : p.history_days;
+
+            const isOneTime = planType === 'one_time';
+            const price = isOneTime ? priceMonthly : (p[field] || priceMonthly);
+            const cycleSuffix = isOneTime ? (durationDays === 0 ? '永久' : `${durationDays}天`) : cycleName(cycle);
             const canAfford = balance >= price;
             const popular = p.code === 'pro';
 
@@ -101,9 +110,9 @@
                 </div>
                 ${p.description ? `<p class="text-xs opacity-40 mb-3">${p.description}</p>` : '<div class="mb-3"></div>'}
                 <ul class="text-xs opacity-60 space-y-1.5 mb-5">
-                    <li>📺 ${p.roomLimit === -1 ? '无限' : p.roomLimit} 个房间</li>
-                    <li>🤖 AI分析 ${p.aiCreditsMonthly || 0}/月</li>
-                    <li>📅 历史数据 ${p.historyDays === -1 ? '无限' : (p.historyDays || 7)} 天</li>
+                    <li>📺 ${roomLimit === -1 ? '无限' : roomLimit} 个房间</li>
+                    <li>🤖 AI分析 ${aiCreditsMonthly}/月</li>
+                    <li>📅 历史数据 ${historyDays === -1 ? '无限' : (historyDays || 7)} 天</li>
                 </ul>
                 <button onclick="PlanService.purchasePlan('${p.code}','${isOneTime ? 'one_time' : cycle}','${p.name}',${price})"
                     class="btn btn-primary btn-sm btn-block rounded-lg ${!canAfford ? 'btn-disabled opacity-40' : ''}">
@@ -123,12 +132,13 @@
         }
 
         container.innerHTML = addons.map(a => {
-            const price = a.priceMonthly || 0;
+            const price = a.priceMonthly || a.price_monthly || 0;
+            const roomCount = a.roomCount || a.room_count || 0;
             const canAfford = balance >= price;
             return `
             <div class="glass-card p-4 flex justify-between items-center">
                 <div>
-                    <div class="font-semibold">+${a.roomCount || 0} 个房间</div>
+                    <div class="font-semibold">+${roomCount} 个房间</div>
                     <div class="text-xs opacity-40">${a.name} · ${fmtCny(price)}/月</div>
                 </div>
                 <button onclick="PlanService.purchaseAddon(${a.id},'${a.name}',${price})"
@@ -144,16 +154,20 @@
             return '<tr><td colspan="6" class="text-center py-10 opacity-30">无套餐数据</td></tr>';
         }
         return plans.map(p => {
-            const isOneTime = p.planType === 'one_time';
+            const planType = p.planType || p.plan_type;
+            const roomLimit = p.roomLimit !== undefined ? p.roomLimit : p.room_limit;
+            const priceMonthly = p.priceMonthly || p.price_monthly || 0;
+            const isActive = p.isActive !== undefined ? p.isActive : p.is_active;
+            const isOneTime = planType === 'one_time';
             return `<tr>
             <td>
                 <div class="font-semibold">${p.name}</div>
                 ${isOneTime ? '<div class="text-[10px] text-accent opacity-80">一次性买断</div>' : ''}
             </td>
             <td class="font-mono text-xs opacity-60">${p.code}</td>
-            <td>${p.roomLimit === -1 ? '∞' : p.roomLimit}</td>
-            <td class="font-bold">${fmtCny(p.priceMonthly || 0)}</td>
-            <td><span class="badge ${p.isActive !== false ? 'badge-success' : 'badge-ghost'} badge-xs">${p.isActive !== false ? '启用' : '禁用'}</span></td>
+            <td>${roomLimit === -1 ? '∞' : roomLimit}</td>
+            <td class="font-bold">${fmtCny(priceMonthly)}</td>
+            <td><span class="badge ${isActive !== false ? 'badge-success' : 'badge-ghost'} badge-xs">${isActive !== false ? '启用' : '禁用'}</span></td>
             <td>
                 <div class="flex gap-2">
                     <button class="btn btn-xs btn-outline rounded-lg" onclick='window.editPlan(${JSON.stringify(p).replace(/'/g, "&#39;")})'>编辑</button>
@@ -165,13 +179,12 @@
 
     function renderAddonTableRows(addons) {
         if (!addons || addons.length === 0) {
-            return '<tr><td colspan="5" class="text-center py-10 opacity-30">无加量包数据</td></tr>';
+            return '<tr><td colspan="4" class="text-center py-10 opacity-30">无加量包数据</td></tr>';
         }
         return addons.map(a => `<tr>
             <td class="font-semibold">${a.name}</td>
-            <td class="font-mono text-xs opacity-60">${a.code}</td>
-            <td>+${a.roomCount}</td>
-            <td class="font-bold">${fmtCny(a.priceMonthly || 0)}</td>
+            <td>+${a.roomCount || a.room_count || 0}</td>
+            <td class="font-bold">${fmtCny(a.priceMonthly || a.price_monthly || 0)}</td>
             <td>
                 <div class="flex gap-2">
                     <button class="btn btn-xs btn-outline rounded-lg" onclick='window.editAddon(${JSON.stringify(a).replace(/'/g, "&#39;")})'>编辑</button>

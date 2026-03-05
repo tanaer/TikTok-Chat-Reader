@@ -413,18 +413,24 @@
 
         function renderAddons(addons) {
             const el = document.getElementById('addonList');
-            if (!addons.length) {
+            if (!addons || !addons.length) {
                 el.innerHTML = '<div class="text-center py-6 opacity-30 text-sm">暂无加量包</div>';
                 return;
             }
-            el.innerHTML = `<div class="space-y-2">${addons.map(a => `
+            el.innerHTML = `<div class="space-y-2">${addons.map(a => {
+                const roomCount = a.roomCount || a.room_count || 0;
+                const packageName = a.packageName || a.package_name || '';
+                const endDate = a.endDate || a.end_date;
+                const status = a.status || 'active';
+                return `
         <div class="flex justify-between items-center p-3 rounded-xl" style="background:var(--glass-bg)">
           <div>
-            <div class="text-sm font-medium">+${a.roomCount} 个房间</div>
-            <div class="text-xs opacity-40">${a.packageName} · 至 ${fmtDate(a.endDate)}</div>
+            <div class="text-sm font-medium">+${roomCount} 个房间</div>
+            <div class="text-xs opacity-40">${packageName} · 至 ${fmtDate(endDate)}</div>
           </div>
-          ${statusBadge(a.status)}
-        </div>`).join('')}</div>`;
+          ${statusBadge(status)}
+        </div>`;
+            }).join('')}</div>`;
         }
 
         function renderBalanceLog(logs, balance) {
@@ -434,10 +440,12 @@
                 ? '<tr><td colspan="4" class="text-center py-10 opacity-30">暂无记录</td></tr>'
                 : logs.map(l => {
                     const pos = l.amount > 0;
+                    const createdAt = l.createdAt || l.created_at;
+                    const balanceAfter = l.balanceAfter || l.balance_after;
                     return `<tr>
-              <td class="text-xs opacity-50 whitespace-nowrap">${fmtTime(l.created_at)}</td>
+              <td class="text-xs opacity-50 whitespace-nowrap">${fmtTime(createdAt)}</td>
               <td class="font-mono font-bold ${pos ? 'text-success' : 'text-error'}">${pos ? '+' : ''}${fmtCny(l.amount)}</td>
-              <td class="font-mono text-xs opacity-60">${fmtCny(l.balance_after)}</td>
+              <td class="font-mono text-xs opacity-60">${fmtCny(balanceAfter)}</td>
               <td><div class="badge badge-ghost badge-xs mb-1">${typeNames[l.type] || l.type}</div><div class="text-xs opacity-40 max-w-[140px] truncate">${l.description || '—'}</div></td>
             </tr>`;
                 }).join('');
@@ -447,13 +455,18 @@
             const body = document.getElementById('orderBody');
             body.innerHTML = ords.length === 0
                 ? '<tr><td colspan="5" class="text-center py-10 opacity-30">暂无订单</td></tr>'
-                : ords.map(o => `<tr>
-            <td class="font-mono text-xs opacity-50">${o.order_no}</td>
+                : ords.map(o => {
+                    const orderNo = o.orderNo || o.order_no;
+                    const paymentMethod = o.paymentMethod || o.payment_method;
+                    const createdAt = o.createdAt || o.created_at;
+                    return `<tr>
+            <td class="font-mono text-xs opacity-50">${orderNo}</td>
             <td class="font-bold">${fmtCny(o.amount)}</td>
-            <td><span class="badge badge-ghost badge-sm">${o.payment_method || '—'}</span></td>
+            <td><span class="badge badge-ghost badge-sm">${paymentMethod || '—'}</span></td>
             <td>${statusBadge(o.status)}</td>
-            <td class="text-xs opacity-40">${fmtTime(o.created_at)}</td>
-          </tr>`).join('');
+            <td class="text-xs opacity-40">${fmtTime(createdAt)}</td>
+          </tr>`;
+                }).join('');
         }
 
         function renderNotifs(notifs) {
@@ -577,7 +590,7 @@
 
         async function loadQrCodes() {
             try {
-                const res = await fetch('/api/admin/payment/qr-codes/public');
+                const res = await fetch('/api/subscription/qr-codes');
                 const qrCodes = await res.json();
                 const container = document.getElementById('qrCodesDisplay');
                 
