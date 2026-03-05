@@ -237,8 +237,8 @@
         function renderPlans() {
             const c = document.getElementById('plansContainer');
             const sorted = [...plansData].filter(p => p.status === 'active').sort((a, b) => a.base_price - b.base_price);
-            const actionUrl = isLoggedIn ? '/landing/subscription.html' : '/landing/register.html';
-            const actionText = isLoggedIn ? '立即升级' : '注册后购买';
+            const actionUrl = isLoggedIn ? '/landing/user-center.html' : '/landing/register.html';
+            const actionText = isLoggedIn ? '用户中心' : '注册后购买';
 
             c.innerHTML = sorted.map(plan => {
                 if (plan.plan_code === 'free') return `

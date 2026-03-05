@@ -1,73 +1,88 @@
 /**
  * nav_shared.js — TikTok Monitor Unified Navigation
  *
- * Usage: Include this script in any landing page.
- * It auto-injects a consistent dark glass navbar into #app-navbar.
+ * Injected into all public/landing pages via <div id="app-navbar"></div>.
+ * Dynamically shows links based on auth status + role.
  *
- * Data attributes:
- *   <html data-nav-active="user-center"> — override active tab detection
+ * - Guest:      Logo | 首页 | [立即开始] [登录]
+ * - Logged in:  Logo | 首页 | 监控中心 | 用户中心 | [user menu]
+ * - Admin:      Logo | 首页 | 监控中心 | 用户中心 | 后台管理 | [user menu]
+ *
+ * Set active tab: <html data-nav-active="home|monitor|user-center|admin">
  */
 (function () {
     'use strict';
 
     const TOKEN_KEY = 'accessToken';
 
+    // All possible nav items — filtered based on auth state
     const NAV_LINKS = [
-        { id: 'home', href: '/landing/index.html', label: '首页', guestOk: true },
-        { id: 'monitor', href: '/', label: '监控中心', guestOk: false },
-        { id: 'user-center', href: '/landing/user-center.html', label: '用户中心', guestOk: false },
-        { id: 'subscription', href: '/landing/subscription.html', label: '套餐订阅', guestOk: true },
-    ];
-
-    const ADMIN_LINKS = [
-        { id: 'admin', href: '/landing/admin.html', label: '后台管理' }
+        { id: 'home', href: '/', label: '🏠 首页', auth: 'guest' },
+        { id: 'monitor', href: '/app', label: '📺 监控中心', auth: 'user' },
+        { id: 'user-center', href: '/landing/user-center.html', label: '👤 用户中心', auth: 'user' },
+        { id: 'admin', href: '/landing/admin.html', label: '⚙️ 管理后台', auth: 'admin' },
     ];
 
     function getActiveId() {
-        // Allow explicit override via <html data-nav-active="...">
         const override = document.documentElement.dataset.navActive;
         if (override) return override;
-
-        const path = window.location.pathname;
-        if (path === '/' || path === '/index.html') return 'monitor';
-        if (path.includes('user-center')) return 'user-center';
-        if (path.includes('subscription')) return 'subscription';
-        if (path.includes('admin')) return 'admin';
-        if (path.includes('index') || path.endsWith('/landing/') || path.endsWith('/landing')) return 'home';
+        const p = window.location.pathname;
+        if (p === '/' || p.includes('/landing/index')) return 'home';
+        if (p === '/app' || p === '/index.html') return 'monitor';
+        if (p.includes('user-center')) return 'user-center';
+        if (p.includes('admin')) return 'admin';
         return '';
     }
 
-    function buildNavLinks(isLoggedIn, isAdmin, activeId) {
-        const visible = NAV_LINKS.filter(l => l.guestOk || isLoggedIn);
-        const all = isAdmin ? [...visible, ...ADMIN_LINKS] : visible;
+    function buildLinks(isLoggedIn, isAdmin, activeId) {
+        return NAV_LINKS
+            .filter(l => {
+                if (l.auth === 'guest') return true;
+                if (l.auth === 'user') return isLoggedIn;
+                if (l.auth === 'admin') return isAdmin;
+                return false;
+            })
+            .map(l => {
+                const active = l.id === activeId ? 'active' : '';
+                const adminCls = l.id === 'admin' ? 'text-warning' : '';
+                return `<a href="${l.href}" class="nav-link ${active} ${adminCls} btn btn-ghost btn-sm rounded-lg">${l.label}</a>`;
+            }).join('');
+    }
 
-        return all.map(l => {
-            const active = l.id === activeId ? 'active' : '';
-            const adminCls = l.id === 'admin' ? 'text-warning' : '';
-            return `<a href="${l.href}" class="nav-link ${active} ${adminCls} btn btn-ghost btn-sm rounded-lg">${l.label}</a>`;
-        }).join('');
+    function buildMobileLinks(isLoggedIn, isAdmin, activeId) {
+        const cls = 'block w-full text-left px-4 py-2.5 rounded-lg opacity-75 hover:opacity-100 hover:bg-white/5 transition-all text-sm';
+        return NAV_LINKS
+            .filter(l => {
+                if (l.auth === 'guest') return true;
+                if (l.auth === 'user') return isLoggedIn;
+                if (l.auth === 'admin') return isAdmin;
+                return false;
+            })
+            .map(l => `<a href="${l.href}" class="${cls} ${l.id === activeId ? 'text-primary font-bold' : ''}">${l.label}</a>`)
+            .join('');
     }
 
     function buildNavbar(user) {
         const isLoggedIn = !!user;
         const isAdmin = user?.role === 'admin';
         const activeId = getActiveId();
+        const links = buildLinks(isLoggedIn, isAdmin, activeId);
 
-        const links = buildNavLinks(isLoggedIn, isAdmin, activeId);
-        const initial = user ? (user.nickname || user.email || '?')[0].toUpperCase() : '';
-
+        // Right side: if logged in show user menu placeholder, else show CTA buttons
         const rightSection = isLoggedIn
             ? `<div id="userMenuSlot"></div>`
-            : `<a href="/landing/login.html"    class="btn btn-ghost btn-sm">登录</a>
-               <a href="/landing/register.html" class="btn btn-sm gradient-btn text-white">注册</a>`;
+            : `<div class="flex items-center gap-2">
+                 <a href="/landing/login.html"    class="btn btn-ghost btn-sm rounded-lg opacity-70">登录</a>
+                 <a href="/landing/register.html" class="btn btn-sm gradient-btn text-white rounded-lg px-4">立即开始</a>
+               </div>`;
 
         return `
           <nav class="glass-navbar sticky top-0 z-50 w-full">
             <div class="max-w-[1400px] mx-auto px-4 flex items-center h-14 gap-4">
               <!-- Brand -->
-              <a href="/landing/index.html" class="flex items-center gap-2 shrink-0 mr-4">
+              <a href="/" class="flex items-center gap-2 shrink-0 mr-2">
                 <span class="text-xl">📺</span>
-                <span class="font-extrabold text-base tracking-tight gradient-text-primary">TikTok Monitor</span>
+                <span class="font-extrabold text-base tracking-tight gradient-text-primary hidden sm:inline">TikTok Monitor</span>
               </a>
 
               <!-- Nav Links (desktop) -->
@@ -75,12 +90,11 @@
                 ${links}
               </div>
 
-              <!-- Right: User Menu or Auth buttons -->
+              <!-- Right section -->
               <div class="ml-auto flex items-center gap-2">
                 ${rightSection}
-
-                <!-- Mobile menu toggle -->
-                <button id="mobileMenuBtn" class="btn btn-ghost btn-sm btn-square md:hidden" onclick="toggleMobileMenu()">
+                <!-- Mobile toggle -->
+                <button id="mobileMenuBtn" class="btn btn-ghost btn-sm btn-square md:hidden" onclick="window.toggleMobileMenu()">
                   <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
                   </svg>
@@ -90,8 +104,8 @@
 
             <!-- Mobile dropdown -->
             <div id="mobileMenu" class="hidden md:hidden border-t border-white/5 bg-black/40 backdrop-blur-xl px-4 py-3 space-y-1">
-              ${buildNavLinks(isLoggedIn, isAdmin, activeId).replace(/btn btn-ghost btn-sm rounded-lg/g, 'block w-full text-left px-4 py-2 rounded-lg opacity-75 hover:opacity-100 hover:bg-white/5 transition-all')}
-              ${isLoggedIn ? `<hr class="border-white/10 my-2"><button onclick="window.logout()" class="block w-full text-left px-4 py-2 rounded-lg text-error opacity-80 hover:opacity-100">🚪 退出登录</button>` : ''}
+              ${buildMobileLinks(isLoggedIn, isAdmin, activeId)}
+              ${isLoggedIn ? `<hr class="border-white/10 my-2"><button onclick="window.logout()" class="block w-full text-left px-4 py-2 rounded-lg text-error opacity-80 hover:opacity-100 text-sm">🚪 退出登录</button>` : ''}
             </div>
           </nav>
         `;
@@ -111,26 +125,17 @@
 
         if (token) {
             try {
-                const res = await fetch('/api/auth/me', {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                });
+                // Use the already-intercepted fetch from auth.js (token injected automatically)
+                const res = await fetch('/api/auth/me');
                 if (res.ok) user = await res.json();
             } catch { }
         }
 
         slot.innerHTML = buildNavbar(user);
 
-        // Inject user menu via auth.js helper if logged in
+        // Delegate user menu rendering to auth.js after nav is in DOM
         if (user && typeof window.injectUserMenu === 'function') {
             window.injectUserMenu(user, 'userMenuSlot');
-        }
-
-        // If guest visiting a protected page, redirect to login
-        // (protected pages should also call initPage() for server-side validation)
-        const path = window.location.pathname;
-        const protectedPaths = ['/landing/user-center.html', '/landing/subscription.html', '/landing/admin.html'];
-        if (!user && protectedPaths.some(p => path.includes(p))) {
-            window.location.href = '/landing/login.html';
         }
     }
 

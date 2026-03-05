@@ -3,6 +3,7 @@
  * Combined Socket.IO (TikTok events) + REST API (data management)
  */
 require('dotenv').config();
+const path = require('path');
 
 const express = require('express');
 const { createServer } = require('http');
@@ -26,7 +27,18 @@ startCronJobs(); // Start background cron jobs (expiry, auto-renew, warnings)
 
 // Enable CORS & JSON parsing
 app.use(express.json());
-app.use(express.static('public')); // Serve static files first for performance
+
+// ── Page Routes (before static) ──────────────────────────────────────────────
+// Root → Landing page (no auth required, nav_shared.js handles auth state)
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'landing', 'index.html'));
+});
+// Monitor center (auth enforced by client-side auth.js initPage)
+app.get('/app', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+app.use(express.static('public')); // Static assets fallback
 
 // Auth middleware for protecting API routes
 const { requireAuth } = require('./auth/middleware');

@@ -52,51 +52,75 @@
             border: 1px solid rgba(255, 255, 255, 0.08) !important;
         }
 
-        .nav-btn {
-            padding: 0.4rem 0.9rem;
+        /* Secondary in-app tab strip */
+        .app-tab {
+            padding: 0.4rem 1rem;
             border-radius: 0.5rem;
             font-size: 0.8rem;
             font-weight: 500;
-            opacity: 0.55;
+            opacity: 0.5;
             transition: all 0.18s;
+            cursor: pointer;
+            border: none;
+            background: transparent;
+            color: inherit;
+            white-space: nowrap;
         }
 
-        .nav-btn:hover {
-            opacity: 0.9;
+        .app-tab:hover {
+            opacity: 0.85;
             background: rgba(255, 255, 255, 0.06);
         }
 
-        .nav-btn.active {
+        .app-tab.active {
             opacity: 1;
             background: rgba(99, 102, 241, 0.18);
             color: #a5b4fc;
         }
     </style>
 
-    <!-- Unified Navbar -->
-    <nav class="glass-navbar sticky top-0 z-50 w-full mb-4">
+    <!-- Global Navbar (cross-page links) -->
+    <nav class="glass-navbar sticky top-0 z-50 w-full">
         <div class="max-w-[1600px] mx-auto px-4 flex items-center h-14 gap-2">
-            <!-- Brand -->
+            <!-- Brand → Landing -->
             <a href="/" class="flex items-center gap-2 mr-4 shrink-0">
                 <span class="text-xl">📺</span>
-                <span class="font-extrabold text-sm tracking-tight gradient-text-primary">TikTok Monitor</span>
+                <span class="font-extrabold text-sm tracking-tight gradient-text-primary hidden sm:inline">TikTok
+                    Monitor</span>
             </a>
-            <!-- App Nav Tabs -->
-            <div class="flex items-center gap-1 flex-1 overflow-x-auto">
-                <a class="nav-btn active" onclick="switchSection('roomList',this)">📺 房间列表</a>
-                <a class="nav-btn" onclick="switchSection('userAnalysis',this)">📊 用户分析</a>
-                <a class="nav-btn" onclick="switchSection('roomAnalysis',this)">📈 房间分析</a>
-                <a class="nav-btn" onclick="switchSection('giftConfig',this)">🎁 礼物配置</a>
-                <a class="nav-btn admin-only" onclick="switchSection('recording',this)">🎥 录制管理</a>
-                <a class="nav-btn admin-only" onclick="switchSection('systemConfig',this)">⚙️ 系统配置</a>
+            <!-- Cross-page links (global context) -->
+            <div class="hidden md:flex items-center gap-1">
+                <a href="/" class="btn btn-ghost btn-sm rounded-lg opacity-50 hover:opacity-80 text-xs">🏠 首页</a>
+                <a href="/landing/user-center.html"
+                    class="btn btn-ghost btn-sm rounded-lg opacity-50 hover:opacity-80 text-xs">👤 用户中心</a>
+                <span id="adminNavLink" class="hidden">
+                    <a href="/landing/admin.html"
+                        class="btn btn-ghost btn-sm rounded-lg text-warning/60 hover:text-warning text-xs">⚙️ 管理后台</a>
+                </span>
             </div>
-            <!-- Right: User Menu -->
+            <!-- Right: User Menu injected by initPage() -->
             <div id="userMenuSlot" class="ml-auto shrink-0"></div>
         </div>
     </nav>
 
+    <!-- Secondary Tab Strip (in-page section switching) -->
+    <div class="sticky top-14 z-40 border-b border-white/5"
+        style="background:rgba(10,10,20,0.85);backdrop-filter:blur(16px)">
+        <div class="max-w-[1600px] mx-auto px-4 flex items-center gap-1 overflow-x-auto h-11">
+            <button class="app-tab active" id="tab-roomList" onclick="switchSection('roomList',this)">📺 房间列表</button>
+            <button class="app-tab" id="tab-userAnalysis" onclick="switchSection('userAnalysis',this)">📊 用户分析</button>
+            <button class="app-tab" id="tab-roomAnalysis" onclick="switchSection('roomAnalysis',this)">📈 房间分析</button>
+            <button class="app-tab" id="tab-giftConfig" onclick="switchSection('giftConfig',this)">🎁 礼物配置</button>
+            <button class="app-tab admin-only" id="tab-recording" onclick="switchSection('recording',this)">🎥
+                录制管理</button>
+            <button class="app-tab admin-only" id="tab-systemConfig" onclick="switchSection('systemConfig',this)">⚙️
+                系统配置</button>
+        </div>
+    </div>
+
     <!-- Main Content -->
     <main class="flex-grow w-full px-4 xl:px-8 py-4 overflow-y-auto">
+
 
         <!-- SECTION: Room List -->
         <section id="section-roomList" class="content-section block">
@@ -603,7 +627,8 @@
             <div class="flex gap-2 mb-4">
                 <button class="btn btn-sm btn-outline sub-nav-btn active" onclick="switchConfigTab('system')">⚙️
                     系统配置</button>
-                <button class="btn btn-sm btn-outline sub-nav-btn" onclick="switchConfigTab('gifts')">🎁 礼物配置</button>
+                <button class="btn btn-sm btn-outline sub-nav-btn" onclick="switchConfigTab('gifts')">🎁
+                    礼物配置</button>
             </div>
 
             <!-- System Config Tab -->
@@ -641,7 +666,8 @@
                             <label class="label"><span class="label-text">动态隧道代理 (获取 RoomID)</span></label>
                             <input type="text" id="cfg_tunnelProxy" class="input input-bordered w-full"
                                 placeholder="http://user:pass@host:port">
-                            <label class="label"><span class="label-text-alt text-xs opacity-50">用于访问 TikTok 获取直播间ID，格式:
+                            <label class="label"><span class="label-text-alt text-xs opacity-50">用于访问 TikTok
+                                    获取直播间ID，格式:
                                     http://用户名:密码@主机:端口</span></label>
                         </div>
 
@@ -1298,7 +1324,7 @@
             <h2 class="text-2xl font-bold mb-3">订阅已过期</h2>
             <p class="text-base-content/50 text-sm mb-8 leading-relaxed">您当前没有有效的订阅套餐。请前往用户中心购买套餐后即可解锁全部监控功能。</p>
             <div class="flex flex-col gap-3">
-                <a href="/landing/subscription.html" class="btn gradient-btn text-white rounded-xl">💎 立即订阅</a>
+                <a href="/landing/user-center.html" class="btn gradient-btn text-white rounded-xl">💎 立即订阅</a>
                 <a href="/landing/user-center.html" class="btn btn-outline rounded-xl">用户中心</a>
                 <button onclick="window.logout()" class="btn btn-ghost btn-sm opacity-40 mt-2">退出登录</button>
             </div>
@@ -1314,20 +1340,25 @@
                 // Reveal body
                 document.body.style.display = '';
 
-                // Inject user dropdown menu in navbar
+                // Inject user dropdown into navbar slot
                 window.injectUserMenu(user, 'userMenuSlot');
 
-                // Role-based: remove admin-only elements for regular users
-                if (user.role !== 'admin') {
+                // Role-based DOM cleanup
+                if (user.role === 'admin') {
+                    // Show admin nav link in global bar
+                    const adminLink = document.getElementById('adminNavLink');
+                    if (adminLink) adminLink.classList.remove('hidden');
+                } else {
+                    // Remove admin-only secondary tabs and sort buttons
                     document.querySelectorAll('.admin-only').forEach(el => el.remove());
                 }
             }
         });
 
-        // Section switching (also updates nav tab active state)
+        // Section switching — controls the secondary tab strip
         function switchSection(name, clickedBtn) {
             document.querySelectorAll('.content-section').forEach(s => s.style.display = 'none');
-            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.app-tab').forEach(b => b.classList.remove('active'));
             const sec = document.getElementById('section-' + name);
             if (sec) sec.style.display = 'block';
             if (clickedBtn) clickedBtn.classList.add('active');

@@ -1,12 +1,11 @@
 /**
  * auth.js — TikTok Monitor Universal Auth Gate
- * 
+ *
  * Responsibilities:
- *  1. Intercept all fetch() and inject Bearer token automatically
- *  2. initPage(options) — per-page auth + role guard
- *  3. checkQuota() — subscription gate for main app
- *  4. injectUserMenu() — top navbar user dropdown
- *  5. Global: window.logout(), window.authFetch()
+ *  1. Intercept all fetch() AND jQuery $.ajax → inject Bearer token globally
+ *  2. initPage(options) — per-page auth + role guard + quota check
+ *  3. injectUserMenu() — top navbar user dropdown
+ *  4. Global: window.logout(), window.authFetch(), window.showToast()
  */
 (function () {
     'use strict';
@@ -14,9 +13,7 @@
     const TOKEN_KEY = 'accessToken';
     const REFRESH_KEY = 'refreshToken';
 
-    // ──────────────────────────────────────────────
-    // 1. Fetch Interceptor — auto-inject Bearer token
-    // ──────────────────────────────────────────────
+    // ── 1. Native fetch Interceptor ──────────────────────────────────────────
     const _origFetch = window.fetch;
     window.fetch = function (url, options = {}) {
         const token = localStorage.getItem(TOKEN_KEY);
@@ -27,9 +24,39 @@
         return _origFetch.call(this, url, options);
     };
 
-    // ──────────────────────────────────────────────
-    // 2. Token Helpers
-    // ──────────────────────────────────────────────
+    // ── 2. jQuery $.ajax Interceptor ─────────────────────────────────────────
+    // jQuery loads AFTER auth.js, so we wire this up on DOMContentLoaded
+    document.addEventListener('DOMContentLoaded', function () {
+        if (typeof $ === 'undefined' || typeof $.ajaxSetup === 'undefined') return;
+
+        $.ajaxSetup({
+            beforeSend(xhr, settings) {
+                // Only inject for internal API calls
+                if (settings.url && settings.url.toString().startsWith('/api/')) {
+                    const token = localStorage.getItem(TOKEN_KEY);
+                    if (token) xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+                }
+            }
+        });
+
+        // Global 401 handler: auto-refresh token and retry once
+        $(document).ajaxError(async function (event, xhr, settings) {
+            if (xhr.status === 401 &&
+                settings.url && settings.url.startsWith('/api/') &&
+                !settings.url.includes('/auth/refresh') &&
+                !settings.__retried) {
+                const refreshed = await refreshTokens();
+                if (refreshed) {
+                    settings.__retried = true;
+                    $.ajax(settings); // retry once with fresh token
+                } else {
+                    redirectLogin();
+                }
+            }
+        });
+    }, { once: true });
+
+    // ── 3. Token Helpers ──────────────────────────────────────────────────────
     function getToken() { return localStorage.getItem(TOKEN_KEY); }
     function clearAuth() {
         localStorage.removeItem(TOKEN_KEY);
@@ -38,7 +65,6 @@
 
     function redirectLogin() {
         clearAuth();
-        // Preserve current URL so we can redirect back after login
         const next = encodeURIComponent(window.location.href);
         window.location.href = '/landing/login.html?next=' + next;
     }
@@ -55,19 +81,27 @@
             if (!res.ok) return null;
             const data = await res.json();
             localStorage.setItem(TOKEN_KEY, data.accessToken);
-            localStorage.setItem(REFRESH_KEY, data.refreshToken);
+            if (data.refreshToken) localStorage.setItem(REFRESH_KEY, data.refreshToken);
             return data;
         } catch { return null; }
     }
 
-    // ──────────────────────────────────────────────
-    // 3. Init Page — main entry point for each page
-    // ──────────────────────────────────────────────
+    async function verifyToken(token) {
+        try {
+            const res = await _origFetch('/api/auth/me', {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (!res.ok) return null;
+            return await res.json();
+        } catch { return null; }
+    }
+
+    // ── 4. initPage — main per-page entry point ───────────────────────────────
     /**
      * @param {Object} opts
-     *   requireAuth  {boolean}  default true — redirect to login if no token
-     *   requireAdmin {boolean}  default false — redirect to home if not admin
-     *   checkQuota   {boolean}  default false — show quota gate overlay if no subscription
+     *   requireAuth  {boolean}  default true  — redirect to login if no token
+     *   requireAdmin {boolean}  default false — redirect home if not admin
+     *   checkQuota   {boolean}  default false — show quota gate if no valid subscription
      *   onReady      {Function} called with user object when auth succeeds
      */
     window.initPage = async function (opts = {}) {
@@ -80,17 +114,14 @@
 
         let token = getToken();
 
-        // Not logged in
         if (!token) {
             if (requireAuth) { redirectLogin(); return; }
             if (onReady) onReady(null);
             return;
         }
 
-        // Verify token with server
         let user = await verifyToken(token);
 
-        // Try to refresh if expired
         if (!user) {
             const refreshed = await refreshTokens();
             if (refreshed) {
@@ -105,67 +136,44 @@
             return;
         }
 
-        // Set globals
         window.currentUser = user;
         window.isAdmin = user.role === 'admin';
 
-        // Admin guard
         if (requireAdmin && !window.isAdmin) {
             window.location.href = '/';
             return;
         }
 
-        // Call onReady
         if (onReady) onReady(user);
 
-        // Quota gate (non-blocking, visual only)
         if (checkQuota && !window.isAdmin) {
-            showQuotaGate(user);
+            showQuotaGate();
         }
     };
 
-    async function verifyToken(token) {
-        try {
-            const res = await _origFetch('/api/auth/me', {
-                headers: { 'Authorization': `Bearer ${token}` }
-            });
-            if (!res.ok) return null;
-            return await res.json();
-        } catch { return null; }
-    }
-
-    // ──────────────────────────────────────────────
-    // 4. Quota Gate
-    // ──────────────────────────────────────────────
+    // ── 5. Quota Gate ─────────────────────────────────────────────────────────
     async function showQuotaGate() {
         try {
-            // Wait until DOM is ready
             await domReady();
             const overlay = document.getElementById('quotaGateOverlay');
-            if (!overlay) return; // Page doesn't have quota gate
-
+            if (!overlay) return;
             const res = await _origFetch('/api/subscription', {
                 headers: { 'Authorization': `Bearer ${getToken()}` }
             });
             if (!res.ok) return;
             const sub = await res.json();
-
             const noSub = !sub.plan || sub.plan.code === 'none' || sub.daysRemaining < 0;
-            if (noSub) {
-                overlay.classList.add('visible');
-            }
+            if (noSub) overlay.classList.add('visible');
         } catch (e) {
             console.warn('[Auth] Quota check failed:', e);
         }
     }
 
-    // ──────────────────────────────────────────────
-    // 5. User Menu Injection
-    // ──────────────────────────────────────────────
+    // ── 6. User Menu Injection ────────────────────────────────────────────────
     window.injectUserMenu = function (user, containerId = 'userMenuSlot') {
         const slot = document.getElementById(containerId);
         if (!slot || !user) return;
-        const isAdmin = user.role === 'admin';
+        const isAdm = user.role === 'admin';
         const initial = (user.nickname || user.email || '?')[0].toUpperCase();
 
         slot.innerHTML = `
@@ -177,14 +185,13 @@
                 </div>
               </div>
               <span class="hidden md:inline text-sm opacity-80 max-w-[120px] truncate">${user.nickname || user.email}</span>
-              ${isAdmin ? '<span class="badge badge-warning badge-xs">Admin</span>' : ''}
+              ${isAdm ? '<span class="badge badge-warning badge-xs">Admin</span>' : ''}
               <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 opacity-50" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
             </div>
             <ul tabindex="0" class="dropdown-content menu bg-base-300/90 backdrop-blur-xl rounded-xl z-50 w-52 p-2 shadow-2xl border border-white/8 mt-2 animate-scale-in">
               <li class="menu-title text-xs opacity-40 pt-1">账户</li>
               <li><a href="/landing/user-center.html" class="rounded-lg">👤 用户中心</a></li>
-              <li><a href="/landing/subscription.html" class="rounded-lg">💎 套餐订阅</a></li>
-              ${isAdmin ? `<li class="divider my-1"></li><li class="menu-title text-xs opacity-40">管理员</li><li><a href="/landing/admin.html" class="rounded-lg text-warning">⚙️ 后台管理</a></li>` : ''}
+              ${isAdm ? `<li class="divider my-1"></li><li class="menu-title text-xs opacity-40">管理员</li><li><a href="/landing/admin.html" class="rounded-lg text-warning">⚙️ 后台管理</a></li>` : ''}
               <li class="divider my-1"></li>
               <li><a onclick="window.logout()" class="rounded-lg text-error cursor-pointer">🚪 退出登录</a></li>
             </ul>
@@ -192,9 +199,7 @@
         `;
     };
 
-    // ──────────────────────────────────────────────
-    // 6. Global Helpers
-    // ──────────────────────────────────────────────
+    // ── 7. Global Helpers ────────────────────────────────────────────────────
     window.logout = async function () {
         const rt = localStorage.getItem(REFRESH_KEY);
         try {
@@ -205,16 +210,12 @@
             });
         } catch { }
         clearAuth();
-        window.location.href = '/landing/login.html';
+        window.location.href = '/';
     };
 
-    window.authFetch = function (url, options = {}) {
-        return window.fetch(url, options);
-    };
+    window.authFetch = (url, options = {}) => window.fetch(url, options);
 
-    // ──────────────────────────────────────────────
-    // 7. Utilities
-    // ──────────────────────────────────────────────
+    // ── 8. Utilities ──────────────────────────────────────────────────────────
     function domReady() {
         return new Promise(resolve => {
             if (document.readyState !== 'loading') resolve();
@@ -222,9 +223,7 @@
         });
     }
 
-    // ──────────────────────────────────────────────
-    // 8. Toast Helper (global)
-    // ──────────────────────────────────────────────
+    // ── 9. Toast Helper ───────────────────────────────────────────────────────
     window.showToast = function (message, type = 'info', duration = 3500) {
         const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
         const colors = { success: 'alert-success', error: 'alert-error', warning: 'alert-warning', info: 'alert-info' };
