@@ -1,331 +1,300 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark" data-nav-active="home">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TikTok Live Monitor - 实时直播数据分析平台</title>
+    <title>TikTok Monitor - 实时直播数据分析平台</title>
     <meta name="description" content="专业的TikTok直播监控与数据分析平台，实时追踪礼物、弹幕、观众数据，助力MCN机构和主播运营决策。">
-    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+    <script src="/auth.js"></script>
+    <script src="/nav_shared.js"></script>
     <style>
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(250, 250, 250, 0.5);
-            pointer-events: none;
-            z-index: -1;
-        }
-
-        .glass-panel {
-            background: rgba(255, 255, 255, 0.8);
-            backdrop-filter: blur(16px);
-            -webkit-backdrop-filter: blur(16px);
-            border: 1px solid rgba(0, 0, 0, 0.05);
-        }
-
         .hero-glow {
-            background: radial-gradient(circle at center, rgba(37, 99, 235, 0.05), transparent 60%);
+            background: radial-gradient(ellipse at 50% 60%, rgba(99, 102, 241, 0.18) 0%, transparent 65%);
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+        }
+
+        .feature-icon {
+            width: 52px;
+            height: 52px;
+            border-radius: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5rem;
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            margin-bottom: 1rem;
+        }
+
+        .plan-card {
+            display: flex;
+            flex-direction: column;
+            background: var(--glass-bg);
+            backdrop-filter: var(--glass-blur);
+            border: 1px solid var(--glass-border);
+            border-radius: 1.25rem;
+            padding: 2rem;
+            transition: border-color 0.2s, transform 0.2s, box-shadow 0.2s;
+        }
+
+        .plan-card:hover {
+            border-color: var(--glass-border-lg);
+            transform: translateY(-4px);
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+        }
+
+        .plan-card.featured {
+            border-color: rgba(99, 102, 241, 0.5);
+            background: rgba(99, 102, 241, 0.08);
+            box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.3), 0 20px 60px rgba(99, 102, 241, 0.1);
+        }
+
+        .stat-glass {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            border-radius: 1rem;
+            padding: 1.5rem 2rem;
+            text-align: center;
         }
     </style>
 </head>
 
-<body class="min-h-screen flex flex-col text-base-content">
+<body class="page-bg">
+    <div id="app-navbar"></div>
 
-    <!-- Navbar -->
-    <div class="navbar glass-panel sticky top-0 z-50 px-6">
-        <div class="flex-1">
-            <a class="btn btn-ghost text-xl font-bold tracking-tight">
-                <span class="bg-gradient-to-r from-primary to-warning bg-clip-text text-transparent">TikTok
-                    Monitor</span>
+    <!-- ── Hero ──────────────────────────────────────────── -->
+    <section class="relative min-h-[90vh] flex items-center justify-center overflow-hidden px-4">
+        <div class="hero-glow"></div>
+        <div class="max-w-4xl mx-auto text-center relative z-10">
+
+            <div class="inline-flex items-center gap-2 px-4 py-1.5 rounded-full text-xs font-semibold mb-8 animate-fade-in"
+                style="background:rgba(99,102,241,0.15);border:1px solid rgba(99,102,241,0.3);color:#a5b4fc">
+                🚀 实时监控 · 智能分析 · 数据驱动
+            </div>
+
+            <h1 class="text-5xl md:text-7xl font-extrabold mb-6 leading-tight tracking-tight animate-fade-in-up">
+                <span class="gradient-text-primary">TikTok 直播</span><br>
+                <span class="opacity-90">数据分析平台</span>
+            </h1>
+
+            <p class="text-lg md:text-xl text-base-content/50 mb-12 max-w-2xl mx-auto animate-fade-in-up delay-100">
+                专业的直播监控平台，实时追踪礼物收入、弹幕互动、观众行为。<br>
+                帮助 MCN 机构和主播做出更精准的运营决策。
+            </p>
+
+            <div class="flex gap-3 justify-center flex-wrap animate-fade-in-up delay-200">
+                <a href="/landing/register.html"
+                    class="btn btn-lg gradient-btn text-white px-8 rounded-xl shadow-lg shadow-indigo-500/20">
+                    🚀 免费开始
+                </a>
+                <a href="#pricing" class="btn btn-lg btn-ghost border border-white/10 hover:bg-white/5 rounded-xl px-8">
+                    查看套餐 →
+                </a>
+            </div>
+
+            <p class="text-xs text-base-content/25 mt-6 animate-fade-in delay-300">注册即可免费使用基础版 · 无需绑卡</p>
+        </div>
+    </section>
+
+    <!-- ── Stats ─────────────────────────────────────────── -->
+    <section class="py-16 px-4">
+        <div class="max-w-5xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div class="stat-glass animate-fade-in-up">
+                <div class="text-3xl font-extrabold gradient-text-primary">∞</div>
+                <div class="text-xs opacity-40 mt-1">支持监控房间</div>
+            </div>
+            <div class="stat-glass animate-fade-in-up delay-100">
+                <div class="text-3xl font-extrabold gradient-text-gold">&lt;1s</div>
+                <div class="text-xs opacity-40 mt-1">数据延迟</div>
+            </div>
+            <div class="stat-glass animate-fade-in-up delay-200">
+                <div class="text-3xl font-extrabold" style="color:#c084fc">50+</div>
+                <div class="text-xs opacity-40 mt-1">数据维度</div>
+            </div>
+            <div class="stat-glass animate-fade-in-up delay-300">
+                <div class="text-3xl font-extrabold" style="color:#34d399">AI</div>
+                <div class="text-xs opacity-40 mt-1">智能分析</div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Features ──────────────────────────────────────── -->
+    <section class="py-20 px-4">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl md:text-4xl font-bold mb-4">核心功能</h2>
+                <p class="text-base-content/40 max-w-xl mx-auto">从实时数据到深度洞察，全套工具助力直播运营</p>
+            </div>
+
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                <!-- Feature cards -->
+                <div class="glass-card glass-card-hover p-6 animate-fade-in-up">
+                    <div class="feature-icon">📊</div>
+                    <h3 class="font-bold text-lg mb-2">实时数据追踪</h3>
+                    <p class="text-base-content/50 text-sm leading-relaxed">毫秒级延迟推送直播间弹幕、礼物、进场、点赞等全量数据，一个屏幕掌握全局。</p>
+                </div>
+                <div class="glass-card glass-card-hover p-6 animate-fade-in-up delay-100">
+                    <div class="feature-icon">💎</div>
+                    <h3 class="font-bold text-lg mb-2">礼物收入分析</h3>
+                    <p class="text-base-content/50 text-sm leading-relaxed">自动统计礼物价值、用户贡献排行、赚钱效率等核心商业指标，一目了然。</p>
+                </div>
+                <div class="glass-card glass-card-hover p-6 animate-fade-in-up delay-200">
+                    <div class="feature-icon">👥</div>
+                    <h3 class="font-bold text-lg mb-2">用户画像分析</h3>
+                    <p class="text-base-content/50 text-sm leading-relaxed">跨直播间用户追踪、语言分析、活跃时段统计，发现高价值忠实用户。</p>
+                </div>
+                <div class="glass-card glass-card-hover p-6 animate-fade-in-up delay-100">
+                    <div class="feature-icon">📈</div>
+                    <h3 class="font-bold text-lg mb-2">多房间对比</h3>
+                    <p class="text-base-content/50 text-sm leading-relaxed">同时监控多个直播间，进行数据横向对比，发现最具潜力的主播和最佳时段。</p>
+                </div>
+                <div class="glass-card glass-card-hover p-6 animate-fade-in-up delay-200">
+                    <div class="feature-icon">🤖</div>
+                    <h3 class="font-bold text-lg mb-2">AI 智能分析</h3>
+                    <p class="text-base-content/50 text-sm leading-relaxed">基于大语言模型的用户分析，自动生成用户画像与运营建议，挖掘潜在商业价值。</p>
+                </div>
+                <div class="glass-card glass-card-hover p-6 animate-fade-in-up delay-300">
+                    <div class="feature-icon">🎥</div>
+                    <h3 class="font-bold text-lg mb-2">直播录制存档</h3>
+                    <p class="text-base-content/50 text-sm leading-relaxed">支持自动录制直播内容，精彩时刻不遗漏，配合 AI 摘要快速回顾关键事件。</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Pricing ────────────────────────────────────────── -->
+    <section id="pricing" class="py-20 px-4">
+        <div class="max-w-6xl mx-auto">
+            <div class="text-center mb-12">
+                <h2 class="text-3xl md:text-4xl font-bold mb-4">灵活的定价方案</h2>
+                <p class="text-base-content/40 max-w-xl mx-auto">所有套餐均支持房间加量包，按需扩展</p>
+            </div>
+
+            <!-- Billing Cycle Toggle -->
+            <div class="flex justify-center items-center gap-4 mb-12">
+                <span id="lblMonthly" class="text-sm font-bold text-primary transition-colors">月付</span>
+                <input type="checkbox" class="toggle toggle-primary" id="cycleToggle" onchange="toggleCycle()">
+                <span id="lblAnnual" class="text-sm opacity-40 transition-colors">
+                    年付 <span class="badge badge-error badge-xs text-white border-none ml-1">省20%</span>
+                </span>
+            </div>
+
+            <div id="plansLoader" class="text-center py-20 opacity-40">
+                <span class="loading loading-spinner loading-lg"></span>
+            </div>
+            <div id="plansContainer" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 items-stretch hidden">
+            </div>
+        </div>
+    </section>
+
+    <!-- ── CTA ───────────────────────────────────────────── -->
+    <section class="py-20 px-4 text-center">
+        <div class="glass-card max-w-2xl mx-auto p-12 shadow-2xl" style="border-color:rgba(99,102,241,0.2)">
+            <h2 class="text-3xl font-bold mb-4">准备好开始了吗？</h2>
+            <p class="text-base-content/40 mb-8">立即注册，免费体验基础监控功能</p>
+            <a href="/landing/register.html"
+                class="btn btn-lg gradient-btn text-white px-12 rounded-xl shadow-xl shadow-indigo-500/20">
+                立即免费注册
             </a>
         </div>
-        <div class="flex-none gap-2">
-            <a href="#pricing" class="btn btn-ghost btn-sm">💎 定价</a>
-            <a href="/landing/user-center.html" class="btn btn-ghost btn-sm" id="navLoginBtn">登录</a>
-            <a href="/landing/register.html" class="btn btn-primary btn-sm" id="navRegBtn">立即注册</a>
-        </div>
-    </div>
-
-    <!-- Hero Section -->
-    <section class="hero min-h-[80vh] relative overflow-hidden">
-        <div class="hero-glow absolute inset-0"></div>
-        <div class="hero-content text-center py-20">
-            <div class="max-w-3xl">
-                <div class="mb-8">
-                    <span class="text-7xl">📺</span>
-                </div>
-                <h1 class="text-5xl md:text-6xl font-extrabold mb-6 leading-tight">
-                    <span class="bg-gradient-to-r from-primary via-warning to-secondary bg-clip-text text-transparent">
-                        TikTok 直播数据分析
-                    </span>
-                    <br>
-                    <span class="text-base-content/80 text-3xl md:text-4xl">实时监控 · 智能洞察 · 数据驱动</span>
-                </h1>
-                <p class="text-lg text-base-content/60 mb-10 max-w-2xl mx-auto">
-                    专业的TikTok直播监控平台，实时追踪礼物收入、弹幕互动、观众行为。
-                    帮助MCN机构和主播做出更精准的运营决策。
-                </p>
-                <div class="flex gap-4 justify-center flex-wrap">
-                    <a href="/landing/register.html"
-                        class="btn btn-lg border-none bg-gradient-to-r from-primary to-warning text-white hover:scale-105 active:scale-95 transition-all shadow-lg shadow-primary/20">
-                        🚀 免费开始
-                    </a>
-                    <a href="/landing/login.html" class="btn btn-lg btn-outline border-primary/40 hover:bg-primary/10">
-                        登录监控中心 →
-                    </a>
-                </div>
-                <p class="text-sm text-base-content/40 mt-4">免费版包含 1 个房间监控 · 无需信用卡</p>
-            </div>
-        </div>
     </section>
 
-    <!-- Features Section -->
-    <section class="py-20 px-6">
-        <div class="max-w-6xl mx-auto">
-            <h2 class="text-3xl font-bold text-center mb-4">
-                <span class="bg-gradient-to-r from-primary to-warning bg-clip-text text-transparent">核心功能</span>
-            </h2>
-            <p class="text-center text-base-content/50 mb-16 max-w-xl mx-auto">全方位的直播数据监控与分析能力</p>
-
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                <!-- Feature 1 -->
-                <div class="card glass-panel shadow-sm border border-base-200">
-                    <div class="card-body">
-                        <div class="text-4xl mb-4">📊</div>
-                        <h3 class="card-title text-primary">实时数据追踪</h3>
-                        <p class="text-base-content/60">实时监控直播间弹幕、礼物、进场、点赞等数据，毫秒级延迟推送。</p>
-                    </div>
-                </div>
-
-                <!-- Feature 2 -->
-                <div class="card glass-panel shadow-sm border border-base-200">
-                    <div class="card-body">
-                        <div class="text-4xl mb-4">💎</div>
-                        <h3 class="card-title text-warning">礼物收入分析</h3>
-                        <p class="text-base-content/60">自动统计礼物价值、用户贡献排行、赚钱效率等核心指标，一目了然。</p>
-                    </div>
-                </div>
-
-                <!-- Feature 3 -->
-                <div class="card glass-panel shadow-sm border border-base-200">
-                    <div class="card-body">
-                        <div class="text-4xl mb-4">👥</div>
-                        <h3 class="card-title text-secondary">用户画像分析</h3>
-                        <p class="text-base-content/60">跨房间用户追踪，语言分析，活跃时段统计，发现高价值潜在用户。</p>
-                    </div>
-                </div>
-
-                <!-- Feature 4 -->
-                <div class="card glass-panel shadow-sm border border-base-200">
-                    <div class="card-body">
-                        <div class="text-4xl mb-4">📈</div>
-                        <h3 class="card-title text-accent">多房间对比</h3>
-                        <p class="text-base-content/60">同时监控多个直播间，进行数据对比分析，发现最具潜力的主播。</p>
-                    </div>
-                </div>
-
-                <!-- Feature 5 -->
-                <div class="card glass-panel shadow-sm border border-base-200">
-                    <div class="card-body">
-                        <div class="text-4xl mb-4">🤖</div>
-                        <h3 class="card-title text-info">AI 智能分析</h3>
-                        <p class="text-base-content/60">基于大语言模型的用户分析，自动生成用户画像和运营建议。</p>
-                    </div>
-                </div>
-
-                <!-- Feature 6 -->
-                <div class="card glass-panel shadow-sm border border-base-200">
-                    <div class="card-body">
-                        <div class="text-4xl mb-4">🎥</div>
-                        <h3 class="card-title text-error">直播录制</h3>
-                        <p class="text-base-content/60">支持自动录制直播内容，重要时刻不遗漏，方便后续回顾分析。</p>
-                    </div>
-                </div>
+    <!-- ── Footer ─────────────────────────────────────────── -->
+    <footer class="py-10 px-4 border-t border-white/5">
+        <div class="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4 text-xs opacity-30">
+            <div class="font-bold text-sm">📺 TikTok Monitor</div>
+            <div class="flex gap-6">
+                <a href="#" class="hover:opacity-60">服务条款</a>
+                <a href="#" class="hover:opacity-60">隐私政策</a>
+                <a href="#" class="hover:opacity-60">联系我们</a>
             </div>
-        </div>
-    </section>
-
-    <!-- Stats Section -->
-    <section class="py-16 px-6">
-        <div class="max-w-4xl mx-auto glass-panel rounded-3xl p-10">
-            <div class="stats stats-vertical md:stats-horizontal w-full bg-transparent">
-                <div class="stat place-items-center">
-                    <div class="stat-title">支持房间</div>
-                    <div class="stat-value text-primary">∞</div>
-                    <div class="stat-desc">无限制监控</div>
-                </div>
-                <div class="stat place-items-center">
-                    <div class="stat-title">数据延迟</div>
-                    <div class="stat-value text-warning">&lt;1s</div>
-                    <div class="stat-desc">毫秒级推送</div>
-                </div>
-                <div class="stat place-items-center">
-                    <div class="stat-title">数据维度</div>
-                    <div class="stat-value text-secondary">50+</div>
-                    <div class="stat-desc">全方位指标</div>
-                </div>
-                <div class="stat place-items-center">
-                    <div class="stat-title">历史数据</div>
-                    <div class="stat-value text-accent">永久</div>
-                    <div class="stat-desc">企业版支持</div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Pricing Section -->
-    <section id="pricing" class="py-20 px-6 bg-base-200/50">
-        <div class="max-w-6xl mx-auto">
-            <h2 class="text-3xl font-bold text-center mb-4">
-                <span class="bg-gradient-to-r from-primary to-warning bg-clip-text text-transparent">灵活的定价方案</span>
-            </h2>
-            <p class="text-center text-base-content/50 mb-12 max-w-xl mx-auto">选择最适合您业务发展的套餐。所有套餐均支持专属房间加量包扩充。</p>
-
-            <div class="flex justify-center items-center gap-4 mb-12">
-                <span id="cycleLabelMonthly" class="font-bold text-primary transition-colors">月付</span>
-                <input type="checkbox" class="toggle toggle-primary toggle-lg shadow-sm" id="cycleToggle"
-                    onchange="toggleCycle()" />
-                <span id="cycleLabelAnnual" class="opacity-50 transition-colors">年付 <span
-                        class="badge badge-error badge-xs border-none text-white ml-1">省20%</span></span>
-            </div>
-
-            <div id="plansLoader" class="py-20 text-center opacity-50"><span
-                    class="loading loading-spinner loading-lg"></span></div>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 items-stretch" id="plansContainer"></div>
-        </div>
-    </section>
-
-    <!-- CTA Section -->
-    <section class="py-20 px-6 text-center">
-        <div class="max-w-2xl mx-auto">
-            <h2 class="text-3xl font-bold mb-4">准备好了吗？</h2>
-            <p class="text-base-content/60 mb-8">立即注册，免费体验基础监控功能。</p>
-            <div class="flex gap-4 justify-center flex-wrap">
-                <a href="/landing/register.html"
-                    class="btn btn-lg border-none bg-gradient-to-r from-primary to-warning text-white hover:scale-105 transition-all shadow-lg">
-                    立即注册
-                </a>
-                <a href="#pricing" class="btn btn-lg btn-outline border-primary/40 hover:bg-primary/10">
-                    查看定价
-                </a>
-            </div>
-        </div>
-    </section>
-
-    <!-- Footer -->
-    <footer class="footer footer-center p-10 text-base-content/40">
-        <div>
-            <p class="font-bold text-base-content/60">TikTok Live Monitor</p>
-            <p>专业的直播数据分析平台</p>
-            <p class="text-sm mt-2">© 2024 TikTok Monitor. All rights reserved.</p>
+            <div>© 2025 TikTok Monitor. All rights reserved.</div>
         </div>
     </footer>
 
     <script>
-        // Check Auth Status for Dynamic UI mapping
-        const token = localStorage.getItem('accessToken');
-        if (token) {
-            document.getElementById('navLoginBtn').innerHTML = '进入监控中心';
-            document.getElementById('navLoginBtn').href = '/';
-            document.getElementById('navRegBtn').innerHTML = '用户中心';
-            document.getElementById('navRegBtn').href = '/landing/user-center.html';
-        }
-
-        // Pricing Rendering Logic
         let plansData = [];
         let isAnnual = false;
+        const isLoggedIn = !!localStorage.getItem('accessToken');
 
-        const actionBtnText = token ? '立即升级' : '注册即可抢购';
-        const actionBtnUrl = token ? '/landing/user-center.html' : '/landing/register.html';
+        function toggleCycle() {
+            isAnnual = document.getElementById('cycleToggle').checked;
+            document.getElementById('lblMonthly').className = `text-sm transition-colors ${isAnnual ? 'opacity-40' : 'font-bold text-primary'}`;
+            document.getElementById('lblAnnual').className = `text-sm transition-colors ${isAnnual ? 'font-bold text-primary' : 'opacity-40'}`;
+            renderPlans();
+        }
+
+        function fmtPrice(cents) { return (cents / 100).toFixed(0); }
+
+        function renderPlans() {
+            const c = document.getElementById('plansContainer');
+            const sorted = [...plansData].filter(p => p.status === 'active').sort((a, b) => a.base_price - b.base_price);
+            const actionUrl = isLoggedIn ? '/landing/subscription.html' : '/landing/register.html';
+            const actionText = isLoggedIn ? '立即升级' : '注册后购买';
+
+            c.innerHTML = sorted.map(plan => {
+                if (plan.plan_code === 'free') return `
+          <div class="plan-card">
+            <div class="badge badge-ghost badge-sm mb-4 self-start">免费版</div>
+            <h3 class="text-xl font-bold mb-2">${plan.plan_name}</h3>
+            <p class="text-sm opacity-40 mb-6 flex-grow">${plan.description || '免费体验基础监控功能'}</p>
+            <div class="text-4xl font-extrabold mb-6">¥0</div>
+            <ul class="space-y-3 mb-8 text-sm opacity-70">
+              <li class="flex items-center gap-2">✓ ${plan.max_rooms} 个监控房间</li>
+              <li class="flex items-center gap-2 opacity-40">✗ 不支持加量包</li>
+              <li class="flex items-center gap-2 opacity-40">✗ 录制/AI分析不可用</li>
+            </ul>
+            <a href="${isLoggedIn ? '/' : '/landing/register.html'}" class="btn btn-outline btn-block rounded-xl">免费使用</a>
+          </div>`;
+
+                const priceObj = isAnnual
+                    ? (plan.prices || []).find(p => p.billing_cycle === 'annual')
+                    : (plan.prices || []).find(p => p.billing_cycle === 'monthly');
+                const price = fmtPrice(priceObj?.price || plan.base_price);
+                const period = isAnnual ? '年' : '月';
+                const isFeatured = plan.max_rooms === 5 || plan.plan_code?.toLowerCase().includes('pro');
+                const cls = isFeatured ? 'plan-card featured' : 'plan-card';
+
+                return `
+          <div class="${cls} ${isFeatured ? 'relative' : ''}">
+            ${isFeatured ? '<div class="absolute -top-4 left-1/2 -translate-x-1/2"><span class="badge badge-primary px-4 py-2 font-bold shadow-lg shadow-indigo-500/20">最畅销</span></div>' : ''}
+            <h3 class="text-xl font-bold mb-2 ${isFeatured ? 'gradient-text-primary' : ''}">${plan.plan_name}</h3>
+            <p class="text-sm opacity-40 mb-6 flex-grow">${plan.description || ''}</p>
+            <div class="mb-6">
+              <span class="text-4xl font-extrabold">¥${price}</span>
+              <span class="opacity-40 text-sm">/${period}</span>
+            </div>
+            <ul class="space-y-3 mb-8 text-sm opacity-70">
+              <li class="flex items-center gap-2"><span class="text-primary">✓</span> 基础监控 <strong class="text-base-content">${plan.max_rooms === -1 ? '无限' : plan.max_rooms}</strong> 个房间</li>
+              <li class="flex items-center gap-2"><span class="text-primary">✓</span> 房间加量包 <strong>${plan.addon_room_price ? '¥' + fmtPrice(plan.addon_room_price) + '/' + period : '可购'}</strong></li>
+              <li class="flex items-center gap-2"><span class="text-primary">✓</span> 解锁自动录制功能</li>
+              <li class="flex items-center gap-2"><span class="text-primary">✓</span> AI 深度用户分析</li>
+            </ul>
+            <a href="${actionUrl}" class="btn ${isFeatured ? 'gradient-btn text-white' : 'btn-outline'} btn-block rounded-xl">${actionText}</a>
+          </div>`;
+            }).join('');
+
+            document.getElementById('plansContainer').classList.remove('hidden');
+        }
 
         async function loadPlans() {
             try {
                 const res = await fetch('/api/subscription/plans');
-                if (!res.ok) throw new Error('Failed to load');
+                if (!res.ok) throw new Error();
                 plansData = await res.json();
-
                 document.getElementById('plansLoader').classList.add('hidden');
                 renderPlans();
-            } catch (err) {
-                document.getElementById('plansLoader').innerHTML = '<span class="text-error">套餐加载失败，请刷新重试。</span>';
+            } catch {
+                document.getElementById('plansLoader').innerHTML = '<span class="text-error text-sm">套餐加载失败，请刷新重试</span>';
             }
-        }
-
-        function toggleCycle() {
-            isAnnual = document.getElementById('cycleToggle').checked;
-            document.getElementById('cycleLabelMonthly').classList.toggle('opacity-50', isAnnual);
-            document.getElementById('cycleLabelMonthly').classList.toggle('text-primary', !isAnnual);
-            document.getElementById('cycleLabelMonthly').classList.toggle('font-bold', !isAnnual);
-
-            document.getElementById('cycleLabelAnnual').classList.toggle('opacity-50', !isAnnual);
-            document.getElementById('cycleLabelAnnual').classList.toggle('text-primary', isAnnual);
-            document.getElementById('cycleLabelAnnual').classList.toggle('font-bold', isAnnual);
-
-            renderPlans();
-        }
-
-        function renderPlans() {
-            const container = document.getElementById('plansContainer');
-            // Sort by absolute price
-            const sorted = [...plansData].sort((a, b) => a.base_price - b.base_price);
-
-            container.innerHTML = sorted.map(plan => {
-                if (plan.status !== 'active') return '';
-                if (plan.plan_code === 'free') {
-                    return `
-                        <div class="card glass-panel shadow-sm border border-base-200 flex sm:transform sm:hover:-translate-y-2 transition-transform duration-300">
-                            <div class="card-body p-8 pt-10">
-                                <h2 class="card-title text-2xl">${plan.plan_name} <span class="badge badge-outline">体验</span></h2>
-                                <p class="text-sm opacity-60 min-h-[40px] mt-2">${plan.description || ''}</p>
-                                <div class="my-6">
-                                    <span class="text-5xl font-extrabold text-base-content">¥0</span>
-                                </div>
-                                <ul class="space-y-4 mb-8 flex-grow">
-                                    <li class="flex items-center gap-3"><span class="text-primary text-xl">✓</span> <span>支持 <strong class="text-base-content">${plan.max_rooms}</strong> 个监控房间</span></li>
-                                    <li class="flex items-center gap-3 opacity-50"><span class="text-base-content/40 text-xl font-bold">×</span> <span>不支持房间配额扩充</span></li>
-                                    <li class="flex items-center gap-3 opacity-50"><span class="text-base-content/40 text-xl font-bold">×</span> <span>不支持直播录像/AI分析</span></li>
-                                </ul>
-                                <a href="${token ? '/' : '/landing/register.html'}" class="btn btn-outline btn-block mt-auto">免费使用</a>
-                            </div>
-                        </div>
-                    `;
-                }
-
-                const priceObj = isAnnual ? plan.prices.find(p => p.billing_cycle === 'annual') : plan.prices.find(p => p.billing_cycle === 'monthly');
-                const priceCents = priceObj ? priceObj.price : plan.base_price;
-                const price = (priceCents / 100).toFixed(0);
-                const period = isAnnual ? '年' : '月';
-
-                const isPro = plan.max_rooms === 5 || plan.plan_code.toLowerCase().includes('pro');
-                const pColor = isPro ? 'text-primary' : (plan.max_rooms > 5 ? 'text-warning' : 'text-accent');
-
-                return `
-                    <div class="card glass-panel shadow-lg ${isPro ? 'border-primary ring-2 ring-primary/20 scale-[1.02] md:scale-105 z-10' : 'border-base-200'} flex transition-transform duration-300 relative">
-                        ${isPro ? '<div class="absolute -top-4 inset-x-0 flex justify-center"><span class="badge badge-primary font-bold shadow-md">最畅销</span></div>' : ''}
-                        <div class="card-body p-8 pt-10">
-                            <h2 class="card-title text-2xl ${pColor}">${plan.plan_name}</h2>
-                            <p class="text-sm opacity-60 min-h-[40px] mt-2">${plan.description || ''}</p>
-                            <div class="my-6">
-                                <span class="text-5xl font-extrabold text-base-content">¥${price}</span>
-                                <span class="text-lg opacity-50">/${period}</span>
-                            </div>
-                            <ul class="space-y-4 mb-8 flex-grow text-sm">
-                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>基础监控 <strong class="text-base-content text-lg">${plan.max_rooms === -1 ? '无限' : plan.max_rooms}</strong> 个房间</span></li>
-                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>支持 <strong class="text-base-content">¥${plan.addon_room_price / 100}/${period}</strong> 无限加购房间</span></li>
-                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>解锁 <strong>极速云端弹幕监控</strong></span></li>
-                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>专属 <strong>高优先级自动录制</strong></span></li>
-                                <li class="flex items-center gap-3"><span class="${pColor} text-xl font-bold">✓</span> <span>大模型 <strong>AI数据深度解析</strong></span></li>
-                            </ul>
-                            <a href="${actionBtnUrl}" class="btn ${isPro ? 'btn-primary shadow-primary/20 shadow-lg' : 'btn-outline'} btn-block mt-auto text-base">${actionBtnText}</a>
-                        </div>
-                    </div>
-                `;
-            }).join('');
         }
 
         document.addEventListener('DOMContentLoaded', loadPlans);

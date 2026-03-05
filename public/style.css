@@ -1,56 +1,370 @@
-/* Minimal overrides for DaisyUI */
+/* =====================================================
+   TikTok Monitor — Global Design System
+   Dark Glass Morphism Theme
+   ===================================================== */
 
-/* Scrollbar styling for Webkit */
+/* ── 1. CSS Variables ─────────────────────────────── */
+:root {
+    --glass-bg: rgba(255, 255, 255, 0.05);
+    --glass-bg-hover: rgba(255, 255, 255, 0.09);
+    --glass-bg-active: rgba(255, 255, 255, 0.12);
+    --glass-border: rgba(255, 255, 255, 0.08);
+    --glass-border-lg: rgba(255, 255, 255, 0.12);
+    --glass-blur: blur(20px);
+    --glass-blur-sm: blur(12px);
+
+    --glow-primary: rgba(99, 102, 241, 0.15);
+    /* indigo */
+    --glow-accent: rgba(212, 175, 55, 0.12);
+    /* amber/gold */
+    --glow-success: rgba(34, 197, 94, 0.12);
+    --glow-error: rgba(239, 68, 68, 0.12);
+
+    --radius-card: 1rem;
+    --radius-btn: 0.625rem;
+
+    /* Typography */
+    --font-main: 'Inter', system-ui, -apple-system, sans-serif;
+}
+
+/* ── 2. Base Reset ────────────────────────────────── */
+*,
+*::before,
+*::after {
+    box-sizing: border-box;
+}
+
+html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 4rem;
+}
+
+body {
+    font-family: var(--font-main);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+}
+
+/* ── 3. Global Background ────────────────────────── */
+.page-bg {
+    min-height: 100vh;
+    position: relative;
+    background: #0a0a12;
+}
+
+.page-bg::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+        radial-gradient(ellipse at 15% 30%, rgba(99, 102, 241, 0.12) 0%, transparent 55%),
+        radial-gradient(ellipse at 85% 70%, rgba(212, 175, 55, 0.08) 0%, transparent 55%),
+        radial-gradient(ellipse at 50% 100%, rgba(139, 92, 246, 0.06) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+.page-bg>* {
+    position: relative;
+    z-index: 1;
+}
+
+/* login / register pages: centered single card */
+.auth-bg {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1rem;
+    background: #0a0a12;
+}
+
+.auth-bg::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background:
+        radial-gradient(ellipse at 20% 50%, rgba(99, 102, 241, 0.14) 0%, transparent 55%),
+        radial-gradient(ellipse at 80% 20%, rgba(212, 175, 55, 0.09) 0%, transparent 50%);
+    pointer-events: none;
+    z-index: 0;
+}
+
+/* ── 4. Glass Components ─────────────────────────── */
+.glass-card {
+    background: var(--glass-bg);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border: 1px solid var(--glass-border);
+    border-radius: var(--radius-card);
+}
+
+.glass-card-hover {
+    transition: background 0.2s, border-color 0.2s, box-shadow 0.2s;
+}
+
+.glass-card-hover:hover {
+    background: var(--glass-bg-hover);
+    border-color: var(--glass-border-lg);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.24);
+}
+
+.glass-navbar {
+    background: rgba(10, 10, 20, 0.75);
+    backdrop-filter: var(--glass-blur);
+    -webkit-backdrop-filter: var(--glass-blur);
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.glass-panel {
+    background: rgba(15, 15, 28, 0.6);
+    backdrop-filter: var(--glass-blur-sm);
+    -webkit-backdrop-filter: var(--glass-blur-sm);
+    border: 1px solid var(--glass-border);
+}
+
+.glass-input {
+    background: rgba(255, 255, 255, 0.04) !important;
+    border-color: var(--glass-border) !important;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.glass-input:focus-within {
+    border-color: rgba(99, 102, 241, 0.5) !important;
+    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+/* ── 5. Gradient Utilities ───────────────────────── */
+.gradient-text-primary {
+    background: linear-gradient(135deg, #818cf8 0%, #c084fc 50%, #f59e0b 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.gradient-text-gold {
+    background: linear-gradient(135deg, #f59e0b 0%, #fbbf24 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+}
+
+.gradient-btn {
+    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%);
+    border: none;
+    transition: opacity 0.2s, transform 0.15s, box-shadow 0.2s;
+}
+
+.gradient-btn:hover {
+    opacity: 0.9;
+    transform: translateY(-1px);
+    box-shadow: 0 8px 24px rgba(99, 102, 241, 0.35);
+}
+
+.gradient-btn:active {
+    transform: translateY(0);
+}
+
+/* ── 6. Scrollbar ────────────────────────────────── */
 ::-webkit-scrollbar {
     width: 6px;
     height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-    background: #1d232a;
+    background: rgba(255, 255, 255, 0.02);
+    border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-    background: #4a5568;
-    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-    background: #718096;
+    background: rgba(255, 255, 255, 0.22);
 }
 
-/* Chat container auto-scroll behavior */
-.chat-container {
-    scroll-behavior: smooth;
-    font-size: 0.9rem;
+/* ── 7. Animations ───────────────────────────────── */
+@keyframes fadeInUp {
+    from {
+        opacity: 0;
+        transform: translateY(12px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
 }
 
-.chat-message {
-    margin-bottom: 2px;
-    padding: 2px 4px;
-    border-radius: 4px;
-    /* word-break: break-all; */
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
 }
 
-.chat-message:hover {
-    background: rgba(255, 255, 255, 0.05);
+@keyframes scaleIn {
+    from {
+        opacity: 0;
+        transform: scale(0.95);
+    }
+
+    to {
+        opacity: 1;
+        transform: scale(1);
+    }
 }
 
-.chat-message .nickname {
+@keyframes pulse-glow {
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.3);
+    }
+
+    50% {
+        box-shadow: 0 0 0 8px rgba(99, 102, 241, 0);
+    }
+}
+
+.animate-fade-in-up {
+    animation: fadeInUp 0.4s ease both;
+}
+
+.animate-fade-in {
+    animation: fadeIn 0.3s ease both;
+}
+
+.animate-scale-in {
+    animation: scaleIn 0.3s ease both;
+}
+
+.animate-pulse-glow {
+    animation: pulse-glow 2s infinite;
+}
+
+/* Stagger variants */
+.delay-100 {
+    animation-delay: 0.1s;
+}
+
+.delay-200 {
+    animation-delay: 0.2s;
+}
+
+.delay-300 {
+    animation-delay: 0.3s;
+}
+
+.delay-400 {
+    animation-delay: 0.4s;
+}
+
+/* ── 8. Status Badges ────────────────────────────── */
+.status-active {
+    @apply badge badge-success text-xs;
+}
+
+.status-expired {
+    @apply badge badge-error text-xs;
+}
+
+.status-pending {
+    @apply badge badge-warning text-xs;
+}
+
+.status-inactive {
+    @apply badge badge-ghost text-xs;
+}
+
+/* ── 9. Table Overrides ──────────────────────────── */
+.dark-table th {
+    background: rgba(255, 255, 255, 0.04);
+    color: rgba(255, 255, 255, 0.5);
+    font-size: 0.7rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
     font-weight: 600;
-    opacity: 0.8;
 }
 
-.chat-message.gift .nickname {
-    color: #fbbf24;
+.dark-table tr:hover td {
+    background: rgba(255, 255, 255, 0.03);
 }
 
-.chat-message.like .nickname {
-    color: #f87272;
+.dark-table td {
+    border-color: rgba(255, 255, 255, 0.05);
 }
 
-/* Sub-nav active state handling manually if not using tabs fully */
-.sub-nav-btn.active {
-    background-color: var(--fallback-p, oklch(var(--p)/1));
-    color: var(--fallback-pc, oklch(var(--pc)/1));
+/* ── 10. Quota Gate Overlay ──────────────────────── */
+#quotaGateOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(10, 10, 18, 0.88);
+    backdrop-filter: blur(24px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+}
+
+#quotaGateOverlay.visible {
+    opacity: 1;
+    pointer-events: all;
+}
+
+/* ── 11. Alert / Toast ───────────────────────────── */
+.toast-top {
+    position: fixed;
+    top: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 10000;
+    min-width: 280px;
+    max-width: 460px;
+    animation: fadeInUp 0.3s ease both;
+}
+
+/* ── 12. Nav Active State ────────────────────────── */
+.nav-link {
+    position: relative;
+    opacity: 0.65;
+    transition: opacity 0.2s;
+    font-weight: 500;
+}
+
+.nav-link:hover {
+    opacity: 0.9;
+}
+
+.nav-link.active {
+    opacity: 1;
+    font-weight: 600;
+}
+
+.nav-link.active::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: linear-gradient(90deg, #6366f1, #8b5cf6);
+    border-radius: 1px;
+}
+
+/* ── 13. Divider Gradient ────────────────────────── */
+.gradient-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--glass-border), transparent);
+    border: none;
+    margin: 1.5rem 0;
 }

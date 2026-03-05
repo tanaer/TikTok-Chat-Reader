@@ -1,602 +1,592 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark" data-nav-active="admin">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>管理后台 - TikTok Monitor</title>
-    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <title>后台管理 - TikTok Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
         rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
+    <script src="/auth.js"></script>
     <script src="/nav_shared.js"></script>
     <style>
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
+        .admin-layout {
+            display: grid;
+            grid-template-columns: 220px 1fr;
+            gap: 1.5rem;
+            min-height: calc(100vh - 3.5rem);
+            align-items: start;
+        }
+
+        @media (max-width: 768px) {
+            .admin-layout {
+                grid-template-columns: 1fr;
+            }
+
+            .admin-sidebar {
+                display: none;
+            }
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+            animation: fadeInUp 0.3s ease both;
+        }
+
+        .sidebar-btn {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 0.625rem 1rem;
+            border-radius: 0.625rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            opacity: 0.5;
+            transition: all 0.2s;
             width: 100%;
-            height: 100%;
-            background:
-                radial-gradient(ellipse at 80% 20%, rgba(212, 175, 55, 0.10) 0%, transparent 50%),
-                radial-gradient(ellipse at 20% 80%, rgba(184, 134, 11, 0.06) 0%, transparent 50%);
-            pointer-events: none;
-            z-index: -1;
+            text-align: left;
         }
 
-        .custom-scrollbar::-webkit-scrollbar {
-            width: 6px;
-            height: 6px;
+        .sidebar-btn:hover {
+            opacity: 0.8;
+            background: var(--glass-bg);
         }
 
-        .custom-scrollbar::-webkit-scrollbar-track {
-            background: rgba(255, 255, 255, 0.02);
-            border-radius: 4px;
+        .sidebar-btn.active {
+            opacity: 1;
+            background: rgba(99, 102, 241, 0.15);
+            color: #a5b4fc;
         }
 
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 4px;
-        }
-
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-            background: rgba(255, 255, 255, 0.2);
+        input[type=number]::-webkit-inner-spin-button {
+            -webkit-appearance: none;
         }
     </style>
 </head>
 
-<body class="min-h-screen text-base-content relative" style="font-family: 'Inter', system-ui, sans-serif;">
+<body class="page-bg">
     <div id="app-navbar"></div>
-    <div class="max-w-[1400px] mx-auto px-4 py-8">
 
-        <div id="alertBox" class="alert shadow-lg mb-6 hidden font-medium transition-all"></div>
+    <div class="max-w-[1400px] mx-auto px-4 py-6">
 
-        <!-- System Stats -->
-        <div
-            class="stats stats-vertical sm:stats-horizontal shadow-xl bg-base-100/60 backdrop-blur-md border border-white/5 w-full mb-8">
-            <div class="stat place-items-center">
-                <div class="stat-title opacity-70">总用户数</div>
-                <div class="stat-value text-3xl" id="statUsers">-</div>
-            </div>
-            <div class="stat place-items-center">
-                <div class="stat-title opacity-70">总房间数</div>
-                <div class="stat-value text-3xl text-primary" id="statRooms">-</div>
-            </div>
-            <div class="stat place-items-center">
-                <div class="stat-title opacity-70">活跃房间</div>
-                <div class="stat-value text-3xl text-secondary" id="statActive">-</div>
-            </div>
-            <div class="stat place-items-center">
-                <div class="stat-title opacity-70">总订单数</div>
-                <div class="stat-value text-3xl" id="statOrders">-</div>
-            </div>
-            <div class="stat place-items-center">
-                <div class="stat-title opacity-70">总收入</div>
-                <div class="stat-value text-3xl text-accent" id="statRevenue">-</div>
-            </div>
-        </div>
+        <!-- Alert -->
+        <div id="alertBox" class="hidden alert mb-4 text-sm font-medium rounded-xl"></div>
 
-        <!-- Main Workspace -->
-        <div class="card bg-base-100/70 backdrop-blur-md shadow-xl border border-white/5 min-h-[600px]">
-            <div class="card-body p-0">
-                <!-- Tabs -->
-                <div role="tablist" class="tabs tabs-bordered grid-cols-2 lg:grid-cols-4 px-6 pt-6">
-                    <input type="radio" name="admin_tabs" role="tab" class="tab text-lg h-12 font-bold"
-                        aria-label="👥 用户管理" id="tabUsers" checked onchange="switchTab('users')" />
-                    <input type="radio" name="admin_tabs" role="tab" class="tab text-lg h-12 font-bold"
-                        aria-label="📋 订单管理" id="tabOrders" onchange="switchTab('orders')" />
+        <div class="admin-layout">
+
+            <!-- ── Sidebar ─────────────────────────────────────── -->
+            <aside class="admin-sidebar glass-card p-3 sticky top-20">
+                <div class="px-3 py-2 mb-2">
+                    <div class="text-xs opacity-30 font-semibold uppercase tracking-widest">管理后台</div>
                 </div>
+                <nav class="space-y-1">
+                    <button class="sidebar-btn active" onclick="showSection('stats',this)">📊 系统概览</button>
+                    <button class="sidebar-btn" onclick="showSection('users',this)">👥 用户管理</button>
+                    <button class="sidebar-btn" onclick="showSection('orders',this)">📋 订单管理</button>
+                    <button class="sidebar-btn" onclick="showSection('plans',this)">💎 套餐管理</button>
+                    <button class="sidebar-btn" onclick="showSection('settings',this)">⚙️ 系统设置</button>
+                </nav>
+            </aside>
 
-                <div class="p-6">
-                    <!-- Users Tab Content -->
-                    <div id="content-users" class="space-y-4">
-                        <div class="flex flex-col sm:flex-row gap-3">
-                            <div class="join">
-                                <input class="input input-sm input-bordered join-item w-64 bg-base-200/50"
-                                    id="userSearch" placeholder="搜索邮箱/昵称..."
-                                    onkeydown="if(event.key==='Enter')loadUsers()" />
-                                <button class="btn btn-sm btn-primary join-item" onclick="loadUsers()">搜索</button>
-                            </div>
-                        </div>
+            <!-- ── Main Content ───────────────────────────────── -->
+            <main>
 
-                        <div class="overflow-x-auto custom-scrollbar border border-base-content/10 rounded-xl mt-4">
-                            <table class="table table-zebra table-sm whitespace-nowrap">
-                                <thead class="bg-base-200/50">
-                                    <tr class="text-base-content/70">
-                                        <th class="w-16">ID</th>
-                                        <th>邮箱</th>
-                                        <th>昵称</th>
-                                        <th>角色</th>
-                                        <th>余额</th>
-                                        <th>套餐</th>
-                                        <th>房间配额</th>
-                                        <th>状态</th>
-                                        <th>注册时间</th>
-                                        <th class="w-20 text-center">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="userTableBody">
-                                    <tr>
-                                        <td colspan="10" class="text-center py-10 opacity-50"><span
-                                                class="loading loading-spinner"></span></td>
-                                    </tr>
-                                </tbody>
-                            </table>
+                <!-- ── Stats ──────────────────────────────────────── -->
+                <div id="sec-stats" class="tab-content active">
+                    <div class="mb-4 text-lg font-bold">系统概览</div>
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+                        <div class="glass-card p-4 text-center">
+                            <div class="text-2xl font-extrabold gradient-text-primary" id="stUsers">—</div>
+                            <div class="text-xs opacity-40 mt-1">总用户</div>
                         </div>
-                        <div class="flex justify-center w-full mt-4" id="userPagination"></div>
+                        <div class="glass-card p-4 text-center">
+                            <div class="text-2xl font-extrabold text-primary" id="stRooms">—</div>
+                            <div class="text-xs opacity-40 mt-1">总房间</div>
+                        </div>
+                        <div class="glass-card p-4 text-center">
+                            <div class="text-2xl font-extrabold text-success" id="stActive">—</div>
+                            <div class="text-xs opacity-40 mt-1">活跃房间</div>
+                        </div>
+                        <div class="glass-card p-4 text-center">
+                            <div class="text-2xl font-extrabold" id="stOrders">—</div>
+                            <div class="text-xs opacity-40 mt-1">总订单</div>
+                        </div>
+                        <div class="glass-card p-4 text-center">
+                            <div class="text-2xl font-extrabold text-accent" id="stRevenue">—</div>
+                            <div class="text-xs opacity-40 mt-1">总收入</div>
+                        </div>
                     </div>
-
-                    <!-- Orders Tab Content -->
-                    <div id="content-orders" class="space-y-4 hidden">
-                        <div class="flex flex-col sm:flex-row gap-3">
-                            <div class="join">
-                                <input class="input input-sm input-bordered join-item w-56 bg-base-200/50"
-                                    id="orderSearch" placeholder="搜索订单号/邮箱..."
-                                    onkeydown="if(event.key==='Enter')loadOrders()" />
-                                <select class="select select-sm select-bordered join-item bg-base-200/50"
-                                    id="orderStatus" onchange="loadOrders()">
-                                    <option value="">全部状态</option>
-                                    <option value="paid">已支付</option>
-                                    <option value="pending">待支付</option>
-                                    <option value="failed">失败</option>
-                                    <option value="refunded">已退款</option>
-                                </select>
-                                <button class="btn btn-sm btn-primary join-item" onclick="loadOrders()">搜索</button>
-                            </div>
-                        </div>
-
-                        <div class="overflow-x-auto custom-scrollbar border border-base-content/10 rounded-xl mt-4">
-                            <table class="table table-zebra table-sm whitespace-nowrap">
-                                <thead class="bg-base-200/50">
-                                    <tr class="text-base-content/70">
-                                        <th>订单号</th>
-                                        <th>用户</th>
-                                        <th>金额</th>
-                                        <th>支付方式</th>
-                                        <th>状态</th>
-                                        <th>创建时间</th>
-                                        <th class="w-24 text-center">操作</th>
-                                    </tr>
-                                </thead>
-                                <tbody id="orderTableBody">
-                                    <tr>
-                                        <td colspan="7" class="text-center py-10 opacity-50"><span
-                                                class="loading loading-spinner"></span></td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                        <div class="flex justify-center w-full mt-4" id="orderPagination"></div>
+                    <div class="glass-card p-6">
+                        <div class="opacity-40 text-sm text-center py-4">更多图表功能即将推出</div>
                     </div>
                 </div>
-            </div>
+
+                <!-- ── Users ───────────────────────────────────────── -->
+                <div id="sec-users" class="tab-content">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="text-lg font-bold">用户管理</div>
+                        <div class="flex gap-2">
+                            <input type="text" id="userSearch" placeholder="搜索邮箱或昵称..."
+                                class="input input-sm input-bordered glass-input rounded-xl w-52"
+                                oninput="debounceSearch()">
+                        </div>
+                    </div>
+                    <div class="glass-card overflow-hidden">
+                        <table class="table dark-table w-full">
+                            <thead>
+                                <tr>
+                                    <th>用户</th>
+                                    <th>套餐</th>
+                                    <th>余额</th>
+                                    <th>角色</th>
+                                    <th>状态</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="userTableBody">
+                                <tr>
+                                    <td colspan="6" class="text-center py-10 opacity-30">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div class="flex justify-between items-center p-4 border-t border-white/5 text-xs opacity-40">
+                            <span id="userPagInfo">—</span>
+                            <div class="flex gap-2">
+                                <button id="userPrevBtn" onclick="loadUsers(currentUserPage-1)"
+                                    class="btn btn-xs btn-ghost disabled:opacity-20" disabled>上一页</button>
+                                <button id="userNextBtn" onclick="loadUsers(currentUserPage+1)"
+                                    class="btn btn-xs btn-ghost disabled:opacity-20" disabled>下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Orders ──────────────────────────────────────── -->
+                <div id="sec-orders" class="tab-content">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="text-lg font-bold">订单管理</div>
+                        <div class="flex gap-2">
+                            <select id="orderStatus" class="select select-sm select-bordered glass-input rounded-xl"
+                                onchange="loadOrders(1)">
+                                <option value="">全部状态</option>
+                                <option value="pending">待支付</option>
+                                <option value="paid">已支付</option>
+                                <option value="failed">失败</option>
+                                <option value="refunded">已退款</option>
+                            </select>
+                            <input type="text" id="orderSearch" placeholder="订单号或邮箱..."
+                                class="input input-sm input-bordered glass-input rounded-xl w-44"
+                                oninput="debounceOrderSearch()">
+                        </div>
+                    </div>
+                    <div class="glass-card overflow-hidden">
+                        <table class="table dark-table w-full">
+                            <thead>
+                                <tr>
+                                    <th>订单号</th>
+                                    <th>用户</th>
+                                    <th>金额</th>
+                                    <th>方式</th>
+                                    <th>状态</th>
+                                    <th>时间</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="orderTableBody">
+                                <tr>
+                                    <td colspan="7" class="text-center py-10 opacity-30">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                        <div class="flex justify-between items-center p-4 border-t border-white/5 text-xs opacity-40">
+                            <span id="orderPagInfo">—</span>
+                            <div class="flex gap-2">
+                                <button id="orderPrevBtn" onclick="loadOrders(currentOrderPage-1)"
+                                    class="btn btn-xs btn-ghost" disabled>上一页</button>
+                                <button id="orderNextBtn" onclick="loadOrders(currentOrderPage+1)"
+                                    class="btn btn-xs btn-ghost" disabled>下一页</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- ── Plans ───────────────────────────────────────── -->
+                <div id="sec-plans" class="tab-content">
+                    <div class="mb-4 text-lg font-bold">套餐管理</div>
+                    <div class="glass-card overflow-hidden">
+                        <table class="table dark-table w-full">
+                            <thead>
+                                <tr>
+                                    <th>套餐名</th>
+                                    <th>Code</th>
+                                    <th>房间上限</th>
+                                    <th>月价</th>
+                                    <th>状态</th>
+                                </tr>
+                            </thead>
+                            <tbody id="plansTableBody">
+                                <tr>
+                                    <td colspan="5" class="text-center py-10 opacity-30">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- ── Settings ─────────────────────────────────────── -->
+                <div id="sec-settings" class="tab-content">
+                    <div class="mb-4 text-lg font-bold">系统设置</div>
+                    <div class="glass-card p-6">
+                        <div id="settingsContent">
+                            <div class="text-center py-8 opacity-30"><span class="loading loading-spinner"></span></div>
+                        </div>
+                        <div class="gradient-divider"></div>
+                        <button onclick="saveSettings()"
+                            class="btn gradient-btn text-white rounded-xl px-8">保存设置</button>
+                    </div>
+                </div>
+
+            </main>
         </div>
     </div>
 
-    <!-- User Edit Modal -->
-    <dialog id="userModal" class="modal modal-bottom sm:modal-middle">
-        <div class="modal-box border border-base-content/10 max-w-lg">
-            <form method="dialog">
-                <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button>
-            </form>
-            <h3 class="font-bold text-xl mb-6 flex items-center gap-2" id="modalTitle">
-                <span class="text-primary">✏️</span> <span>编辑用户</span>
-            </h3>
-
+    <!-- ── User Edit Modal ─────────────────────────────────── -->
+    <dialog id="userModal" class="modal">
+        <div class="modal-box glass-card border border-white/8 max-w-lg">
+            <h3 class="font-bold text-lg mb-6">操作用户 — <span id="modalUserEmail"
+                    class="text-primary opacity-70 text-sm font-normal"></span></h3>
             <input type="hidden" id="modalUserId">
 
-            <div class="grid grid-cols-2 gap-4 mb-4">
-                <div class="form-control w-full">
-                    <label class="label"><span class="label-text">角色权限</span></label>
-                    <select id="modalRole" class="select select-bordered select-sm w-full bg-base-200/50">
-                        <option value="user">普通用户</option>
-                        <option value="admin">系统管理员</option>
-                    </select>
+            <div class="space-y-4">
+                <!-- Role + Status -->
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">角色</span></label>
+                        <select id="modalRole" class="select select-bordered glass-input rounded-xl select-sm">
+                            <option value="user">普通用户</option>
+                            <option value="admin">管理员</option>
+                        </select>
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">状态</span></label>
+                        <select id="modalStatus" class="select select-bordered glass-input rounded-xl select-sm">
+                            <option value="active">正常</option>
+                            <option value="banned">封禁</option>
+                        </select>
+                    </div>
                 </div>
-                <div class="form-control w-full">
-                    <label class="label"><span class="label-text">账号状态</span></label>
-                    <select id="modalStatus" class="select select-bordered select-sm w-full bg-base-200/50">
-                        <option value="active">正常</option>
-                        <option value="suspended" class="text-error">停用</option>
-                    </select>
+
+                <!-- Balance Adjust -->
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text opacity-60 text-xs">调整余额 (元,
+                            正数增加/负数减少)</span></label>
+                    <div class="flex gap-2">
+                        <input type="number" id="modalBalanceAdj"
+                            class="input input-bordered glass-input rounded-xl flex-1 input-sm"
+                            placeholder="如: 100 或 -50">
+                        <input type="text" id="modalBalanceReason"
+                            class="input input-bordered glass-input rounded-xl flex-1 input-sm" placeholder="原因备注">
+                    </div>
+                </div>
+
+                <!-- Set Subscription -->
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text opacity-60 text-xs">手动设置订阅</span></label>
+                    <div class="grid grid-cols-3 gap-2">
+                        <select id="modalPlanCode" class="select select-bordered glass-input rounded-xl select-sm">
+                            <option value="">选择套餐...</option>
+                        </select>
+                        <input type="number" id="modalSubDays"
+                            class="input input-bordered glass-input rounded-xl input-sm" placeholder="天数" min="1"
+                            value="30">
+                        <button onclick="setSubscription()" class="btn btn-xs btn-outline rounded-lg h-10">设置订阅</button>
+                    </div>
+                </div>
+
+                <!-- Reset Password -->
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text opacity-60 text-xs">重置密码</span></label>
+                    <div class="flex gap-2">
+                        <input type="text" id="modalNewPwd"
+                            class="input input-bordered glass-input rounded-xl flex-1 input-sm"
+                            placeholder="新密码 (至少6位)">
+                        <button onclick="resetPassword()" class="btn btn-xs btn-warning rounded-lg h-10">重置</button>
+                    </div>
                 </div>
             </div>
 
-            <div class="divider text-xs opacity-50">余额与额度调整</div>
-
-            <div class="grid grid-cols-2 gap-4 mb-4">
-                <div class="form-control w-full">
-                    <label class="label"><span class="label-text">调整余额 (元)</span><span
-                            class="label-text-alt text-info">正加负减</span></label>
-                    <input type="number" id="modalBalanceAdj" placeholder="留空不改" step="0.01"
-                        class="input input-sm input-bordered w-full bg-base-200/50 font-mono">
-                </div>
-                <div class="form-control w-full">
-                    <label class="label"><span class="label-text">调整原因</span></label>
-                    <input type="text" id="modalBalanceReason" placeholder="管理员后台手动调整"
-                        class="input input-sm input-bordered w-full bg-base-200/50">
-                </div>
-            </div>
-
-            <div class="divider text-xs opacity-50">套餐分发</div>
-
-            <div class="grid grid-cols-2 gap-4 mb-4">
-                <div class="form-control w-full">
-                    <label class="label"><span class="label-text">设置套餐</span></label>
-                    <select id="modalPlan" class="select select-bordered select-sm w-full bg-base-200/50">
-                        <option value="">(不修改)</option>
-                    </select>
-                </div>
-                <div class="form-control w-full">
-                    <label class="label"><span class="label-text">有效天数</span></label>
-                    <input type="number" id="modalPlanDays" value="30" min="1"
-                        class="input input-sm input-bordered w-full bg-base-200/50">
-                </div>
-            </div>
-
-            <div class="divider text-xs opacity-50">安全管理</div>
-
-            <div class="form-control w-full mb-6">
-                <label class="label"><span class="label-text">强制重置密码</span></label>
-                <input type="text" id="modalNewPwd" placeholder="留空则不修改（至少6位）"
-                    class="input input-sm input-bordered w-full bg-base-200/50 font-mono">
-            </div>
-
-            <div class="modal-action">
-                <form method="dialog" class="flex gap-2 w-full justify-end">
-                    <button class="btn btn-outline btn-sm px-6">取消</button>
-                    <button class="btn btn-primary btn-sm px-8 shadow-sm" type="button"
-                        onclick="saveUser()">保存所有修改</button>
-                </form>
+            <div class="modal-action gap-2 mt-6">
+                <form method="dialog"><button class="btn btn-ghost rounded-xl">关闭</button></form>
+                <button onclick="saveUser()" class="btn gradient-btn text-white rounded-xl px-6">保存信息</button>
             </div>
         </div>
-        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+        <form method="dialog" class="modal-backdrop"><button></button></form>
     </dialog>
-
-    <!-- General Message Modal -->
-    <dialog id="messageModal" class="modal modal-bottom sm:modal-middle">
-        <div class="modal-box border border-base-content/10">
-            <h3 class="font-bold text-lg flex items-center gap-2" id="msgModalTitle">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-info" fill="none" viewBox="0 0 24 24"
-                    stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                提示
-            </h3>
-            <p class="py-4 whitespace-pre-line" id="msgModalMsg"></p>
-            <div class="modal-action">
-                <form method="dialog" class="flex gap-2 w-full justify-end">
-                    <button class="btn btn-outline" id="msgModalCancelBtn" style="display:none;">取消</button>
-                    <button class="btn btn-primary" id="msgModalConfirmBtn">确定</button>
-                </form>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>close</button></form>
-    </dialog>
-
-    <div id="toastContainer" class="toast toast-top toast-center z-50 mt-4 transition-all"></div>
 
     <script>
-        const token = localStorage.getItem('accessToken');
-        if (!token) { window.location.href = 'login.html'; }
+        let currentUserPage = 1;
+        let currentOrderPage = 1;
+        let userSearchTimer, orderSearchTimer;
 
-        let userPage = 1, orderPage = 1;
+        // ── Section Switching ───────────────────────────────────
+        function showSection(name, btn) {
+            document.querySelectorAll('.tab-content').forEach(e => e.classList.remove('active'));
+            document.querySelectorAll('.sidebar-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById('sec-' + name).classList.add('active');
+            btn.classList.add('active');
 
-        // Custom UI utilities
-        function showToast(msg, type = 'success') {
-            const container = document.getElementById('toastContainer');
-            const alert = document.createElement('div');
-            alert.className = `alert alert-${type} shadow-lg mb-2 animate-bounce flex items-center gap-2`;
-            if (type === 'error') {
-                alert.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> <span>${msg}</span>`;
-            } else {
-                alert.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /></svg> <span>${msg}</span>`;
-            }
-            container.appendChild(alert);
-            setTimeout(() => {
-                alert.classList.replace('animate-bounce', 'opacity-0');
-                setTimeout(() => alert.remove(), 300);
-            }, 3000);
+            // Lazy load
+            if (name === 'users' && document.getElementById('userTableBody').innerHTML.includes('加载中')) loadUsers(1);
+            if (name === 'orders' && document.getElementById('orderTableBody').innerHTML.includes('加载中')) loadOrders(1);
+            if (name === 'plans' && document.getElementById('plansTableBody').innerHTML.includes('加载中')) loadPlans();
+            if (name === 'settings' && document.getElementById('settingsContent').innerHTML.includes('loading')) loadSettings();
         }
 
-        function showMessageModal(title, msg, isConfirm = false, isError = false) {
-            return new Promise(resolve => {
-                const titleIcon = document.querySelector('#msgModalTitle svg');
-                if (isError) {
-                    titleIcon.classList.replace('text-info', 'text-error');
-                    titleIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />';
-                } else {
-                    titleIcon.classList.replace('text-error', 'text-info');
-                    titleIcon.innerHTML = '<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />';
-                }
+        // ── Formatters ──────────────────────────────────────────
+        function fmtCny(cents) { return '¥' + ((cents || 0) / 100).toFixed(2); }
+        function fmtTime(d) { if (!d) return '—'; const dt = new Date(d); return dt.toLocaleDateString('zh-CN') + ' ' + dt.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' }); }
+        function statusBadge(s) { const m = { active: 'badge-success', banned: 'badge-error', paid: 'badge-success', pending: 'badge-warning', failed: 'badge-error', refunded: 'badge-ghost', expired: 'badge-ghost' }; const n = { active: '正常', banned: '封禁', paid: '已支付', pending: '待支付', failed: '失败', refunded: '已退款', expired: '已过期' }; return `<span class="badge ${m[s] || 'badge-ghost'} badge-xs">${n[s] || s}</span>`; }
+        function showAlert(msg, type = 'info') { const b = document.getElementById('alertBox'); b.className = `alert alert-${type} mb-4 text-sm font-medium rounded-xl`; b.innerHTML = `<span>${msg}</span>`; b.classList.remove('hidden'); setTimeout(() => b.classList.add('hidden'), 4000); }
 
-                document.getElementById('msgModalTitle').innerHTML = titleIcon.outerHTML + `<span>${title}</span>`;
-                document.getElementById('msgModalMsg').innerText = msg;
-                const cancelBtn = document.getElementById('msgModalCancelBtn');
-                const confirmBtn = document.getElementById('msgModalConfirmBtn');
-
-                cancelBtn.style.display = isConfirm ? 'block' : 'none';
-                cancelBtn.onclick = () => resolve(false);
-                confirmBtn.onclick = () => resolve(true);
-
-                document.getElementById('messageModal').showModal();
-                document.getElementById('messageModal').addEventListener('close', () => resolve(false), { once: true });
-            });
-        }
-
-        function fmt(cents) { return cents === 0 ? '¥0' : '¥' + (cents / 100).toFixed(cents % 100 === 0 ? 0 : 2); }
-        function fmtDate(d) { return d ? new Date(d).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric' }) : '-'; }
-
-        const badgeClasses = {
-            paid: 'badge-success', pending: 'badge-warning', failed: 'badge-error', refunded: 'badge-ghost',
-            active: 'badge-success', suspended: 'badge-error',
-            admin: 'badge-primary', user: 'badge-ghost'
-        };
-        const statusNames = {
-            paid: '已支付', pending: '待支付', failed: '充值失败', refunded: '已退款',
-            active: '正常', suspended: '已停用',
-            admin: '管理员', user: '用户'
-        };
-        const statusBadge = s => `<span class="badge ${badgeClasses[s] || 'badge-ghost'} badge-sm font-medium border-base-content/10 shadow-sm">${statusNames[s] || s}</span>`;
-
-        async function apiFetch(url, opts = {}) {
-            const res = await fetch(url, { ...opts, headers: { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json', ...opts.headers } });
-            if (res.status === 401) { window.location.href = 'login.html'; }
-            if (res.status === 403) {
-                await showMessageModal('权限拒绝', '无管理员权限访问该页面', false, true);
-                window.location.href = '/';
-            }
-            return res;
-        }
-
-        function switchTab(name) {
-            document.getElementById('content-users').classList.add('hidden');
-            document.getElementById('content-orders').classList.add('hidden');
-            document.getElementById('content-' + name).classList.remove('hidden');
-            if (name === 'orders' && !document.getElementById('orderTableBody').hasChildNodes()) {
-                loadOrders(); // load only once lazily mostly handled by init anyway
-            } else if (name === 'orders') {
-                loadOrders();
-            }
-        }
-
-        // ---- Stats ----
+        // ── Stats ───────────────────────────────────────────────
         async function loadStats() {
             try {
-                const res = await apiFetch('/api/admin/stats');
-                const d = await res.json();
-                document.getElementById('statUsers').textContent = d.totalUsers;
-                document.getElementById('statRooms').textContent = d.totalRooms;
-                document.getElementById('statActive').textContent = d.activeRooms;
-                document.getElementById('statOrders').textContent = d.totalOrders;
-                document.getElementById('statRevenue').textContent = fmt(d.totalRevenue);
-            } catch { } // fail silently for metrics
+                const r = await fetch('/api/admin/stats');
+                const d = await r.json();
+                document.getElementById('stUsers').textContent = d.totalUsers ?? '—';
+                document.getElementById('stRooms').textContent = d.totalRooms ?? '—';
+                document.getElementById('stActive').textContent = d.activeRooms ?? '—';
+                document.getElementById('stOrders').textContent = d.totalOrders ?? '—';
+                document.getElementById('stRevenue').textContent = fmtCny(d.totalRevenue);
+            } catch { }
         }
 
-        // ---- Users ----
-        async function loadUsers() {
+        // ── Users ───────────────────────────────────────────────
+        function debounceSearch() { clearTimeout(userSearchTimer); userSearchTimer = setTimeout(() => loadUsers(1), 400); }
+
+        async function loadUsers(page = 1) {
+            currentUserPage = page;
+            const search = document.getElementById('userSearch').value.trim();
+            const body = document.getElementById('userTableBody');
+            body.innerHTML = '<tr><td colspan="6" class="text-center py-8 opacity-30"><span class="loading loading-spinner loading-sm"></span></td></tr>';
             try {
-                const search = document.getElementById('userSearch').value;
-                document.getElementById('userTableBody').innerHTML = '<tr><td colspan="10" class="text-center py-10 opacity-50"><span class="loading loading-spinner"></span></td></tr>';
-                const res = await apiFetch(`/api/admin/users?page=${userPage}&limit=10&search=${encodeURIComponent(search)}`);
+                const res = await fetch(`/api/admin/users?page=${page}&limit=20&search=${encodeURIComponent(search)}`);
                 const d = await res.json();
+                const users = d.data || [];
+                const pag = d.pagination || {};
 
-                const tbody = document.getElementById('userTableBody');
-                if (!d.data || d.data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="10" class="text-center py-8 opacity-40">未找到符合条件的用户</td></tr>';
-                } else {
-                    tbody.innerHTML = d.data.map(u => `
-                    <tr class="hover">
-                        <td class="font-mono text-xs opacity-60">${u.id}</td>
-                        <td class="font-medium">${u.email}</td>
-                        <td>${u.nickname || '<span class="opacity-30">-</span>'}</td>
-                        <td>${statusBadge(u.role)}</td>
-                        <td class="font-mono text-success font-semibold">${fmt(u.balance || 0)}</td>
-                        <td>${u.plan_name || '免费版'}</td>
-                        <td class="font-mono">${u.room_count || 0}</td>
-                        <td>${statusBadge(u.status)}</td>
-                        <td class="text-xs opacity-60">${fmtDate(u.created_at)}</td>
-                        <td class="text-center">
-                            <button class="btn btn-ghost btn-xs text-info hover:bg-info/20" onclick="editUser(${u.id},'${u.role}','${u.status}')">管理</button>
-                        </td>
-                    </tr>`).join('');
-                }
+                body.innerHTML = users.length === 0
+                    ? '<tr><td colspan="6" class="text-center py-10 opacity-30">没有找到用户</td></tr>'
+                    : users.map(u => `
+            <tr>
+              <td>
+                <div class="font-medium text-sm">${u.nickname || '—'}</div>
+                <div class="text-xs opacity-40">${u.email}</div>
+              </td>
+              <td>
+                <div class="text-xs font-medium">${u.plan_name || '未订阅'}</div>
+                ${u.subscription_end ? `<div class="text-[10px] opacity-30">至 ${new Date(u.subscription_end).toLocaleDateString('zh-CN')}</div>` : ''}
+              </td>
+              <td class="font-mono text-sm">${fmtCny(u.balance)}</td>
+              <td>${u.role === 'admin' ? '<span class="badge badge-warning badge-xs">Admin</span>' : '<span class="badge badge-ghost badge-xs">User</span>'}</td>
+              <td>${statusBadge(u.status)}</td>
+              <td>
+                <button onclick="openUserModal(${JSON.stringify(u).replace(/"/g, '&quot;')})" class="btn btn-xs btn-outline rounded-lg">操作</button>
+              </td>
+            </tr>`).join('');
 
-                renderPagination('userPagination', d.pagination, p => { userPage = p; loadUsers(); });
-            } catch (err) {
-                showToast('加载用户列表失败', 'error');
-            }
+                document.getElementById('userPagInfo').textContent = `第 ${pag.page || 1} / ${pag.totalPages || 1} 页，共 ${pag.total || 0} 个用户`;
+                document.getElementById('userPrevBtn').disabled = (pag.page || 1) <= 1;
+                document.getElementById('userNextBtn').disabled = (pag.page || 1) >= (pag.totalPages || 1);
+            } catch { body.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-error text-sm">加载失败</td></tr>'; }
         }
 
-        function editUser(id, role, status) {
-            document.getElementById('modalUserId').value = id;
-            document.getElementById('modalRole').value = role;
-            document.getElementById('modalStatus').value = status;
+        function openUserModal(u) {
+            document.getElementById('modalUserId').value = u.id;
+            document.getElementById('modalUserEmail').textContent = u.email;
+            document.getElementById('modalRole').value = u.role;
+            document.getElementById('modalStatus').value = u.status;
             document.getElementById('modalBalanceAdj').value = '';
             document.getElementById('modalBalanceReason').value = '';
             document.getElementById('modalNewPwd').value = '';
-            document.getElementById('modalPlan').value = '';
-            document.getElementById('modalPlanDays').value = 30;
-
-            document.querySelector('#modalTitle span:last-child').textContent = `编辑用户 (${id})`;
             document.getElementById('userModal').showModal();
         }
 
         async function saveUser() {
             const id = document.getElementById('modalUserId').value;
-            const modal = document.getElementById('userModal');
+            const role = document.getElementById('modalRole').value;
+            const status = document.getElementById('modalStatus').value;
             try {
-                // 1. Update role/status
-                await apiFetch(`/api/admin/users/${id}`, {
-                    method: 'PUT',
-                    body: JSON.stringify({
-                        role: document.getElementById('modalRole').value,
-                        status: document.getElementById('modalStatus').value
-                    })
-                });
-
-                // 2. Adjust balance if specified
-                const adjYuan = parseFloat(document.getElementById('modalBalanceAdj').value);
-                if (adjYuan && adjYuan !== 0) {
-                    const adjCents = Math.round(adjYuan * 100);
-                    const reason = document.getElementById('modalBalanceReason').value || '管理员后台手动调整';
-                    await apiFetch(`/api/admin/users/${id}/adjust-balance`, {
-                        method: 'POST',
-                        body: JSON.stringify({ amount: adjCents, reason })
+                const res = await fetch(`/api/admin/users/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role, status }) });
+                if (!res.ok) throw new Error((await res.json()).error);
+                const adj = parseFloat(document.getElementById('modalBalanceAdj').value);
+                if (adj && adj !== 0) {
+                    const r2 = await fetch(`/api/admin/users/${id}/adjust-balance`, {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ amount: Math.round(adj * 100), reason: document.getElementById('modalBalanceReason').value })
                     });
+                    if (!r2.ok) throw new Error((await r2.json()).error);
                 }
-
-                // 3. Reset password if specified
-                const newPwd = document.getElementById('modalNewPwd').value.trim();
-                if (newPwd) {
-                    const r = await apiFetch(`/api/admin/users/${id}/reset-password`, {
-                        method: 'POST',
-                        body: JSON.stringify({ newPassword: newPwd })
-                    });
-                    const d = await r.json();
-                    if (!r.ok) throw new Error(d.error);
-                }
-
-                // 4. Set subscription if specified
-                const planCode = document.getElementById('modalPlan').value;
-                if (planCode) {
-                    await apiFetch(`/api/admin/users/${id}/set-subscription`, {
-                        method: 'POST',
-                        body: JSON.stringify({ planCode, durationDays: parseInt(document.getElementById('modalPlanDays').value) || 30 })
-                    });
-                }
-
-                modal.close();
-                showToast('用户信息更新成功', 'success');
-                loadUsers();
-                loadStats();
-            } catch (err) {
-                showToast('保存失败: ' + err.message, 'error');
-            }
+                showAlert('用户信息已更新', 'success');
+                document.getElementById('userModal').close();
+                loadUsers(currentUserPage);
+            } catch (e) { showAlert(e.message || '操作失败', 'error'); }
         }
 
-        // ---- Orders ----
-        async function loadOrders() {
+        async function setSubscription() {
+            const id = document.getElementById('modalUserId').value;
+            const plan = document.getElementById('modalPlanCode').value;
+            const days = parseInt(document.getElementById('modalSubDays').value) || 30;
+            if (!plan) { showAlert('请选择套餐', 'warning'); return; }
             try {
-                const search = document.getElementById('orderSearch').value;
-                const status = document.getElementById('orderStatus').value;
-                document.getElementById('orderTableBody').innerHTML = '<tr><td colspan="7" class="text-center py-10 opacity-50"><span class="loading loading-spinner"></span></td></tr>';
-                const res = await apiFetch(`/api/admin/orders?page=${orderPage}&limit=10&search=${encodeURIComponent(search)}&status=${status}`);
+                const res = await fetch(`/api/admin/users/${id}/set-subscription`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ planCode: plan, durationDays: days })
+                });
                 const d = await res.json();
+                if (!res.ok) throw new Error(d.error);
+                showAlert(d.message || '订阅设置成功', 'success');
+            } catch (e) { showAlert(e.message || '操作失败', 'error'); }
+        }
 
-                const tbody = document.getElementById('orderTableBody');
-                if (!d.data || d.data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="7" class="text-center py-8 opacity-40">未找到相关订单</td></tr>';
-                } else {
-                    tbody.innerHTML = d.data.map(o => `
-                    <tr class="hover">
-                        <td class="font-mono text-xs opacity-60">${o.order_no}</td>
-                        <td class="font-medium">${o.user_email || '<span class="opacity-30">-</span>'}</td>
-                        <td class="font-semibold">${fmt(o.amount)}</td>
-                        <td><div class="badge badge-outline badge-sm capitalize border-base-content/20">${o.payment_method || '-'}</div></td>
-                        <td>${statusBadge(o.status)}</td>
-                        <td class="text-xs opacity-60">${fmtDate(o.created_at)}</td>
-                        <td class="text-center">
-                            ${o.status === 'pending' ? `<button class="btn btn-ghost btn-xs text-success hover:bg-success/20" onclick="updateOrderStatus(${o.id},'paid')">补单(标为已付)</button>` : '<span class="opacity-20 text-xs">-</span>'}
-                        </td>
-                    </tr>`).join('');
-                }
+        async function resetPassword() {
+            const id = document.getElementById('modalUserId').value;
+            const pwd = document.getElementById('modalNewPwd').value;
+            if (!pwd || pwd.length < 6) { showAlert('密码至少6位', 'warning'); return; }
+            try {
+                const res = await fetch(`/api/admin/users/${id}/reset-password`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ newPassword: pwd })
+                });
+                if (!res.ok) throw new Error((await res.json()).error);
+                showAlert('密码已重置', 'success');
+                document.getElementById('modalNewPwd').value = '';
+            } catch (e) { showAlert(e.message || '操作失败', 'error'); }
+        }
 
-                renderPagination('orderPagination', d.pagination, p => { orderPage = p; loadOrders(); });
-            } catch (err) {
-                showToast('加载订单列表失败', 'error');
-            }
+        // ── Orders ──────────────────────────────────────────────
+        function debounceOrderSearch() { clearTimeout(orderSearchTimer); orderSearchTimer = setTimeout(() => loadOrders(1), 400); }
+
+        async function loadOrders(page = 1) {
+            currentOrderPage = page;
+            const status = document.getElementById('orderStatus').value;
+            const search = document.getElementById('orderSearch').value.trim();
+            const body = document.getElementById('orderTableBody');
+            body.innerHTML = '<tr><td colspan="7" class="text-center py-8 opacity-30"><span class="loading loading-spinner loading-sm"></span></td></tr>';
+            try {
+                const res = await fetch(`/api/admin/orders?page=${page}&limit=20&status=${status}&search=${encodeURIComponent(search)}`);
+                const d = await res.json();
+                const ords = d.data || [];
+                const pag = d.pagination || {};
+                body.innerHTML = ords.length === 0
+                    ? '<tr><td colspan="7" class="text-center py-10 opacity-30">没有找到订单</td></tr>'
+                    : ords.map(o => `<tr>
+              <td class="font-mono text-xs opacity-50">${o.order_no}</td>
+              <td><div class="text-sm">${o.user_nickname || '—'}</div><div class="text-[10px] opacity-30">${o.user_email}</div></td>
+              <td class="font-bold">${fmtCny(o.amount)}</td>
+              <td class="text-xs opacity-60">${o.payment_method || '—'}</td>
+              <td>${statusBadge(o.status)}</td>
+              <td class="text-xs opacity-40">${fmtTime(o.created_at)}</td>
+              <td>
+                <select class="select select-xs select-bordered glass-input rounded-lg" onchange="updateOrderStatus(${o.id}, this.value)">
+                  <option value="">操作</option>
+                  <option value="paid">标记已付</option>
+                  <option value="refunded">标记退款</option>
+                  <option value="failed">标记失败</option>
+                </select>
+              </td>
+            </tr>`).join('');
+                document.getElementById('orderPagInfo').textContent = `第 ${pag.page || 1} / ${pag.totalPages || 1} 页，共 ${pag.total || 0} 条`;
+                document.getElementById('orderPrevBtn').disabled = (pag.page || 1) <= 1;
+                document.getElementById('orderNextBtn').disabled = (pag.page || 1) >= (pag.totalPages || 1);
+            } catch { body.innerHTML = '<tr><td colspan="7" class="text-center py-8 text-error text-sm">加载失败</td></tr>'; }
         }
 
         async function updateOrderStatus(id, status) {
-            const confirmed = await showMessageModal('补单确认', `确认将此订单强制标记为"已支付"并下发相应商品权益吗？\n此操作一般用于用户付款成功但系统未收到回调的情况。`, true, true);
-            if (!confirmed) return;
+            if (!status) return;
             try {
-                await apiFetch(`/api/admin/orders/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
-                showToast('订单补发成功', 'success');
-                loadOrders();
-                loadStats();
-            } catch (err) { showToast(err.message, 'error'); }
+                const res = await fetch(`/api/admin/orders/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
+                if (!res.ok) throw new Error((await res.json()).error);
+                showAlert('订单状态已更新', 'success');
+                loadOrders(currentOrderPage);
+            } catch (e) { showAlert(e.message, 'error'); }
         }
 
-        // ---- Pagination helper (DaisyUI join) ----
-        function renderPagination(elemId, pg, onClick) {
-            if (!pg || pg.totalPages <= 1) { document.getElementById(elemId).innerHTML = ''; return; }
-            let html = '<div class="join shadow-sm border border-base-content/10 bg-base-100">';
-            html += `<button class="join-item btn btn-sm ${pg.page <= 1 ? 'btn-disabled opacity-30' : ''}" data-act="prev">«</button>`;
-
-            // max pages to show = 5
-            let start = Math.max(1, pg.page - 2);
-            let end = Math.min(pg.totalPages, pg.page + 2);
-            if (end - start < 4) {
-                if (start === 1) end = Math.min(pg.totalPages, 5);
-                else start = Math.max(1, pg.totalPages - 4);
-            }
-
-            if (start > 1) {
-                html += `<button class="join-item btn btn-sm" data-act="1">1</button>`;
-                if (start > 2) html += `<button class="join-item btn btn-sm btn-disabled">...</button>`;
-            }
-
-            for (let i = start; i <= end; i++) {
-                html += `<button class="join-item btn btn-sm ${i === pg.page ? 'btn-active border-primary/20' : ''}" data-act="${i}">${i}</button>`;
-            }
-
-            if (end < pg.totalPages) {
-                if (end < pg.totalPages - 1) html += `<button class="join-item btn btn-sm btn-disabled">...</button>`;
-                html += `<button class="join-item btn btn-sm" data-act="${pg.totalPages}">${pg.totalPages}</button>`;
-            }
-
-            html += `<button class="join-item btn btn-sm ${pg.page >= pg.totalPages ? 'btn-disabled opacity-30' : ''}" data-act="next">»</button>`;
-            html += '</div>';
-
-            const div = document.getElementById(elemId);
-            div.innerHTML = html;
-            div.querySelectorAll('button[data-act]').forEach(btn => {
-                btn.addEventListener('click', () => {
-                    const act = btn.getAttribute('data-act');
-                    if (act === 'prev') onClick(pg.page - 1);
-                    else if (act === 'next') onClick(pg.page + 1);
-                    else if (!isNaN(parseInt(act))) onClick(parseInt(act));
-                });
-            });
-        }
-
-        // ---- Load plans for the modal dropdown ----
+        // ── Plans ───────────────────────────────────────────────
         async function loadPlans() {
             try {
-                const res = await apiFetch('/api/admin/plans');
-                const plans = await res.json();
-                const select = document.getElementById('modalPlan');
-                plans.forEach(p => {
-                    const opt = document.createElement('option');
-                    opt.value = p.code;
-                    opt.textContent = `${p.name} (${p.room_limit === -1 ? '无限配额' : p.room_limit + '间'})`;
-                    select.appendChild(opt);
-                });
-            } catch { } // fail silently
+                const [pubRes, adminRes] = await Promise.all([
+                    fetch('/api/subscription/plans'),
+                    fetch('/api/admin/plans')
+                ]);
+                const plans = pubRes.ok ? await pubRes.json() : await adminRes.json();
+
+                // Also populate modal dropdown
+                const planSel = document.getElementById('modalPlanCode');
+                planSel.innerHTML = '<option value="">选择套餐...</option>' + plans.map(p => `<option value="${p.plan_code || p.code}">${p.plan_name || p.name}</option>`).join('');
+
+                document.getElementById('plansTableBody').innerHTML = plans.length === 0
+                    ? '<tr><td colspan="5" class="text-center py-10 opacity-30">无套餐数据</td></tr>'
+                    : plans.map(p => `<tr>
+              <td class="font-semibold">${p.plan_name || p.name}</td>
+              <td class="font-mono text-xs opacity-60">${p.plan_code || p.code}</td>
+              <td>${p.max_rooms || p.room_limit === -1 ? '∞' : (p.max_rooms || p.room_limit)}</td>
+              <td class="font-bold">${fmtCny(p.base_price || p.price_monthly)}</td>
+              <td><span class="badge ${p.status === 'active' ? 'badge-success' : 'badge-ghost'} badge-xs">${p.status === 'active' ? '启用' : '禁用'}</span></td>
+            </tr>`).join('');
+            } catch { document.getElementById('plansTableBody').innerHTML = '<tr><td colspan="5" class="text-center py-8 text-error text-sm">加载失败</td></tr>'; }
         }
 
-        function doLogout() {
-            showMessageModal('退出登录', '确定要退出管理账号吗？', true).then(confirmed => {
-                if (confirmed) {
-                    const rt = localStorage.getItem('refreshToken');
-                    fetch('/api/auth/logout', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken: rt }) }).catch(() => null);
-                    localStorage.removeItem('accessToken');
-                    localStorage.removeItem('refreshToken');
-                    window.location.href = 'login.html';
-                }
+        // ── Settings ─────────────────────────────────────────────
+        let settingsData = {};
+        async function loadSettings() {
+            try {
+                const res = await fetch('/api/admin/settings');
+                settingsData = await res.json();
+                const entries = Object.entries(settingsData);
+                document.getElementById('settingsContent').innerHTML = entries.length === 0
+                    ? '<div class="text-center py-6 opacity-30 text-sm">暂无可配置的设置项</div>'
+                    : `<div class="space-y-4">${entries.map(([k, v]) => `
+              <div class="form-control">
+                <label class="label pb-1"><span class="label-text opacity-60 text-xs">${k}</span></label>
+                <input type="text" class="input input-bordered glass-input rounded-xl input-sm" id="setting-${k}" value="${v || ''}">
+              </div>`).join('')}</div>`;
+            } catch { document.getElementById('settingsContent').innerHTML = '<div class="text-error text-sm">加载失败</div>'; }
+        }
+
+        async function saveSettings() {
+            const updated = {};
+            Object.keys(settingsData).forEach(k => {
+                const el = document.getElementById('setting-' + k);
+                if (el) updated[k] = el.value;
             });
+            try {
+                const res = await fetch('/api/admin/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(updated) });
+                if (!res.ok) throw new Error();
+                showAlert('设置已保存', 'success');
+            } catch { showAlert('保存失败', 'error'); }
         }
 
-        // Init Flow
-        loadStats();
-        loadUsers();
-        loadPlans();
+        // ── Init ────────────────────────────────────────────────
+        window.initPage({
+            requireAuth: true,
+            requireAdmin: true,
+            onReady() {
+                loadStats();
+                // Lazy load: plans data for modal dropdown
+                fetch('/api/subscription/plans').then(r => r.json()).then(plans => {
+                    const sel = document.getElementById('modalPlanCode');
+                    sel.innerHTML = '<option value="">选择套餐...</option>' + plans.map(p => `<option value="${p.plan_code}">${p.plan_name}</option>`).join('');
+                }).catch(() => { });
+            }
+        });
     </script>
 </body>
 

@@ -1,13 +1,14 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>TikTok Live Monitor</title>
+    <title>TikTok Live Monitor — 监控中心</title>
 
-    <!-- Auth Gate: MUST be first to block page content until authenticated -->
-    <script src="auth_check.js"></script>
+    <!-- Auth + Design System (must be first) -->
+    <script src="auth.js"></script>
+    <link rel="stylesheet" href="style.css">
 
     <!-- Tailwind + DaisyUI -->
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
@@ -36,80 +37,63 @@
     <script src="app.js"></script>
 
 
-    <link rel="stylesheet" href="style.css"> <!-- Minimal overrides -->
-
-
-<body class="min-h-screen flex flex-col relative text-base-content"
+<body class="min-h-screen flex flex-col relative text-base-content page-bg"
     style="display:none; font-family: 'Inter', system-ui, sans-serif;">
     <style>
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background:
-                radial-gradient(ellipse at 80% 20%, rgba(212, 175, 55, 0.10) 0%, transparent 50%),
-                radial-gradient(ellipse at 20% 80%, rgba(184, 134, 11, 0.06) 0%, transparent 50%);
-            pointer-events: none;
-            z-index: -1;
-        }
-
         .content-section {
-            animation: fadeIn 0.3s ease-out forwards;
+            animation: fadeInUp 0.3s ease-out both;
         }
 
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-
-        /* Style adjustments to mimic landing pages */
         .card,
         .modal-box,
-        .detail-tab-content,
-        .bg-base-100 {
-            background-color: oklch(var(--b1) / 0.7) !important;
+        .detail-tab-content {
+            background-color: rgba(255, 255, 255, 0.04) !important;
             backdrop-filter: blur(12px) !important;
-            border: 1px solid oklch(var(--bc) / 0.08) !important;
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.1) !important;
+            border: 1px solid rgba(255, 255, 255, 0.08) !important;
         }
 
-        .navbar.bg-base-100 {
-            background-color: oklch(var(--b1) / 0.6) !important;
-            backdrop-filter: blur(16px) !important;
-            border-bottom: 1px solid oklch(var(--bc) / 0.05) !important;
+        .nav-btn {
+            padding: 0.4rem 0.9rem;
+            border-radius: 0.5rem;
+            font-size: 0.8rem;
+            font-weight: 500;
+            opacity: 0.55;
+            transition: all 0.18s;
         }
 
-        .badge-outline {
-            border-color: oklch(var(--bc)/0.2);
+        .nav-btn:hover {
+            opacity: 0.9;
+            background: rgba(255, 255, 255, 0.06);
+        }
+
+        .nav-btn.active {
+            opacity: 1;
+            background: rgba(99, 102, 241, 0.18);
+            color: #a5b4fc;
         }
     </style>
 
-    <!-- Navbar -->
-    <div class="navbar rounded-b-2xl mx-auto w-full max-w-[1600px] shadow-sm z-10 px-4 mb-4">
-        <div class="flex-1">
-            <a class="btn btn-ghost text-xl text-primary font-bold">TikTok Monitor</a>
+    <!-- Unified Navbar -->
+    <nav class="glass-navbar sticky top-0 z-50 w-full mb-4">
+        <div class="max-w-[1600px] mx-auto px-4 flex items-center h-14 gap-2">
+            <!-- Brand -->
+            <a href="/" class="flex items-center gap-2 mr-4 shrink-0">
+                <span class="text-xl">📺</span>
+                <span class="font-extrabold text-sm tracking-tight gradient-text-primary">TikTok Monitor</span>
+            </a>
+            <!-- App Nav Tabs -->
+            <div class="flex items-center gap-1 flex-1 overflow-x-auto">
+                <a class="nav-btn active" onclick="switchSection('roomList',this)">📺 房间列表</a>
+                <a class="nav-btn" onclick="switchSection('userAnalysis',this)">📊 用户分析</a>
+                <a class="nav-btn" onclick="switchSection('roomAnalysis',this)">📈 房间分析</a>
+                <a class="nav-btn" onclick="switchSection('giftConfig',this)">🎁 礼物配置</a>
+                <a class="nav-btn admin-only" onclick="switchSection('recording',this)">🎥 录制管理</a>
+                <a class="nav-btn admin-only" onclick="switchSection('systemConfig',this)">⚙️ 系统配置</a>
+            </div>
+            <!-- Right: User Menu -->
+            <div id="userMenuSlot" class="ml-auto shrink-0"></div>
         </div>
-        <div class="flex-none">
-            <ul class="menu menu-horizontal px-1 gap-2">
-                <li><a class="nav-btn active" onclick="switchSection('roomList')">📺 房间列表</a></li>
-                <li><a class="nav-btn" onclick="switchSection('userAnalysis')">📊 用户分析</a></li>
-                <li><a class="nav-btn" onclick="switchSection('roomAnalysis')">📈 房间分析</a></li>
-                <li><a class="nav-btn" onclick="switchSection('recording')">🎥 录制管理</a></li>
-                <li><a class="nav-btn" onclick="switchSection('systemConfig')">⚙️ 系统配置</a></li>
-
-            </ul>
-        </div>
-    </div>
+    </nav>
 
     <!-- Main Content -->
     <main class="flex-grow w-full px-4 xl:px-8 py-4 overflow-y-auto">
@@ -1306,26 +1290,49 @@
         </form>
     </dialog>
 
-    <!-- Quota Gate Overlay -->
-    <div id="quotaGateOverlay"
-        class="fixed inset-0 z-[100] bg-base-100/90 backdrop-blur-md flex flex-col items-center justify-center p-6 transition-opacity duration-300 pointer-events-none opacity-0"
-        aria-hidden="true">
-        <div class="card bg-base-100 shadow-2xl border border-error/20 max-w-md w-full pointer-events-auto transform scale-95 transition-transform duration-500"
-            id="quotaGateCard">
-            <div class="card-body items-center text-center p-8">
-                <div class="text-6xl mb-4">⚠️</div>
-                <h2 class="card-title text-2xl mb-2">可用的房间配额耗尽</h2>
-                <p class="text-base-content/70 mb-6">您当前的体验配额已用完，或基础套餐已过期。请前往用户中心选购适合您的基础套餐，恢复实时监控特权。</p>
-                <div class="card-actions w-full">
-                    <a href="/landing/user-center.html" class="btn btn-primary btn-block shadow-lg">进入用户中心</a>
-                </div>
-                <div class="mt-4">
-                    <button onclick="logout()" class="btn btn-ghost btn-sm text-base-content/50">退出登录</button>
-                </div>
+    <!-- Quota Gate Overlay (auth.js checks subscription and adds .visible class) -->
+    <div id="quotaGateOverlay" aria-hidden="true">
+        <div class="glass-card max-w-md w-full p-10 text-center shadow-2xl animate-scale-in"
+            style="border-color:rgba(239,68,68,0.2)">
+            <div class="text-5xl mb-5">🔒</div>
+            <h2 class="text-2xl font-bold mb-3">订阅已过期</h2>
+            <p class="text-base-content/50 text-sm mb-8 leading-relaxed">您当前没有有效的订阅套餐。请前往用户中心购买套餐后即可解锁全部监控功能。</p>
+            <div class="flex flex-col gap-3">
+                <a href="/landing/subscription.html" class="btn gradient-btn text-white rounded-xl">💎 立即订阅</a>
+                <a href="/landing/user-center.html" class="btn btn-outline rounded-xl">用户中心</a>
+                <button onclick="window.logout()" class="btn btn-ghost btn-sm opacity-40 mt-2">退出登录</button>
             </div>
         </div>
     </div>
 
+    <script>
+        // Bootstrap: auth gate + role-based UI + quota check
+        window.initPage({
+            requireAuth: true,
+            checkQuota: true,
+            onReady(user) {
+                // Reveal body
+                document.body.style.display = '';
+
+                // Inject user dropdown menu in navbar
+                window.injectUserMenu(user, 'userMenuSlot');
+
+                // Role-based: remove admin-only elements for regular users
+                if (user.role !== 'admin') {
+                    document.querySelectorAll('.admin-only').forEach(el => el.remove());
+                }
+            }
+        });
+
+        // Section switching (also updates nav tab active state)
+        function switchSection(name, clickedBtn) {
+            document.querySelectorAll('.content-section').forEach(s => s.style.display = 'none');
+            document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
+            const sec = document.getElementById('section-' + name);
+            if (sec) sec.style.display = 'block';
+            if (clickedBtn) clickedBtn.classList.add('active');
+        }
+    </script>
 </body>
 
 </html>

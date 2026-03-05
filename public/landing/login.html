@@ -1,171 +1,156 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="light">
+<html lang="zh-CN" data-theme="dark" data-nav-active="none">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>登录 - TikTok Monitor</title>
-    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.10.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <meta name="description" content="登录 TikTok Monitor 监控中心，实时追踪直播数据">
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet">
     <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        .glass-panel {
-            background: rgba(20, 20, 30, 0.65);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-
-        body::before {
-            content: '';
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background:
-                radial-gradient(ellipse at 20% 50%, rgba(212, 175, 55, 0.12) 0%, transparent 50%),
-                radial-gradient(ellipse at 80% 20%, rgba(184, 134, 11, 0.08) 0%, transparent 50%);
-            pointer-events: none;
-            z-index: -1;
-        }
-
-        .animate-spin-slow {
-            animation: spin 3s linear infinite;
-        }
-    </style>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet">
+    <link rel="stylesheet" href="/style.css">
 </head>
 
-<body class="min-h-screen flex items-center justify-center p-4">
-    <div class="w-full max-w-md">
-        <!-- Card -->
-        <div class="card glass-panel shadow-2xl">
-            <div class="card-body">
-                <div class="text-center mb-6">
-                    <h1 class="text-4xl font-extrabold mb-2 tracking-tight">
-                        <span class="bg-gradient-to-r from-primary to-secondary bg-clip-text text-transparent">TikTok
-                            Monitor</span>
-                    </h1>
-                    <p class="text-base-content/60">登录以访问监控中心</p>
-                </div>
+<body class="auth-bg">
 
-                <div id="alertBox" class="alert hidden shadow-lg mb-4 text-sm font-medium"></div>
+    <div class="w-full max-w-md relative z-10">
 
-                <form id="loginForm" onsubmit="handleLogin(event)" class="space-y-4">
-                    <div class="form-control">
-                        <label class="label">
-                            <span class="label-text">邮箱地址</span>
-                        </label>
-                        <label class="input input-bordered flex items-center gap-2 bg-base-200/50">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"
-                                class="w-4 h-4 opacity-70">
-                                <path
-                                    d="M2.5 3A1.5 1.5 0 0 0 1 4.5v.793c.026.009.051.02.076.032L7.674 8.51c.206.1.446.1.652 0l6.598-3.185A.755.755 0 0 1 15 5.293V4.5A1.5 1.5 0 0 0 13.5 3h-11Z" />
-                                <path
-                                    d="M15 6.954 8.978 9.86a2.25 2.25 0 0 1-1.956 0L1 6.954V11.5A1.5 1.5 0 0 0 2.5 13h11a1.5 1.5 0 0 0 1.5-1.5V6.954Z" />
-                            </svg>
-                            <input type="email" id="email" class="grow bg-transparent" placeholder="your@email.com"
-                                required autocomplete="email" />
-                        </label>
-                    </div>
-
-                    <div class="form-control">
-                        <label class="label">
-                            <span class="label-text">密码</span>
-                        </label>
-                        <label class="input input-bordered flex items-center gap-2 bg-base-200/50">
-                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"
-                                class="w-4 h-4 opacity-70">
-                                <path fill-rule="evenodd"
-                                    d="M14 6a4 4 0 0 1-4.899 3.899l-1.955 1.955a.5.5 0 0 1-.353.146H5v1.5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1-.5-.5v-2.293a.5.5 0 0 1 .146-.353l3.955-3.955A4 4 0 1 1 14 6Zm-4-2a.75.75 0 0 0 0 1.5.5.5 0 0 1 .5.5.75.75 0 0 0 1.5 0 2 2 0 0 0-2-2Z"
-                                    clip-rule="evenodd" />
-                            </svg>
-                            <input type="password" id="password" class="grow bg-transparent" placeholder="••••••••"
-                                required minlength="6" autocomplete="current-password" />
-                            <button type="button" class="btn btn-ghost btn-xs btn-circle opacity-70"
-                                onclick="togglePassword()">
-                                <svg id="eyeIcon" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
-                                    stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
-                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                        d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
-                                    <path stroke-linecap="round" stroke-linejoin="round"
-                                        d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-                                </svg>
-                            </button>
-                        </label>
-                    </div>
-
-                    <div class="form-control mt-6">
-                        <button type="submit"
-                            class="btn border-none bg-gradient-to-r from-primary to-secondary text-white hover:scale-[1.02] active:scale-[0.98] transition-all shadow-lg"
-                            id="submitBtn">
-                            登 录
-                        </button>
-                    </div>
-                </form>
-
-                <div class="divider text-base-content/40 text-sm mt-6">或</div>
-
-                <div class="text-center text-sm">
-                    <span class="text-base-content/60">还没有账户？</span>
-                    <a href="register.html"
-                        class="link link-primary font-medium hover:link-secondary transition-colors">立即注册</a>
-                </div>
-            </div>
+        <!-- Brand Header -->
+        <div class="text-center mb-8 animate-fade-in">
+            <a href="/landing/index.html" class="inline-flex items-center gap-3 mb-4">
+                <span class="text-4xl">📺</span>
+                <span class="text-3xl font-extrabold gradient-text-primary">TikTok Monitor</span>
+            </a>
+            <p class="text-base-content/40 text-sm">登录以访问监控中心</p>
         </div>
+
+        <!-- Login Card -->
+        <div class="glass-card p-8 shadow-2xl animate-fade-in-up delay-100">
+
+            <!-- Alert Box -->
+            <div id="alertBox" class="hidden alert mb-6 text-sm font-medium rounded-xl"></div>
+
+            <form id="loginForm" onsubmit="handleLogin(event)" class="space-y-5">
+
+                <!-- Email -->
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text opacity-70 text-sm">邮箱地址</span></label>
+                    <label class="input input-bordered glass-input rounded-xl flex items-center gap-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 opacity-40" viewBox="0 0 16 16"
+                            fill="currentColor">
+                            <path
+                                d="M2.5 3A1.5 1.5 0 0 0 1 4.5v.793c.026.009.051.02.076.032L7.674 8.51c.206.1.446.1.652 0l6.598-3.185A.755.755 0 0 1 15 5.293V4.5A1.5 1.5 0 0 0 13.5 3h-11Z" />
+                            <path
+                                d="M15 6.954 8.978 9.86a2.25 2.25 0 0 1-1.956 0L1 6.954V11.5A1.5 1.5 0 0 0 2.5 13h11a1.5 1.5 0 0 0 1.5-1.5V6.954Z" />
+                        </svg>
+                        <input type="email" id="email" class="grow bg-transparent text-sm" placeholder="your@email.com"
+                            required autocomplete="email">
+                    </label>
+                </div>
+
+                <!-- Password -->
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text opacity-70 text-sm">密码</span></label>
+                    <label class="input input-bordered glass-input rounded-xl flex items-center gap-3">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 opacity-40" viewBox="0 0 16 16"
+                            fill="currentColor">
+                            <path fill-rule="evenodd"
+                                d="M14 6a4 4 0 0 1-4.899 3.899l-1.955 1.955a.5.5 0 0 1-.353.146H5v1.5a.5.5 0 0 1-.5.5h-2a.5.5 0 0 1-.5-.5v-2.293a.5.5 0 0 1 .146-.353l3.955-3.955A4 4 0 1 1 14 6Zm-4-2a.75.75 0 0 0 0 1.5.5.5 0 0 1 .5.5.75.75 0 0 0 1.5 0 2 2 0 0 0-2-2Z"
+                                clip-rule="evenodd" />
+                        </svg>
+                        <input type="password" id="password" class="grow bg-transparent text-sm" placeholder="••••••••"
+                            required autocomplete="current-password">
+                        <button type="button" onclick="togglePwd('password', 'eyeIcon1')"
+                            class="btn btn-ghost btn-xs btn-circle opacity-50 hover:opacity-100">
+                            <svg id="eyeIcon1" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"
+                                stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                                <path stroke-linecap="round" stroke-linejoin="round"
+                                    d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                            </svg>
+                        </button>
+                    </label>
+                </div>
+
+                <!-- Submit -->
+                <div class="pt-2">
+                    <button type="submit" id="submitBtn"
+                        class="btn btn-block gradient-btn text-white font-semibold rounded-xl h-12">
+                        登 录
+                    </button>
+                </div>
+
+            </form>
+
+            <div class="gradient-divider"></div>
+
+            <div class="text-center text-sm">
+                <span class="opacity-40">还没有账户？</span>
+                <a href="register.html" class="link link-primary ml-1 font-medium">立即注册 →</a>
+            </div>
+
+        </div>
+
+        <!-- Back link -->
+        <div class="text-center mt-6 animate-fade-in delay-300">
+            <a href="/landing/index.html" class="text-xs opacity-30 hover:opacity-60 transition-opacity">← 返回首页</a>
+        </div>
+
     </div>
 
+    <script src="/auth.js"></script>
     <script>
-        if (localStorage.getItem('accessToken')) {
-            window.location.href = '/';
+        // Already logged in → go to dashboard
+        if (localStorage.getItem('accessToken')) window.location.href = '/';
+
+        function togglePwd(inputId, iconId) {
+            const el = document.getElementById(inputId);
+            el.type = el.type === 'password' ? 'text' : 'password';
         }
 
-        function showAlert(message, type = 'error') {
+        function showAlert(msg, type = 'error') {
             const box = document.getElementById('alertBox');
-            box.className = `alert alert-${type} shadow-lg mb-4 text-sm font-medium animate-bounce`;
-            box.innerHTML = `
-                <svg xmlns="http://www.w3.org/2000/svg" class="stroke-current shrink-0 h-6 w-6" fill="none" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${type === 'error' ? 'M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z' : 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z'}" /></svg>
-                <span>${message}</span>
-            `;
+            const colors = { error: 'alert-error', success: 'alert-success', warning: 'alert-warning' };
+            box.className = `alert ${colors[type] || 'alert-info'} mb-6 text-sm font-medium rounded-xl`;
+            box.innerHTML = `<span>${msg}</span>`;
             box.classList.remove('hidden');
-        }
-
-        function togglePassword() {
-            const input = document.getElementById('password');
-            input.type = input.type === 'password' ? 'text' : 'password';
         }
 
         async function handleLogin(e) {
             e.preventDefault();
             const btn = document.getElementById('submitBtn');
-            const originalText = btn.innerHTML;
-            btn.innerHTML = '<span class="loading loading-spinner"></span> 登录中...';
+            const orig = btn.innerHTML;
+            btn.innerHTML = '<span class="loading loading-spinner loading-sm"></span> 登录中...';
             btn.disabled = true;
 
-            const email = document.getElementById('email').value.trim();
-            const password = document.getElementById('password').value;
-
             try {
-                const response = await fetch('/api/auth/login', {
+                const res = await fetch('/api/auth/login', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, password })
+                    body: JSON.stringify({
+                        email: document.getElementById('email').value.trim(),
+                        password: document.getElementById('password').value
+                    })
                 });
-
-                const data = await response.json();
-
-                if (!response.ok) {
-                    throw new Error(data.error || '登录失败');
-                }
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '登录失败');
 
                 localStorage.setItem('accessToken', data.accessToken);
                 localStorage.setItem('refreshToken', data.refreshToken);
 
-                btn.innerHTML = '录登成功!';
+                btn.innerHTML = '✅ 登录成功！';
                 btn.classList.add('btn-success');
-                window.location.href = '/';
+
+                // Redirect: check for ?next= param
+                const next = new URLSearchParams(window.location.search).get('next');
+                setTimeout(() => { window.location.href = next || '/'; }, 600);
+
             } catch (err) {
-                showAlert(err.message, 'error');
-                btn.innerHTML = originalText;
+                showAlert(err.message);
+                btn.innerHTML = orig;
                 btn.disabled = false;
             }
         }

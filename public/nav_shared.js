@@ -1,157 +1,142 @@
 /**
- * Shared Navigation - Unified navbar for all landing pages
- * Include this script + call injectNavbar() on each page
+ * nav_shared.js — TikTok Monitor Unified Navigation
+ *
+ * Usage: Include this script in any landing page.
+ * It auto-injects a consistent dark glass navbar into #app-navbar.
+ *
+ * Data attributes:
+ *   <html data-nav-active="user-center"> — override active tab detection
  */
 (function () {
-    const token = localStorage.getItem('accessToken');
+    'use strict';
 
-    // Check auth for landing pages - redirect if no token on protected pages
-    function checkLandingAuth() {
-        const publicPages = ['/landing/', '/landing/index.html', '/landing/login.html', '/landing/register.html'];
-        const currentPath = window.location.pathname;
-        const isPublic = publicPages.some(p => currentPath === p || currentPath.endsWith(p));
+    const TOKEN_KEY = 'accessToken';
 
-        if (!token && !isPublic) {
-            window.location.href = '/landing/login.html';
-            return false;
-        }
-        return true;
+    const NAV_LINKS = [
+        { id: 'home', href: '/landing/index.html', label: '首页', guestOk: true },
+        { id: 'monitor', href: '/', label: '监控中心', guestOk: false },
+        { id: 'user-center', href: '/landing/user-center.html', label: '用户中心', guestOk: false },
+        { id: 'subscription', href: '/landing/subscription.html', label: '套餐订阅', guestOk: true },
+    ];
+
+    const ADMIN_LINKS = [
+        { id: 'admin', href: '/landing/admin.html', label: '后台管理' }
+    ];
+
+    function getActiveId() {
+        // Allow explicit override via <html data-nav-active="...">
+        const override = document.documentElement.dataset.navActive;
+        if (override) return override;
+
+        const path = window.location.pathname;
+        if (path === '/' || path === '/index.html') return 'monitor';
+        if (path.includes('user-center')) return 'user-center';
+        if (path.includes('subscription')) return 'subscription';
+        if (path.includes('admin')) return 'admin';
+        if (path.includes('index') || path.endsWith('/landing/') || path.endsWith('/landing')) return 'home';
+        return '';
     }
 
-    // Build navbar HTML
-    function buildNavbar(activePage) {
-        const isLoggedIn = !!token;
+    function buildNavLinks(isLoggedIn, isAdmin, activeId) {
+        const visible = NAV_LINKS.filter(l => l.guestOk || isLoggedIn);
+        const all = isAdmin ? [...visible, ...ADMIN_LINKS] : visible;
 
-        let user = null;
-        try {
-            // Try to decode JWT to get user info without API call
-            const payload = token ? JSON.parse(atob(token.split('.')[1])) : null;
-            if (payload) user = { email: payload.email || '', role: payload.role || 'user', nickname: payload.nickname || '' };
-        } catch (e) { /* ignore */ }
+        return all.map(l => {
+            const active = l.id === activeId ? 'active' : '';
+            const adminCls = l.id === 'admin' ? 'text-warning' : '';
+            return `<a href="${l.href}" class="nav-link ${active} ${adminCls} btn btn-ghost btn-sm rounded-lg">${l.label}</a>`;
+        }).join('');
+    }
 
+    function buildNavbar(user) {
+        const isLoggedIn = !!user;
         const isAdmin = user?.role === 'admin';
-        const displayName = user?.nickname || user?.email || '';
-        const initial = displayName ? displayName[0].toUpperCase() : '?';
+        const activeId = getActiveId();
 
-        // Nav items
-        const navItems = [
-            { href: '/', label: '监控中心', icon: '📺', auth: true },
-            { href: '/landing/user-center.html', label: '用户中心', icon: '', auth: true, id: 'user-center' },
-            { href: '/landing/index.html#pricing', label: '套餐定价', icon: '', auth: false, id: 'pricing' },
-        ];
+        const links = buildNavLinks(isLoggedIn, isAdmin, activeId);
+        const initial = user ? (user.nickname || user.email || '?')[0].toUpperCase() : '';
 
-        const adminItems = isAdmin ? [
-            { href: '/landing/admin.html#users', label: '用户管理', icon: '', auth: true, id: 'admin' },
-            { href: '/landing/admin.html#orders', label: '充值订单', icon: '', auth: true, id: 'admin-orders' },
-        ] : [];
+        const rightSection = isLoggedIn
+            ? `<div id="userMenuSlot"></div>`
+            : `<a href="/landing/login.html"    class="btn btn-ghost btn-sm">登录</a>
+               <a href="/landing/register.html" class="btn btn-sm gradient-btn text-white">注册</a>`;
 
         return `
-        <div class="navbar bg-base-100/60 backdrop-blur-md sticky top-0 z-50 border-b border-base-content/5 px-6">
-            <div class="flex-1">
-                <a href="${isLoggedIn ? '/' : '/landing/'}" class="btn btn-ghost text-lg font-bold tracking-tight gap-2">
-                    <span class="text-primary">TikTok Monitor</span>
-                </a>
+          <nav class="glass-navbar sticky top-0 z-50 w-full">
+            <div class="max-w-[1400px] mx-auto px-4 flex items-center h-14 gap-4">
+              <!-- Brand -->
+              <a href="/landing/index.html" class="flex items-center gap-2 shrink-0 mr-4">
+                <span class="text-xl">📺</span>
+                <span class="font-extrabold text-base tracking-tight gradient-text-primary">TikTok Monitor</span>
+              </a>
+
+              <!-- Nav Links (desktop) -->
+              <div class="hidden md:flex items-center gap-1 flex-1">
+                ${links}
+              </div>
+
+              <!-- Right: User Menu or Auth buttons -->
+              <div class="ml-auto flex items-center gap-2">
+                ${rightSection}
+
+                <!-- Mobile menu toggle -->
+                <button id="mobileMenuBtn" class="btn btn-ghost btn-sm btn-square md:hidden" onclick="toggleMobileMenu()">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+              </div>
             </div>
-            <div class="flex-none gap-1 hidden md:flex">
-                ${isLoggedIn ? navItems.filter(i => !i.auth || isLoggedIn).map(i =>
-            `<a href="${i.href}" class="btn btn-ghost btn-sm text-sm ${activePage === i.id ? 'text-primary' : 'text-base-content/70'}">${i.icon ? i.icon + ' ' : ''}${i.label}</a>`
-        ).join('') : ''}
-                ${isLoggedIn && isAdmin ? '<div class="divider divider-horizontal mx-0 h-6 self-center"></div>' : ''}
-                ${adminItems.map(i =>
-            `<a href="${i.href}" class="btn btn-ghost btn-sm text-sm text-base-content/70">${i.label}</a>`
-        ).join('')}
-                ${isLoggedIn ? `
-                    <div class="dropdown dropdown-end ml-2">
-                        <div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-2">
-                            <div class="avatar placeholder">
-                                <div class="bg-primary text-primary-content rounded-full w-7">
-                                    <span class="text-xs">${initial}</span>
-                                </div>
-                            </div>
-                            <span class="text-sm">${displayName}</span>
-                            ${isAdmin ? '<span class="badge badge-warning badge-xs">Admin</span>' : ''}
-                        </div>
-                        <ul tabindex="0" class="dropdown-content menu bg-base-100 rounded-box z-50 w-48 p-2 shadow-xl mt-2 border border-base-content/5">
-                            <li><a onclick="doSharedLogout()" class="text-error text-sm">退出登录</a></li>
-                        </ul>
-                    </div>
-                ` : `
-                    <a href="/landing/login.html" class="btn btn-ghost btn-sm text-sm">登录</a>
-                    <a href="/landing/register.html" class="btn btn-primary btn-sm text-sm">注册</a>
-                `}
+
+            <!-- Mobile dropdown -->
+            <div id="mobileMenu" class="hidden md:hidden border-t border-white/5 bg-black/40 backdrop-blur-xl px-4 py-3 space-y-1">
+              ${buildNavLinks(isLoggedIn, isAdmin, activeId).replace(/btn btn-ghost btn-sm rounded-lg/g, 'block w-full text-left px-4 py-2 rounded-lg opacity-75 hover:opacity-100 hover:bg-white/5 transition-all')}
+              ${isLoggedIn ? `<hr class="border-white/10 my-2"><button onclick="window.logout()" class="block w-full text-left px-4 py-2 rounded-lg text-error opacity-80 hover:opacity-100">🚪 退出登录</button>` : ''}
             </div>
-            <div class="flex-none md:hidden dropdown dropdown-end">
-                <label tabindex="0" class="btn btn-ghost btn-circle btn-sm">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
-                    </svg>
-                </label>
-                <ul tabindex="0" class="menu menu-sm dropdown-content mt-3 z-50 p-2 shadow-xl bg-base-100 rounded-box w-52 border border-base-content/5">
-                    ${isLoggedIn ? navItems.filter(i => !i.auth || isLoggedIn).map(i =>
-            `<li><a href="${i.href}">${i.icon ? i.icon + ' ' : ''}${i.label}</a></li>`
-        ).join('') : ''}
-                    ${adminItems.length > 0 ? '<li class="menu-title"><span>管理</span></li>' : ''}
-                    ${adminItems.map(i => `<li><a href="${i.href}">${i.label}</a></li>`).join('')}
-                    <li class="divider"></li>
-                    ${isLoggedIn
-                ? '<li><a onclick="doSharedLogout()" class="text-error">退出登录</a></li>'
-                : '<li><a href="/landing/login.html">登录</a></li><li><a href="/landing/register.html">注册</a></li>'
-            }
-                </ul>
-            </div>
-        </div>`;
+          </nav>
+        `;
     }
 
-    // Global logout function
-    window.doSharedLogout = function () {
-        const rt = localStorage.getItem('refreshToken');
-        fetch('/api/auth/logout', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ refreshToken: rt })
-        }).catch(() => null).finally(() => {
-            localStorage.removeItem('accessToken');
-            localStorage.removeItem('refreshToken');
-            window.location.href = '/landing/';
-        });
+    window.toggleMobileMenu = function () {
+        const menu = document.getElementById('mobileMenu');
+        if (menu) menu.classList.toggle('hidden');
     };
 
-    // Inject navbar into page
-    window.injectNavbar = function (activePage) {
-        if (!checkLandingAuth()) return;
+    async function init() {
+        const slot = document.getElementById('app-navbar');
+        if (!slot) return;
 
-        const container = document.getElementById('app-navbar');
-        if (container) {
-            container.innerHTML = buildNavbar(activePage);
+        const token = localStorage.getItem(TOKEN_KEY);
+        let user = null;
+
+        if (token) {
+            try {
+                const res = await fetch('/api/auth/me', {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                if (res.ok) user = await res.json();
+            } catch { }
         }
-    };
 
-    // Auto-inject on DOMContentLoaded if container exists
-    document.addEventListener('DOMContentLoaded', () => {
-        const container = document.getElementById('app-navbar');
-        if (container && !container.innerHTML.trim()) {
-            // Detect active page from URL
-            const path = window.location.pathname;
-            let active = '';
-            if (path.includes('user-center')) active = 'user-center';
-            else if (path.includes('admin')) active = 'admin';
-            container.innerHTML = buildNavbar(active);
+        slot.innerHTML = buildNavbar(user);
+
+        // Inject user menu via auth.js helper if logged in
+        if (user && typeof window.injectUserMenu === 'function') {
+            window.injectUserMenu(user, 'userMenuSlot');
         }
-    });
 
-    // Shared authFetch for landing pages
-    window.authFetch = window.authFetch || function (url, options = {}) {
-        const t = localStorage.getItem('accessToken');
-        if (!options.headers) options.headers = {};
-        if (t) options.headers['Authorization'] = `Bearer ${t}`;
-        return fetch(url, options).then(res => {
-            if (res.status === 401) {
-                localStorage.removeItem('accessToken');
-                localStorage.removeItem('refreshToken');
-                window.location.href = '/landing/login.html';
-                return null;
-            }
-            return res;
-        });
-    };
+        // If guest visiting a protected page, redirect to login
+        // (protected pages should also call initPage() for server-side validation)
+        const path = window.location.pathname;
+        const protectedPaths = ['/landing/user-center.html', '/landing/subscription.html', '/landing/admin.html'];
+        if (!user && protectedPaths.some(p => path.includes(p))) {
+            window.location.href = '/landing/login.html';
+        }
+    }
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 })();
