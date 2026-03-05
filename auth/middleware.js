@@ -77,6 +77,8 @@ function requireAdmin(req, res, next) {
  */
 async function loadSubscription(req, res, next) {
     try {
+        console.log(`[Auth] Loading subscription for user ${req.user.id}`);
+        
         const sub = await db.get(`
             SELECT us.*, sp.code as plan_code, sp.name as plan_name, 
                    sp.room_limit as plan_room_limit, sp.history_days,
@@ -89,6 +91,7 @@ async function loadSubscription(req, res, next) {
         `, [req.user.id]);
 
         if (sub) {
+            console.log(`[Auth] Found active subscription for user ${req.user.id}: plan=${sub.plan_code}, end_date=${sub.end_date}`);
             // Also calculate addon room count
             const addonResult = await db.get(`
                 SELECT COALESCE(SUM(rap.room_count), 0) as addon_rooms
@@ -103,6 +106,22 @@ async function loadSubscription(req, res, next) {
                 totalRoomLimit: sub.plan_room_limit === -1 ? -1 : sub.plan_room_limit + parseInt(addonResult?.addon_rooms || 0)
             };
         } else {
+            // Check if there's any subscription record at all (for debugging)
+            const anySub = await db.get(`
+                SELECT us.*, sp.code as plan_code, us.end_date, us.status
+                FROM user_subscriptions us
+                LEFT JOIN subscription_plans sp ON us.plan_id = sp.id
+                WHERE us.user_id = $1
+                ORDER BY us.created_at DESC
+                LIMIT 1
+            `, [req.user.id]);
+            
+            if (anySub) {
+                console.log(`[Auth] User ${req.user.id} has subscription but not active: status=${anySub.status}, end_date=${anySub.end_date}, plan_code=${anySub.plan_code}`);
+            } else {
+                console.log(`[Auth] User ${req.user.id} has no subscription record`);
+            }
+            
             // No active subscription - user must purchase to use
             req.subscription = {
                 plan_code: 'none',

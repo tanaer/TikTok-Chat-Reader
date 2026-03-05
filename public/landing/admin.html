@@ -254,11 +254,38 @@
                                         <input type="text" id="cfg_default_plan_code"
                                             class="input input-sm glass-input rounded-lg" placeholder="例如: free 或 none">
                                     </div>
-                                    <div class="form-control">
-                                        <label class="label"><span class="label-text">收款二维码URL (充值使用)</span></label>
-                                        <input type="text" id="cfg_payment_qr_code"
-                                            class="input input-sm glass-input rounded-lg" placeholder="https://...">
+                                </div>
+                            </div>
+
+                            <!-- Payment QR Codes -->
+                            <div>
+                                <h3 class="font-bold text-base mb-3 border-b border-white/10 pb-2 text-accent">固定码支付通道</h3>
+                                <p class="text-xs opacity-40 mb-4">上传收款二维码，用户充值时展示。支持支付宝/微信等。</p>
+                                
+                                <div class="mb-4">
+                                    <div class="flex gap-2 items-end">
+                                        <div class="form-control flex-1">
+                                            <label class="label pb-1"><span class="label-text opacity-60 text-xs">二维码名称</span></label>
+                                            <input type="text" id="qrName" class="input input-sm glass-input rounded-lg" placeholder="如：支付宝收款码">
+                                        </div>
+                                        <div class="form-control">
+                                            <label class="label pb-1"><span class="label-text opacity-60 text-xs">支付类型</span></label>
+                                            <select id="qrPaymentType" class="select select-sm glass-input rounded-lg">
+                                                <option value="alipay">支付宝</option>
+                                                <option value="wxpay">微信</option>
+                                                <option value="fixed_qr">其他</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-control">
+                                            <label class="label pb-1"><span class="label-text opacity-60 text-xs">选择图片</span></label>
+                                            <input type="file" id="qrImageInput" accept="image/*" class="file-input file-input-sm glass-input rounded-lg w-40">
+                                        </div>
+                                        <button onclick="addQrCode()" class="btn btn-sm btn-accent rounded-lg">添加</button>
                                     </div>
+                                </div>
+
+                                <div id="qrCodesList" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+                                    <div class="text-center py-8 opacity-30 col-span-full">加载中...</div>
                                 </div>
                             </div>
 
@@ -973,12 +1000,113 @@
             }
         }
 
+        // ── Payment QR Codes ─────────────────────────────────────────────
+        async function loadQrCodes() {
+            try {
+                const qrCodes = await $.get('/api/admin/payment/qr-codes');
+                const container = document.getElementById('qrCodesList');
+                
+                if (!qrCodes || qrCodes.length === 0) {
+                    container.innerHTML = '<div class="text-center py-8 opacity-30 col-span-full">暂无收款二维码，请添加</div>';
+                    return;
+                }
+                
+                container.innerHTML = qrCodes.map(qr => `
+                    <div class="glass-card p-3 relative">
+                        <div class="absolute top-2 right-2 flex gap-1">
+                            <button onclick="toggleQrCode(${qr.id}, ${qr.isActive})" class="btn btn-xs btn-ghost ${qr.isActive ? 'text-success' : 'opacity-40'}">
+                                ${qr.isActive ? '✓' : '✗'}
+                            </button>
+                            <button onclick="deleteQrCode(${qr.id})" class="btn btn-xs btn-ghost text-error">✕</button>
+                        </div>
+                        <div class="aspect-square bg-base-200 rounded-lg mb-2 flex items-center justify-center overflow-hidden">
+                            ${qr.imageData ? 
+                                `<img src="${qr.imageData}" class="w-full h-full object-contain" alt="${qr.name}">` :
+                                `<span class="text-4xl opacity-20">📷</span>`
+                            }
+                        </div>
+                        <div class="text-sm font-medium truncate">${qr.name || '未命名'}</div>
+                        <div class="text-xs opacity-40">${qr.paymentType === 'alipay' ? '支付宝' : qr.paymentType === 'wxpay' ? '微信' : '其他'}</div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                document.getElementById('qrCodesList').innerHTML = '<div class="text-center py-8 text-error col-span-full">加载失败</div>';
+            }
+        }
+
+        async function addQrCode() {
+            const name = document.getElementById('qrName').value.trim();
+            const paymentType = document.getElementById('qrPaymentType').value;
+            const fileInput = document.getElementById('qrImageInput');
+            
+            if (!name) {
+                showAlert('请输入二维码名称', 'warning');
+                return;
+            }
+            
+            if (!fileInput.files || !fileInput.files[0]) {
+                showAlert('请选择二维码图片', 'warning');
+                return;
+            }
+            
+            // Read file as base64
+            const file = fileInput.files[0];
+            const reader = new FileReader();
+            
+            reader.onload = async function(e) {
+                const imageData = e.target.result;
+                
+                try {
+                    await $.ajax({
+                        url: '/api/admin/payment/qr-codes',
+                        type: 'POST',
+                        contentType: 'application/json',
+                        data: JSON.stringify({ name, imageData, paymentType })
+                    });
+                    showAlert('二维码添加成功', 'success');
+                    document.getElementById('qrName').value = '';
+                    fileInput.value = '';
+                    loadQrCodes();
+                } catch (err) {
+                    showAlert(err.responseJSON?.error || '添加失败', 'error');
+                }
+            };
+            
+            reader.readAsDataURL(file);
+        }
+
+        async function toggleQrCode(id, currentActive) {
+            try {
+                await $.ajax({
+                    url: `/api/admin/payment/qr-codes/${id}`,
+                    type: 'PUT',
+                    contentType: 'application/json',
+                    data: JSON.stringify({ isActive: !currentActive })
+                });
+                loadQrCodes();
+            } catch (err) {
+                showAlert(err.responseJSON?.error || '操作失败', 'error');
+            }
+        }
+
+        async function deleteQrCode(id) {
+            if (!confirm('确定要删除此二维码吗？')) return;
+            try {
+                await $.ajax({ url: `/api/admin/payment/qr-codes/${id}`, type: 'DELETE' });
+                showAlert('二维码已删除', 'success');
+                loadQrCodes();
+            } catch (err) {
+                showAlert(err.responseJSON?.error || '删除失败', 'error');
+            }
+        }
+
         // ── Init ────────────────────────────────────────────────
         window.initPage({
             requireAuth: true,
             requireAdmin: true,
             onReady() {
                 loadStats();
+                loadQrCodes(); // Load QR codes
                 // Lazy load: plans data for modal dropdown
                 PlanService.loadPlans().then(data => {
                     const sel = document.getElementById('modalPlanCode');
@@ -988,50 +1116,7 @@
         });
     </script>
 
-    <!-- Modal: Edit Plan -->
-    <dialog id="editPlanModal" class="modal">
-        <div class="modal-box max-w-sm glass-card border border-white/10" style="background:rgba(15,15,20,0.95)">
-            <h3 class="font-bold text-lg mb-4">编辑套餐价格与配额</h3>
-            <input type="hidden" id="editPlanId">
-            <input type="hidden" id="editPlanCode">
 
-            <div class="form-control w-full mb-3">
-                <label class="label pb-1"><span class="label-text opacity-70 text-xs">房间上限 (-1 为无限制)</span></label>
-                <input type="number" id="editPlanRoomLimit" class="input input-bordered glass-input input-sm w-full" />
-            </div>
-
-            <div class="form-control w-full mb-3">
-                <label class="label pb-1"><span class="label-text opacity-70 text-xs">月付价格 (分, 100=1元)</span></label>
-                <input type="number" id="editPlanPriceMonthly"
-                    class="input input-bordered glass-input input-sm w-full" />
-            </div>
-
-            <div class="form-control w-full mb-3">
-                <label class="label pb-1"><span class="label-text opacity-70 text-xs">季付价格 (分)</span></label>
-                <input type="number" id="editPlanPriceQuarterly"
-                    class="input input-bordered glass-input input-sm w-full" />
-            </div>
-
-            <div class="form-control w-full mb-4">
-                <label class="label pb-1"><span class="label-text opacity-70 text-xs">年付价格 (分)</span></label>
-                <input type="number" id="editPlanPriceAnnual"
-                    class="input input-bordered glass-input input-sm w-full" />
-            </div>
-
-            <div class="form-control w-full mb-6">
-                <label class="cursor-pointer label justify-start gap-4">
-                    <span class="label-text font-bold">套餐上架状态</span>
-                    <input type="checkbox" id="editPlanIsActive" class="toggle toggle-success toggle-sm" />
-                </label>
-            </div>
-
-            <div class="modal-action mt-0">
-                <form method="dialog"><button class="btn btn-sm btn-ghost rounded-lg">取消</button></form>
-                <button class="btn btn-sm btn-primary rounded-lg px-6" onclick="savePlan()">保存修改</button>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>close</button></form>
-    </dialog>
 </body>
 
 </html>

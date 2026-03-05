@@ -258,19 +258,41 @@
             <div class="form-control mb-6">
                 <div class="text-xs opacity-40 mb-2">选择支付方式</div>
                 <div class="grid grid-cols-2 gap-2">
-                    <button class="pay-btn btn btn-outline rounded-xl btn-sm active-pay" id="pay-balance"
-                        onclick="selectPay('balance',this)">💰 余额支付</button>
-                    <button class="pay-btn btn btn-outline rounded-xl btn-sm opacity-40 cursor-not-allowed" disabled
-                        title="即将上线">💳 微信/支付宝</button>
+                    <button class="pay-btn btn btn-outline rounded-xl btn-sm active-pay" id="pay-qr"
+                        onclick="selectPay('qr',this)">📱 扫码支付</button>
+                    <button class="pay-btn btn btn-outline rounded-xl btn-sm" id="pay-stripe"
+                        onclick="selectPay('stripe',this)">💳 在线支付</button>
+                </div>
+            </div>
+
+            <!-- QR Code Display Area -->
+            <div id="qrPaymentArea" class="mb-6">
+                <div class="text-center">
+                    <div class="text-xs opacity-40 mb-2">请扫描下方二维码完成支付</div>
+                    <div id="qrCodesDisplay" class="flex flex-wrap justify-center gap-4">
+                        <span class="loading loading-spinner loading-md"></span>
+                    </div>
+                    <div class="text-xs opacity-50 mt-3">
+                        支付金额: <span class="text-primary font-bold">¥<span id="qrAmountDisplay">100</span></span>
+                    </div>
+                    <div class="text-xs opacity-40 mt-2">
+                        扫码支付后请联系客服确认到账
+                    </div>
+                </div>
+            </div>
+
+            <!-- Stripe Payment Area (hidden by default) -->
+            <div id="stripePaymentArea" class="mb-6 hidden">
+                <div class="text-center py-4 opacity-40">
+                    <p>在线支付功能开发中...</p>
+                    <p class="text-xs mt-2">请使用扫码支付方式</p>
                 </div>
             </div>
 
             <div class="modal-action gap-2">
                 <form method="dialog">
-                    <button class="btn btn-ghost rounded-xl">取消</button>
+                    <button class="btn btn-ghost rounded-xl">关闭</button>
                 </form>
-                <button id="rechargeBtn" class="btn gradient-btn text-white rounded-xl px-8"
-                    onclick="doRecharge()">确认充值</button>
             </div>
         </div>
         <form method="dialog" class="modal-backdrop"><button></button></form>
@@ -532,34 +554,52 @@
             document.querySelectorAll('.amount-btn').forEach(b => b.classList.remove('btn-primary'));
             if (btn) btn.classList.add('btn-primary');
             document.getElementById('customAmount').value = btn ? '' : val;
+            // Update QR amount display
+            document.getElementById('qrAmountDisplay').textContent = val;
         }
 
         function selectPay(method, btn) {
             selectedPayMethod = method;
-            document.querySelectorAll('.pay-btn').forEach(b => b.classList.remove('btn-primary'));
-            btn.classList.add('btn-primary');
+            document.querySelectorAll('.pay-btn').forEach(b => {
+                b.classList.remove('btn-primary', 'active-pay');
+            });
+            btn.classList.add('btn-primary', 'active-pay');
+            
+            // Toggle payment areas
+            if (method === 'qr') {
+                document.getElementById('qrPaymentArea').classList.remove('hidden');
+                document.getElementById('stripePaymentArea').classList.add('hidden');
+            } else {
+                document.getElementById('qrPaymentArea').classList.add('hidden');
+                document.getElementById('stripePaymentArea').classList.remove('hidden');
+            }
         }
 
-        async function doRecharge() {
-            if (!selectedAmount || selectedAmount < 1) { showToast('请选择或输入充值金额', 'warning'); return; }
-            const btn = document.getElementById('rechargeBtn');
-            const orig = btn.innerHTML;
-            btn.innerHTML = '<span class="loading loading-spinner loading-sm"></span> 创建订单...';
-            btn.disabled = true;
+        async function loadQrCodes() {
             try {
-                const res = await fetch('/api/payment/recharge', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ amount: selectedAmount * 100, paymentMethod: selectedPayMethod })
-                });
-                const d = await res.json();
-                if (!res.ok) throw new Error(d.error);
-                showToast('充值订单创建成功！', 'success');
-                document.getElementById('rechargeModal').close();
-                setTimeout(loadData, 1500);
-            } catch (err) { showToast(err.message || '充值失败', 'error'); }
-            btn.innerHTML = orig;
-            btn.disabled = false;
+                const res = await fetch('/api/admin/payment/qr-codes/public');
+                const qrCodes = await res.json();
+                const container = document.getElementById('qrCodesDisplay');
+                
+                if (!qrCodes || qrCodes.length === 0) {
+                    container.innerHTML = '<p class="text-sm opacity-40">暂无收款二维码，请联系客服</p>';
+                    return;
+                }
+                
+                container.innerHTML = qrCodes.map(qr => `
+                    <div class="text-center">
+                        <div class="w-32 h-32 bg-base-200 rounded-lg flex items-center justify-center overflow-hidden mb-1">
+                            ${qr.imageData ? 
+                                `<img src="${qr.imageData}" class="w-full h-full object-contain" alt="${qr.name}">` :
+                                `<span class="text-2xl opacity-20">📷</span>`
+                            }
+                        </div>
+                        <div class="text-xs opacity-60">${qr.name || ''}</div>
+                    </div>
+                `).join('');
+            } catch (err) {
+                document.getElementById('qrCodesDisplay').innerHTML = '<p class="text-sm text-error">二维码加载失败</p>';
+            }
         }
 
         // ── Init ────────────────────────────────────────────────
@@ -568,6 +608,7 @@
             onReady(user) {
                 document.getElementById('welcomeText').textContent = `欢迎回来，${user.nickname || user.email}`;
                 loadData();
+                loadQrCodes(); // Load QR codes on page ready
             }
         });
 

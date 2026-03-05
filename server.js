@@ -46,8 +46,10 @@ app.use('/api', (req, res, next) => {
     // Public routes that don't require auth
     const publicPaths = ['/auth/login', '/auth/register', '/auth/refresh', '/auth/logout'];
     // Also allow GET /subscription/plans (public pricing page)
+    // And GET /admin/payment/qr-codes/public (public QR codes for recharge)
     if (publicPaths.some(p => req.path.startsWith(p))) return next();
     if (req.method === 'GET' && req.path === '/subscription/plans') return next();
+    if (req.method === 'GET' && req.path === '/admin/payment/qr-codes/public') return next();
     // Everything else requires auth
     return requireAuth(req, res, next);
 });

@@ -14,28 +14,29 @@ const { requireAuth, loadSubscription, optionalAuth } = require('../auth/middlew
  */
 router.get('/plans', optionalAuth, async (req, res) => {
     try {
-        const plans = await db.query(
-            `SELECT id, name, code, price_monthly, price_quarterly, price_annual, room_limit, 
-                    history_days, api_rate_limit, feature_flags, ai_credits_monthly, description
-             FROM subscription_plans 
-             WHERE is_active = true 
-             ORDER BY sort_order`
-        );
+        // Parallel queries for better performance
+        const [plans, addons, userResult] = await Promise.all([
+            db.query(
+                `SELECT id, name, code, price_monthly, price_quarterly, price_annual, room_limit, 
+                        history_days, api_rate_limit, feature_flags, ai_credits_monthly, description,
+                        plan_type, duration_days, is_active
+                 FROM subscription_plans 
+                 WHERE is_active = true 
+                 ORDER BY sort_order`
+            ),
+            db.query(
+                `SELECT id, name, code, room_count, price_monthly, price_quarterly, price_annual
+                 FROM room_addon_packages 
+                 WHERE is_active = true 
+                 ORDER BY sort_order`
+            ),
+            req.user ? db.get('SELECT balance FROM users WHERE id = $1', [req.user.id]) : Promise.resolve(null)
+        ]);
 
-        const addons = await db.query(
-            `SELECT id, name, room_count, price_monthly, price_quarterly, price_annual
-             FROM room_addon_packages 
-             WHERE is_active = true 
-             ORDER BY sort_order`
-        );
+        const balance = userResult?.balance || 0;
 
-        // Get current user balance if logged in
-        let balance = 0;
-        if (req.user) {
-            const user = await db.get('SELECT balance FROM users WHERE id = $1', [req.user.id]);
-            balance = user?.balance || 0;
-        }
-
+        // Add cache headers for better performance
+        res.set('Cache-Control', 'public, max-age=300'); // 5 minutes cache
         res.json({ plans, addons, balance });
     } catch (err) {
         console.error('[Subscription] Error getting plans:', err);

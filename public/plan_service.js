@@ -189,6 +189,42 @@
         const actionText = isLoggedIn ? '用户中心' : '注册后购买';
 
         container.innerHTML = plans.map(p => {
+            // Build feature list dynamically based on plan config
+            const features = [];
+            
+            // Room limit
+            features.push(`<li class="flex items-center gap-2"><span class="text-primary">✓</span> 基础监控 <strong class="text-base-content">${p.roomLimit === -1 ? '无限' : p.roomLimit}</strong> 个房间</li>`);
+            
+            // History days
+            if (p.historyDays === -1) {
+                features.push(`<li class="flex items-center gap-2"><span class="text-primary">✓</span> 历史数据 <strong class="text-base-content">永久</strong> 保存</li>`);
+            } else if (p.historyDays && p.historyDays > 7) {
+                features.push(`<li class="flex items-center gap-2"><span class="text-primary">✓</span> 历史数据 <strong class="text-base-content">${p.historyDays}</strong> 天</li>`);
+            }
+            
+            // AI credits
+            if (p.aiCreditsMonthly && p.aiCreditsMonthly > 0) {
+                features.push(`<li class="flex items-center gap-2"><span class="text-primary">✓</span> AI 分析额度 <strong class="text-base-content">${p.aiCreditsMonthly}</strong> 次/月</li>`);
+            }
+            
+            // Feature flags
+            const featureFlags = p.featureFlags || {};
+            if (featureFlags.export) {
+                features.push(`<li class="flex items-center gap-2"><span class="text-primary">✓</span> 数据导出功能</li>`);
+            }
+            if (featureFlags.ai_analysis) {
+                features.push(`<li class="flex items-center gap-2"><span class="text-primary">✓</span> AI 深度用户分析</li>`);
+            }
+            if (featureFlags.api_access) {
+                features.push(`<li class="flex items-center gap-2"><span class="text-primary">✓</span> API 接口访问</li>`);
+            }
+            
+            // Room addons (for paid plans)
+            if (p.code !== 'free') {
+                features.push(`<li class="flex items-center gap-2"><span class="text-primary">✓</span> 房间加量包可购</li>`);
+                features.push(`<li class="flex items-center gap-2"><span class="text-primary">✓</span> 解锁自动录制功能</li>`);
+            }
+            
             // Free plan
             if (p.code === 'free') return `
             <div class="plan-card">
@@ -197,7 +233,7 @@
                 <p class="text-sm opacity-40 mb-6 flex-grow">${p.description || '免费体验基础监控功能'}</p>
                 <div class="text-4xl font-extrabold mb-6">¥0</div>
                 <ul class="space-y-3 mb-8 text-sm opacity-70">
-                    <li class="flex items-center gap-2">✓ ${p.roomLimit} 个监控房间</li>
+                    ${features.join('\n                    ')}
                     <li class="flex items-center gap-2 opacity-40">✗ 不支持加量包</li>
                     <li class="flex items-center gap-2 opacity-40">✗ 录制/AI分析不可用</li>
                 </ul>
@@ -220,10 +256,7 @@
                     <span class="opacity-40 text-sm">/${period}</span>
                 </div>
                 <ul class="space-y-3 mb-8 text-sm opacity-70">
-                    <li class="flex items-center gap-2"><span class="text-primary">✓</span> 基础监控 <strong class="text-base-content">${p.roomLimit === -1 ? '无限' : p.roomLimit}</strong> 个房间</li>
-                    <li class="flex items-center gap-2"><span class="text-primary">✓</span> 房间加量包可购</li>
-                    <li class="flex items-center gap-2"><span class="text-primary">✓</span> 解锁自动录制功能</li>
-                    <li class="flex items-center gap-2"><span class="text-primary">✓</span> AI 深度用户分析</li>
+                    ${features.join('\n                    ')}
                 </ul>
                 <a href="${actionUrl}" class="btn ${isFeatured ? 'gradient-btn text-white' : 'btn-outline'} btn-block rounded-xl">${actionText}</a>
             </div>`;

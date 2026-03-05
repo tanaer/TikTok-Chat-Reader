@@ -215,24 +215,48 @@ router.post('/users/:id/set-subscription', async (req, res) => {
         const { id } = req.params;
         const { planCode, billingCycle = 'admin', durationDays = 30 } = req.body;
 
+        console.log(`[Admin] Setting subscription for user ${id}: planCode=${planCode}, durationDays=${durationDays}, by admin ${req.user.id}`);
+
         const plan = await db.get('SELECT * FROM subscription_plans WHERE code = $1', [planCode]);
         if (!plan) {
+            console.log(`[Admin] Plan not found: ${planCode}`);
             return res.status(404).json({ error: '套餐不存在' });
         }
 
+        console.log(`[Admin] Found plan: id=${plan.id}, name=${plan.name}`);
+
         // Cancel existing
-        await db.run(
+        const cancelResult = await db.run(
             `UPDATE user_subscriptions SET status = 'expired', updated_at = NOW()
              WHERE user_id = $1 AND status = 'active'`,
             [parseInt(id)]
         );
+        console.log(`[Admin] Cancelled ${cancelResult.rowCount || 0} existing subscriptions for user ${id}`);
 
         // Create new subscription
-        await db.run(
+        const insertResult = await db.run(
             `INSERT INTO user_subscriptions (user_id, plan_id, billing_cycle, start_date, end_date, status, ai_credits_remaining)
-             VALUES ($1, $2, $3, NOW(), NOW() + INTERVAL '${parseInt(durationDays)} days', 'active', $4)`,
+             VALUES ($1, $2, $3, NOW(), NOW() + INTERVAL '${parseInt(durationDays)} days', 'active', $4) RETURNING id, end_date`,
             [parseInt(id), plan.id, billingCycle, plan.ai_credits_monthly || 0]
         );
+        
+        console.log(`[Admin] Created new subscription for user ${id}: plan=${planCode}, days=${durationDays}, end_date will be calculated from NOW()`);
+        
+        // Verify the insertion
+        const verifySub = await db.get(
+            `SELECT us.id, us.status, us.end_date, sp.code as plan_code 
+             FROM user_subscriptions us 
+             JOIN subscription_plans sp ON us.plan_id = sp.id 
+             WHERE us.user_id = $1 AND us.status = 'active' 
+             ORDER BY us.id DESC LIMIT 1`,
+            [parseInt(id)]
+        );
+        
+        if (verifySub) {
+            console.log(`[Admin] Verification passed: id=${verifySub.id}, status=${verifySub.status}, end_date=${verifySub.end_date}, plan_code=${verifySub.plan_code}`);
+        } else {
+            console.error(`[Admin] Verification FAILED: No active subscription found after insertion for user ${id}`);
+        }
 
         console.log(`[Admin] Subscription set for user ${id}: plan=${planCode}, days=${durationDays}, by admin ${req.user.id}`);
         res.json({ success: true, message: `已为用户设置${plan.name}，有效期${durationDays}天` });
@@ -578,6 +602,134 @@ router.delete('/addons/:id', async (req, res) => {
         await db.run('DELETE FROM subscription_addons WHERE id = $1', [parseInt(id)]);
         res.json({ success: true });
     } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ========================
+// Payment QR Codes (Fixed Code Payment)
+// ========================
+
+/**
+ * GET /api/admin/payment/qr-codes
+ * Get all payment QR codes
+ */
+router.get('/payment/qr-codes', async (req, res) => {
+    try {
+        const qrCodes = await db.query(
+            'SELECT id, name, image_data, image_url, payment_type, is_active, sort_order, created_at FROM payment_qr_codes ORDER BY sort_order, id'
+        );
+        res.json(qrCodes);
+    } catch (err) {
+        console.error('[Admin] Error getting QR codes:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /api/admin/payment/qr-codes
+ * Add a new payment QR code
+ * Body: { name, imageData (base64), paymentType }
+ */
+router.post('/payment/qr-codes', async (req, res) => {
+    try {
+        const { name, imageData, imageUrl, paymentType = 'fixed_qr' } = req.body;
+
+        if (!name) {
+            return res.status(400).json({ error: '请输入二维码名称' });
+        }
+        if (!imageData && !imageUrl) {
+            return res.status(400).json({ error: '请上传二维码图片' });
+        }
+
+        // Get max sort_order
+        const maxOrder = await db.get('SELECT COALESCE(MAX(sort_order), 0) as max_order FROM payment_qr_codes');
+        const sortOrder = (maxOrder?.maxOrder || 0) + 1;
+
+        const result = await db.query(
+            `INSERT INTO payment_qr_codes (name, image_data, image_url, payment_type, is_active, sort_order)
+             VALUES ($1, $2, $3, $4, true, $5) RETURNING id`,
+            [name, imageData || null, imageUrl || null, paymentType, sortOrder]
+        );
+
+        console.log(`[Admin] QR code added: ${name}, type=${paymentType}, by admin ${req.user.id}`);
+        res.json({ success: true, id: result[0]?.id });
+    } catch (err) {
+        console.error('[Admin] Error adding QR code:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * PUT /api/admin/payment/qr-codes/:id
+ * Update a payment QR code
+ */
+router.put('/payment/qr-codes/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, imageData, imageUrl, paymentType, isActive } = req.body;
+
+        const updates = [];
+        const params = [];
+        let idx = 1;
+
+        if (name !== undefined) { updates.push(`name = $${idx++}`); params.push(name); }
+        if (imageData !== undefined) { updates.push(`image_data = $${idx++}`); params.push(imageData); }
+        if (imageUrl !== undefined) { updates.push(`image_url = $${idx++}`); params.push(imageUrl); }
+        if (paymentType !== undefined) { updates.push(`payment_type = $${idx++}`); params.push(paymentType); }
+        if (isActive !== undefined) { updates.push(`is_active = $${idx++}`); params.push(isActive); }
+
+        if (updates.length === 0) {
+            return res.status(400).json({ error: '没有要更新的字段' });
+        }
+
+        updates.push(`updated_at = NOW()`);
+        params.push(parseInt(id));
+
+        await db.run(
+            `UPDATE payment_qr_codes SET ${updates.join(', ')} WHERE id = $${idx}`,
+            params
+        );
+
+        console.log(`[Admin] QR code ${id} updated by admin ${req.user.id}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[Admin] Error updating QR code:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * DELETE /api/admin/payment/qr-codes/:id
+ * Delete a payment QR code
+ */
+router.delete('/payment/qr-codes/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await db.run('DELETE FROM payment_qr_codes WHERE id = $1', [parseInt(id)]);
+        console.log(`[Admin] QR code ${id} deleted by admin ${req.user.id}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[Admin] Error deleting QR code:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * GET /api/admin/payment/qr-codes/public
+ * Get active QR codes for frontend display (no admin required, but needs auth)
+ */
+router.get('/payment/qr-codes/public', async (req, res) => {
+    try {
+        const qrCodes = await db.query(
+            `SELECT id, name, image_data, image_url, payment_type 
+             FROM payment_qr_codes 
+             WHERE is_active = true 
+             ORDER BY sort_order, id`
+        );
+        res.json(qrCodes);
+    } catch (err) {
+        console.error('[Admin] Error getting public QR codes:', err);
         res.status(500).json({ error: err.message });
     }
 });
