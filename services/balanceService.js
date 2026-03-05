@@ -15,7 +15,7 @@ function generateOrderNo(prefix = 'ORD') {
  * Adjust user balance within a transaction
  * Returns { success, balanceBefore, balanceAfter, error }
  */
-async function adjustBalance(userId, amount, type, remark, orderId = null, operatorId = null) {
+async function adjustBalance(userId, amount, type, remark, refOrderNo = null, operatorId = null) {
     const client = await db.pool.connect();
     try {
         await client.query('BEGIN');
@@ -46,9 +46,9 @@ async function adjustBalance(userId, amount, type, remark, orderId = null, opera
 
         // Record balance log
         await client.query(
-            `INSERT INTO balance_log (user_id, type, amount, balance_before, balance_after, order_id, remark, operator_id)
+            `INSERT INTO balance_log (user_id, type, amount, balance_before, balance_after, ref_order_no, description, operator_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [userId, type, Math.round(amount), balanceBefore, balanceAfter, orderId, remark, operatorId]
+            [userId, type, Math.round(amount), balanceBefore, balanceAfter, refOrderNo, remark, operatorId]
         );
 
         await client.query('COMMIT');
@@ -107,9 +107,9 @@ async function purchaseWithBalance(userId, amount, orderType, itemName, remark) 
 
         // Record balance log
         await client.query(
-            `INSERT INTO balance_log (user_id, type, amount, balance_before, balance_after, order_id, remark)
+            `INSERT INTO balance_log (user_id, type, amount, balance_before, balance_after, ref_order_no, description)
              VALUES ($1, 'purchase', $2, $3, $4, $5, $6)`,
-            [userId, -amountInt, balanceBefore, balanceAfter, orderId, itemName]
+            [userId, -amountInt, balanceBefore, balanceAfter, orderNo, itemName]
         );
 
         await client.query('COMMIT');

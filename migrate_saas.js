@@ -105,12 +105,13 @@ async function migrate() {
         }
 
         // =============================================
-        // 4. 修复 balance_log 外键约束 (旧表 -> 新表)
-        //    使用 NOT VALID 避免已有孤立数据阻塞迁移
+        // 4. 修复 balance_log 外键约束 (如需)
+        //    生产环境 balance_log.user_id FK 应指向 users
+        //    生产环境 balance_log.ref_order_no 是 VARCHAR 无 FK
         // =============================================
-        console.log('\n--- Step 4: Fix balance_log foreign keys ---');
+        console.log('\n--- Step 4: Check balance_log foreign keys ---');
 
-        // 检查并修复 balance_log.user_id FK (app_user -> users)
+        // 检查 balance_log.user_id FK 是否指向正确的表
         const fkUser = await client.query(
             `SELECT ccu.table_name AS foreign_table FROM information_schema.table_constraints AS tc
              JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name
@@ -120,30 +121,11 @@ async function migrate() {
         if (fkUser.rows.length > 0 && fkUser.rows[0].foreign_table !== 'users') {
             await client.query(`ALTER TABLE balance_log DROP CONSTRAINT balance_log_user_id_fkey`);
             await client.query(`ALTER TABLE balance_log ADD CONSTRAINT balance_log_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) NOT VALID`);
-            console.log('  [+] Fixed: balance_log.user_id -> users.id (NOT VALID for existing rows)');
-        } else if (fkUser.rows.length === 0) {
-            await client.query(`ALTER TABLE balance_log ADD CONSTRAINT balance_log_user_id_fkey FOREIGN KEY (user_id) REFERENCES users(id) NOT VALID`);
-            console.log('  [+] Added: balance_log.user_id -> users.id (NOT VALID)');
+            console.log('  [+] Fixed: balance_log.user_id -> users.id');
+        } else if (fkUser.rows.length > 0) {
+            console.log('  [=] balance_log.user_id FK already points to users.id');
         } else {
-            console.log('  [=] balance_log.user_id FK already correct');
-        }
-
-        // 检查并修复 balance_log.order_id FK (orders -> payment_records)
-        const fkOrder = await client.query(
-            `SELECT ccu.table_name AS foreign_table FROM information_schema.table_constraints AS tc
-             JOIN information_schema.constraint_column_usage AS ccu ON ccu.constraint_name = tc.constraint_name
-             WHERE tc.table_name = 'balance_log' AND tc.constraint_type = 'FOREIGN KEY'
-             AND tc.constraint_name = 'balance_log_order_id_fkey'`
-        );
-        if (fkOrder.rows.length > 0 && fkOrder.rows[0].foreign_table !== 'payment_records') {
-            await client.query(`ALTER TABLE balance_log DROP CONSTRAINT balance_log_order_id_fkey`);
-            await client.query(`ALTER TABLE balance_log ADD CONSTRAINT balance_log_order_id_fkey FOREIGN KEY (order_id) REFERENCES payment_records(id) NOT VALID`);
-            console.log('  [+] Fixed: balance_log.order_id -> payment_records.id (NOT VALID for existing rows)');
-        } else if (fkOrder.rows.length === 0) {
-            await client.query(`ALTER TABLE balance_log ADD CONSTRAINT balance_log_order_id_fkey FOREIGN KEY (order_id) REFERENCES payment_records(id) NOT VALID`);
-            console.log('  [+] Added: balance_log.order_id -> payment_records.id (NOT VALID)');
-        } else {
-            console.log('  [=] balance_log.order_id FK already correct');
+            console.log('  [=] No balance_log.user_id FK found (OK)');
         }
 
         await client.query('COMMIT');

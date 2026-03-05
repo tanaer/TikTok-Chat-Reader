@@ -188,20 +188,20 @@ router.post('/users/:id/adjust-balance', [
         const userId = parseInt(req.params.id);
 
         // Create payment record for recharge
-        let orderId = null;
+        let refOrderNo = null;
         if (amount > 0) {
             const orderNo = balanceService.generateOrderNo('RCH');
-            const orderResult = await db.pool.query(
+            await db.pool.query(
                 `INSERT INTO payment_records (order_no, user_id, type, item_name, amount, status, payment_method, remark)
-                 VALUES ($1, $2, 'recharge', '管理员充值', $3, 'paid', 'manual', $4) RETURNING id`,
+                 VALUES ($1, $2, 'recharge', '管理员充值', $3, 'paid', 'manual', $4)`,
                 [orderNo, userId, Math.round(Math.abs(amount)), remark]
             );
-            orderId = orderResult.rows[0].id;
+            refOrderNo = orderNo;
         }
 
         const result = await balanceService.adjustBalance(
             userId, Math.round(parseFloat(amount)), amount > 0 ? 'recharge' : 'admin_adjust',
-            remark, orderId, req.user.id
+            remark, refOrderNo, req.user.id
         );
 
         if (!result.success) {
