@@ -134,10 +134,9 @@
         }).join('');
     }
 
-    // ── Render: Admin Plan Table Row ─────────────────────────
     function renderPlanTableRows(plans) {
         if (!plans || plans.length === 0) {
-            return '<tr><td colspan="5" class="text-center py-10 opacity-30">无套餐数据</td></tr>';
+            return '<tr><td colspan="6" class="text-center py-10 opacity-30">无套餐数据</td></tr>';
         }
         return plans.map(p => `<tr>
             <td class="font-semibold">${p.name}</td>
@@ -145,6 +144,7 @@
             <td>${p.roomLimit === -1 ? '∞' : p.roomLimit}</td>
             <td class="font-bold">${fmtCny(p.priceMonthly || 0)}</td>
             <td><span class="badge ${p.isActive !== false ? 'badge-success' : 'badge-ghost'} badge-xs">${p.isActive !== false ? '启用' : '禁用'}</span></td>
+            <td><button class="btn btn-xs btn-outline rounded-lg" onclick='window.editPlan(${JSON.stringify(p).replace(/'/g, "&#39;")})'>编辑</button></td>
         </tr>`).join('');
     }
 
@@ -319,7 +319,7 @@
             const res = await fetch('/api/subscription/addon/purchase', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ addonId })
+                body: JSON.stringify({ packageId: addonId, billingCycle: 'monthly' })
             });
             const d = await res.json();
             if (!res.ok) throw new Error(d.error);

@@ -34,9 +34,7 @@ app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'landing', 'index.html'));
 });
 // Monitor center (auth enforced by client-side auth.js initPage)
-app.get('/app', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+// (Served by express.static('public') as /index.html)
 
 app.use(express.static('public')); // Static assets fallback
 

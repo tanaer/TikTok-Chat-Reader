@@ -27,9 +27,9 @@
 
 读取位置主要在：
 
-- `server.js`：端口、AI 配置
-- `auto_recorder.js`：监控间隔、全局开关、连接参数
-- `public/config.js`：UI 展示/保存
+- `server.js`：端口、AI 配置、支付等
+- `auto_recorder.js`：监控间隔、连接参数
+- `public/landing/admin.html`：管理后台系统设置页读写 (通过 `/api/admin/settings` )
 
 ### 2.1 AutoRecorder 相关
 
@@ -72,8 +72,6 @@ AI 配置读取：
 
 行为约定：
 
-- 读取：`manager.getSetting('interval')` 会在 `interval` 不存在时回退读取 `scan_interval`（`proxy` 同理）
-- 保存：`manager.saveSetting(...)` 会把别名 key 统一写成 canonical key（DB 中以 `interval` / `proxy` 为准）
-- 批量读取：`manager.getAllSettings()` 会在 canonical 缺失时用别名回填（保证 AutoRecorder/Server 读取一致）
-
-因此即使前端 `public/config.js` 仍然发送 `scan_interval` / `proxy_url`，AutoRecorder 也能正确读取并生效。
+- 读取与保存统一在后端 `manager.js` 内部处理 `getSetting`/`getAllSettings`/`saveSettings`
+- AI 配置和 SaaS 配置 (如 `default_plan_code`, `payment_qr_code`) 统一存放于 `settings` 表
+- 管理员可通过界面一次性修改上述所有参数。

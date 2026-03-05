@@ -242,6 +242,44 @@ router.post('/users/:id/set-subscription', async (req, res) => {
     }
 });
 
+/**
+ * PUT /api/admin/plans/:id
+ * Update a subscription plan's pricing, limits, and status
+ */
+router.put('/plans/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { price_monthly, price_quarterly, price_annual, room_limit, is_active } = req.body;
+
+        const plan = await db.get('SELECT * FROM subscription_plans WHERE id = $1', [parseInt(id)]);
+        if (!plan) return res.status(404).json({ error: '套餐不存在' });
+
+        await db.run(
+            `UPDATE subscription_plans SET 
+                price_monthly = $1, 
+                price_quarterly = $2, 
+                price_annual = $3, 
+                room_limit = $4, 
+                is_active = $5,
+                updated_at = NOW() 
+             WHERE id = $6`,
+            [
+                parseInt(price_monthly),
+                parseInt(price_quarterly),
+                parseInt(price_annual),
+                parseInt(room_limit),
+                is_active,
+                parseInt(id)
+            ]
+        );
+
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[Admin] Error updating plan:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // ========================
 // Order Management
 // ========================

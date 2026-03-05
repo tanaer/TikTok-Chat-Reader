@@ -184,13 +184,18 @@
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
+| GET | `/api/admin/users/:id` | 获取单个用户详情 (包含订阅/统计) |
 | GET | `/api/admin/users` | 用户列表（分页 + 搜索）|
-| PUT | `/api/admin/users/:id/plan` | 分配套餐 `{planCode, billingCycle, months}` |
-| PUT | `/api/admin/users/:id/balance` | 调整余额 `{amount, description}` |
-| GET | `/api/admin/plans` | 套餐列表（简版：id, name, code, roomLimit, priceMonthly）|
-| GET | `/api/admin/settings` | 系统设置 |
-| PUT | `/api/admin/settings` | 更新系统设置 |
-| GET | `/api/admin/stats` | 管理统计面板 |
+| PUT | `/api/admin/users/:id` | 修改用户基本信息 (如 role, status) |
+| POST| `/api/admin/users/:id/set-subscription`| 分配套餐 `{planCode, durationDays}` |
+| POST| `/api/admin/users/:id/adjust-balance` | 调整余额 `{amount, reason}` |
+| GET | `/api/admin/plans` | 套餐列表（获取所有可用套餐）|
+| PUT | `/api/admin/plans/:id` | 修改套餐价格和配额 `{price_monthly, room_limit, is_active, ...}` |
+| GET | `/api/admin/settings` | 统一管理的系统设置 (包含 proxy, AI, SaaS 等) |
+| POST| `/api/admin/settings` | 更新系统设置 |
+| GET | `/api/admin/stats` | 管理后台基础统计面板数据 |
+| GET | `/api/admin/orders` | 订单列表接口（分页 + 搜索 + 状态） |
+| PUT | `/api/admin/orders/:id` | 更新订单状态 (如 手动标记已付款) |
 
 ## 6) 支付 API
 

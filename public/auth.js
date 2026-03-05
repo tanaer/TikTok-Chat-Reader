@@ -191,8 +191,8 @@
             <ul tabindex="0" class="dropdown-content menu bg-base-300/90 backdrop-blur-xl rounded-xl z-50 w-52 p-2 shadow-2xl border border-white/8 mt-2 animate-scale-in">
               <li class="menu-title text-xs opacity-40 pt-1">账户</li>
               <li><a href="/landing/user-center.html" class="rounded-lg">👤 用户中心</a></li>
-              ${isAdm ? `<li class="divider my-1"></li><li class="menu-title text-xs opacity-40">管理员</li><li><a href="/landing/admin.html" class="rounded-lg text-warning">⚙️ 后台管理</a></li>` : ''}
-              <li class="divider my-1"></li>
+              ${isAdm ? `<li class="menu-title text-xs opacity-40">管理员</li><li><a href="/landing/admin.html" class="rounded-lg text-warning">⚙️ 后台管理</a></li>` : ''}
+              
               <li><a onclick="window.logout()" class="rounded-lg text-error cursor-pointer">🚪 退出登录</a></li>
             </ul>
           </div>

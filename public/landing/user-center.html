@@ -387,12 +387,13 @@
 
         function renderSubCard(sub) {
             const el = document.getElementById('subCard');
-            if (!sub.plan || sub.plan.code === 'none') {
+            // Check if planCode is valid rather than 'none' or missing sub.plan
+            if (!sub.planCode || sub.planCode === 'none') {
                 el.innerHTML = `
           <div class="text-center py-6">
             <div class="text-4xl mb-3">📦</div>
             <p class="text-sm opacity-50 mb-4">当前未订阅任何套餐</p>
-            <button onclick="openPlanModal()" class="btn gradient-btn text-white btn-sm rounded-xl px-6">立即订阅</button>
+            <button onclick="PlanService.openPlanModal()" class="btn gradient-btn text-white btn-sm rounded-xl px-6">立即订阅</button>
           </div>`;
                 return;
             }
@@ -401,7 +402,7 @@
         <div class="space-y-3">
           <div class="flex justify-between">
             <span class="opacity-50 text-sm">套餐</span>
-            <strong class="text-primary">${sub.plan.name}</strong>
+            <strong class="text-primary">${sub.planName || sub.planCode}</strong>
           </div>
           <div class="flex justify-between">
             <span class="opacity-50 text-sm">计费周期</span>

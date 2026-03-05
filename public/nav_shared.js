@@ -17,10 +17,10 @@
 
     // All possible nav items — filtered based on auth state
     const NAV_LINKS = [
-        { id: 'home', href: '/', label: '🏠 首页', auth: 'guest' },
-        { id: 'monitor', href: '/app', label: '📺 监控中心', auth: 'user' },
-        { id: 'user-center', href: '/landing/user-center.html', label: '👤 用户中心', auth: 'user' },
-        { id: 'admin', href: '/landing/admin.html', label: '⚙️ 管理后台', auth: 'admin' },
+        { id: 'home', href: '/', label: '首页', auth: 'guest' },
+        { id: 'monitor', href: '/index.html', label: '📺 监控中心', auth: 'user' },
+        { id: 'user-center', href: '/landing/user-center.html', label: '用户中心', auth: 'user' },
+        { id: 'admin', href: '/landing/admin.html', label: '管理后台', auth: 'admin' },
     ];
 
     function getActiveId() {

@@ -28,7 +28,7 @@
 
     <!-- App Scripts -->
     <script src="connection.js"></script>
-    <script src="config.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
     <script src="room_list.js"></script>
     <script src="user_analysis.js"></script>
     <script src="room_analysis.js"></script>
@@ -109,12 +109,9 @@
         <div class="max-w-[1600px] mx-auto px-4 flex items-center gap-1 overflow-x-auto h-11">
             <button class="app-tab active" id="tab-roomList" onclick="switchSection('roomList',this)">📺 房间列表</button>
             <button class="app-tab" id="tab-userAnalysis" onclick="switchSection('userAnalysis',this)">📊 用户分析</button>
-            <button class="app-tab" id="tab-roomAnalysis" onclick="switchSection('roomAnalysis',this)">📈 房间分析</button>
             <button class="app-tab" id="tab-giftConfig" onclick="switchSection('giftConfig',this)">🎁 礼物配置</button>
             <button class="app-tab admin-only" id="tab-recording" onclick="switchSection('recording',this)">🎥
                 录制管理</button>
-            <button class="app-tab admin-only" id="tab-systemConfig" onclick="switchSection('systemConfig',this)">⚙️
-                系统配置</button>
         </div>
     </div>
 
@@ -622,133 +619,36 @@
             </div>
         </section>
 
-        <!-- SECTION: System Config -->
-        <section id="section-systemConfig" class="content-section hidden">
-            <div class="flex gap-2 mb-4">
-                <button class="btn btn-sm btn-outline sub-nav-btn active" onclick="switchConfigTab('system')">⚙️
-                    系统配置</button>
-                <button class="btn btn-sm btn-outline sub-nav-btn" onclick="switchConfigTab('gifts')">🎁
-                    礼物配置</button>
-            </div>
+        <!-- SECTION: Gift Config Tab -->
+        <div id="configTab-gifts" class="config-tab-content hidden">
+            <div class="card bg-base-100 shadow-xl">
+                <div class="card-body">
+                    <div class="flex justify-between items-center mb-4">
+                        <h2 class="card-title">🎁 礼物配置</h2>
+                        <span class="text-sm opacity-50">共 <span id="giftCount">0</span> 种礼物</span>
+                    </div>
+                    <p class="text-sm opacity-70 mb-4">礼物信息会自动从直播中采集。您可以编辑中文名称，系统将优先显示中文名。</p>
 
-            <!-- System Config Tab -->
-            <div id="configTab-system" class="config-tab-content">
-                <div class="card bg-base-100 shadow-xl max-w-2xl mx-auto">
-                    <div class="card-body">
-                        <h2 class="card-title mb-4">系统配置</h2>
-
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">服务端口 (重启生效)</span></label>
-                            <input type="number" id="cfg_port" class="input input-bordered w-full" placeholder="8081">
-                        </div>
-
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">监控间隔 (分钟)</span></label>
-                            <input type="number" id="cfg_interval" class="input input-bordered w-full" placeholder="5">
-                        </div>
-
-                        <div class="form-control w-52 mt-4">
-                            <label class="label cursor-pointer">
-                                <span class="label-text">启用自动监控</span>
-                                <input type="checkbox" id="cfg_autoMonitor" class="toggle toggle-primary" />
-                            </label>
-                        </div>
-
-                        <div class="divider">代理配置</div>
-
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">SOCKS5 代理 (连接 TikTok)</span></label>
-                            <input type="text" id="cfg_proxy" class="input input-bordered w-full"
-                                placeholder="socks5://127.0.0.1:1080">
-                        </div>
-
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">动态隧道代理 (获取 RoomID)</span></label>
-                            <input type="text" id="cfg_tunnelProxy" class="input input-bordered w-full"
-                                placeholder="http://user:pass@host:port">
-                            <label class="label"><span class="label-text-alt text-xs opacity-50">用于访问 TikTok
-                                    获取直播间ID，格式:
-                                    http://用户名:密码@主机:端口</span></label>
-                        </div>
-
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">代理池 API URL</span></label>
-                            <input type="text" id="cfg_proxyApiUrl" class="input input-bordered w-full"
-                                placeholder="http://api.provider.com/get?num=10">
-                            <label class="label"><span class="label-text-alt text-xs opacity-50">返回 ip:port 列表的 API
-                                    地址（与隧道代理二选一）</span></label>
-                        </div>
-
-                        <div class="divider">TikTok 配置</div>
-
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">EulerStream API Keys</span></label>
-                            <textarea id="cfg_eulerKeys" class="textarea textarea-bordered w-full h-24"
-                                placeholder="euler_xxx,euler_yyy,euler_zzz"></textarea>
-                            <label class="label"><span class="label-text-alt text-xs opacity-50">多个 Key
-                                    用逗号分隔，系统会自动轮询使用</span></label>
-                        </div>
-
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">TikTok SessionID</span></label>
-                            <input type="text" id="cfg_sessionId" class="input input-bordered w-full">
-                        </div>
-
-                        <div class="divider">AI 配置</div>
-
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">AI API Key</span></label>
-                            <input type="text" id="cfg_aiKey" class="input input-bordered w-full">
-                        </div>
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">AI API URL</span></label>
-                            <input type="text" id="cfg_aiUrl" class="input input-bordered w-full"
-                                placeholder="https://api-inference.modelscope.cn/v1/">
-                        </div>
-                        <div class="form-control w-full">
-                            <label class="label"><span class="label-text">AI 模型名称</span></label>
-                            <input type="text" id="cfg_aiModel" class="input input-bordered w-full"
-                                placeholder="deepseek-ai/DeepSeek-V3.2">
-                        </div>
-
-                        <div class="card-actions justify-end mt-6">
-                            <button class="btn btn-error" onclick="restartServer()">重启服务</button>
-                            <button class="btn btn-primary" onclick="saveConfig()">保存更改</button>
-                        </div>
+                    <div class="overflow-x-auto">
+                        <table class="table table-zebra table-sm" id="giftConfigTable">
+                            <thead>
+                                <tr>
+                                    <th class="w-16">图标</th>
+                                    <th>英文名</th>
+                                    <th>中文名 (可编辑)</th>
+                                    <th class="text-right">单价 💎</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <tr>
+                                    <td colspan="4" class="text-center opacity-50">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </div>
-
-            <!-- Gift Config Tab -->
-            <div id="configTab-gifts" class="config-tab-content hidden">
-                <div class="card bg-base-100 shadow-xl">
-                    <div class="card-body">
-                        <div class="flex justify-between items-center mb-4">
-                            <h2 class="card-title">🎁 礼物配置</h2>
-                            <span class="text-sm opacity-50">共 <span id="giftCount">0</span> 种礼物</span>
-                        </div>
-                        <p class="text-sm opacity-70 mb-4">礼物信息会自动从直播中采集。您可以编辑中文名称，系统将优先显示中文名。</p>
-
-                        <div class="overflow-x-auto">
-                            <table class="table table-zebra table-sm" id="giftConfigTable">
-                                <thead>
-                                    <tr>
-                                        <th class="w-16">图标</th>
-                                        <th>英文名</th>
-                                        <th>中文名 (可编辑)</th>
-                                        <th class="text-right">单价 💎</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr>
-                                        <td colspan="4" class="text-center opacity-50">加载中...</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-                </div>
-            </div>
+        </div>
         </section>
 
         <!-- SECTION: Recording Management -->
