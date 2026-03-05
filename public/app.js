@@ -73,20 +73,22 @@ function initSocket() {
 }
 
 // Navigation
-function switchSection(sectionId) {
+function switchSection(sectionId, clickedBtn) {
     currentSection = sectionId;
     $('.content-section').hide();
     $(`#section-${sectionId}`).show();
 
     // Update Nav Active State
-    $('.nav-btn').removeClass('active');
-    $(`.nav-btn[onclick="switchSection('${sectionId}')"]`).addClass('active');
+    $('.app-tab').removeClass('active');
+    if (clickedBtn) {
+        $(clickedBtn).addClass('active');
+    } else {
+        $(`#tab-${sectionId}`).addClass('active');
+    }
 
     if (sectionId === 'roomList') {
-        // Don't auto-refresh - user can click refresh button manually
-        // renderRoomList();
+        if (typeof renderRoomList === 'function') renderRoomList();
     } else if (sectionId === 'userAnalysis') {
-        // Only auto-render if not coming from searchUserExact (which handles its own render)
         if (!window._pendingUserSearch && typeof renderUserList === 'function') {
             renderUserList();
         }

@@ -144,7 +144,30 @@
             <td>${p.roomLimit === -1 ? '∞' : p.roomLimit}</td>
             <td class="font-bold">${fmtCny(p.priceMonthly || 0)}</td>
             <td><span class="badge ${p.isActive !== false ? 'badge-success' : 'badge-ghost'} badge-xs">${p.isActive !== false ? '启用' : '禁用'}</span></td>
-            <td><button class="btn btn-xs btn-outline rounded-lg" onclick='window.editPlan(${JSON.stringify(p).replace(/'/g, "&#39;")})'>编辑</button></td>
+            <td>
+                <div class="flex gap-2">
+                    <button class="btn btn-xs btn-outline rounded-lg" onclick='window.editPlan(${JSON.stringify(p).replace(/'/g, "&#39;")})'>编辑</button>
+                    ${p.code !== 'free' ? `<button class="btn btn-xs btn-error btn-outline rounded-lg" onclick="deletePlan(${p.id})">删除</button>` : ''}
+                </div>
+            </td>
+        </tr>`).join('');
+    }
+
+    function renderAddonTableRows(addons) {
+        if (!addons || addons.length === 0) {
+            return '<tr><td colspan="5" class="text-center py-10 opacity-30">无加量包数据</td></tr>';
+        }
+        return addons.map(a => `<tr>
+            <td class="font-semibold">${a.name}</td>
+            <td class="font-mono text-xs opacity-60">${a.code}</td>
+            <td>+${a.roomCount}</td>
+            <td class="font-bold">${fmtCny(a.priceMonthly || 0)}</td>
+            <td>
+                <div class="flex gap-2">
+                    <button class="btn btn-xs btn-outline rounded-lg" onclick='window.editAddon(${JSON.stringify(a).replace(/'/g, "&#39;")})'>编辑</button>
+                    <button class="btn btn-xs btn-error btn-outline rounded-lg" onclick="deleteAddon(${a.id})">删除</button>
+                </div>
+            </td>
         </tr>`).join('');
     }
 
@@ -341,6 +364,7 @@
         renderPlanCards,
         renderAddonCards,
         renderPlanTableRows,
+        renderAddonTableRows,
         renderLandingPlanCards,
         openPlanModal,
         purchasePlan,

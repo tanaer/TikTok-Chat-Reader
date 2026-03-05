@@ -408,6 +408,11 @@ router.post('/settings', async (req, res) => {
         for (const [key, value] of Object.entries(settings)) {
             await manager.saveSetting(key, typeof value === 'boolean' ? String(value) : value);
         }
+
+        // Invalidate settings cache
+        manager.settingsCache = null;
+        console.log('[Admin] Settings saved and cache invalidated.');
+
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -424,6 +429,144 @@ router.get('/plans', async (req, res) => {
             'SELECT id, name, code, room_limit, price_monthly FROM subscription_plans WHERE is_active = true ORDER BY sort_order'
         );
         res.json(plans);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /api/admin/plans
+ * Create a new subscription plan (e.g. for promotions)
+ */
+router.post('/plans', async (req, res) => {
+    try {
+        const { name, code, description, roomLimit, historyDays, aiCredits, priceMonthly } = req.body;
+
+        // Basic validation
+        if (!name || !code) return res.status(400).json({ error: '套餐名称和代号是必填项' });
+
+        const newPlan = await db.query(
+            `INSERT INTO subscription_plans 
+            (name, code, description, room_limit, history_days, ai_credits, price_monthly, features, sort_order) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 99) RETURNING *`,
+            [name, code, description || '', parseInt(roomLimit) || 1, parseInt(historyDays) || 30, parseInt(aiCredits) || 0, parseFloat(priceMonthly) || 0, '[]']
+        );
+        res.json(newPlan[0]);
+    } catch (err) {
+        console.error('[Admin] Error creating plan:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * PUT /api/admin/plans/:id
+ * Update existing plan details
+ */
+router.put('/plans/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, code, description, roomLimit, historyDays, aiCredits, priceMonthly } = req.body;
+
+        await db.run(
+            `UPDATE subscription_plans SET 
+                name = $1, code = $2, description = $3, room_limit = $4, 
+                history_days = $5, ai_credits = $6, price_monthly = $7, updated_at = NOW() 
+            WHERE id = $8`,
+            [name, code, description, parseInt(roomLimit), parseInt(historyDays), parseInt(aiCredits), parseFloat(priceMonthly), parseInt(id)]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[Admin] Error updating plan:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * DELETE /api/admin/plans/:id
+ * Delete a plan (hard delete, careful if orders linked)
+ */
+router.delete('/plans/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        // Optional: Pre-flight check if users have active subscriptions using this plan
+        await db.run('DELETE FROM subscription_plans WHERE id = $1', [parseInt(id)]);
+        res.json({ success: true });
+    } catch (err) {
+        console.error('[Admin] Error deleting plan:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// ========================
+// Addons (Issue 8)
+// ========================
+
+/**
+ * GET /api/admin/addons
+ * Get all subscription addons
+ */
+router.get('/addons', async (req, res) => {
+    try {
+        const addons = await db.query('SELECT * FROM subscription_addons ORDER BY sort_order');
+        res.json(addons);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * POST /api/admin/addons
+ * Create a new addon
+ */
+router.post('/addons', async (req, res) => {
+    try {
+        const { name, code, description, roomCount, priceMonthly, priceQuarterly, priceAnnual } = req.body;
+
+        if (!name || !code || !roomCount) return res.status(400).json({ error: '缺少必填字段' });
+
+        const newAddon = await db.query(
+            `INSERT INTO subscription_addons 
+            (name, code, description, room_count, price_monthly, price_quarterly, price_annual, sort_order) 
+            VALUES ($1, $2, $3, $4, $5, $6, $7, 99) RETURNING *`,
+            [name, code, description || '', parseInt(roomCount), parseFloat(priceMonthly) || 0, parseFloat(priceQuarterly) || 0, parseFloat(priceAnnual) || 0]
+        );
+        res.json(newAddon[0]);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * PUT /api/admin/addons/:id
+ * Update an addon
+ */
+router.put('/addons/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { name, code, description, roomCount, priceMonthly, priceQuarterly, priceAnnual } = req.body;
+
+        await db.run(
+            `UPDATE subscription_addons SET 
+                name = $1, code = $2, description = $3, room_count = $4, 
+                price_monthly = $5, price_quarterly = $6, price_annual = $7, updated_at = NOW() 
+            WHERE id = $8`,
+            [name, code, description, parseInt(roomCount), parseFloat(priceMonthly) || 0, parseFloat(priceQuarterly) || 0, parseFloat(priceAnnual) || 0, parseInt(id)]
+        );
+        res.json({ success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+/**
+ * DELETE /api/admin/addons/:id
+ * Delete an addon
+ */
+router.delete('/addons/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        await db.run('DELETE FROM subscription_addons WHERE id = $1', [parseInt(id)]);
+        res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

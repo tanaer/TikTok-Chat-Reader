@@ -300,7 +300,46 @@ body {
     border-color: rgba(255, 255, 255, 0.05);
 }
 
-/* ── 10. Quota Gate Overlay ──────────────────────── */
+/* ── 10. Forms & Inputs ────────────────────────────── */
+.content-section {
+    animation: fadeInUp 0.3s ease-out both;
+}
+
+.card,
+.modal-box,
+.detail-tab-content {
+    background-color: rgba(255, 255, 255, 0.04) !important;
+    backdrop-filter: blur(12px) !important;
+    border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+/* Secondary in-app tab strip */
+.app-tab {
+    padding: 0.4rem 1rem;
+    border-radius: 0.5rem;
+    font-size: 0.8rem;
+    font-weight: 500;
+    opacity: 0.5;
+    transition: all 0.18s;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: inherit;
+    white-space: nowrap;
+}
+
+.app-tab:hover {
+    opacity: 0.85;
+    background: rgba(255, 255, 255, 0.06);
+}
+
+.app-tab.active {
+    opacity: 1;
+    background: rgba(99, 102, 241, 0.18);
+    color: #a5b4fc;
+}
+
+/* ── 11. Quota Gate Overlay ──────────────────────── */
 #quotaGateOverlay {
     position: fixed;
     inset: 0;
@@ -321,7 +360,92 @@ body {
     pointer-events: all;
 }
 
-/* ── 11. Alert / Toast ───────────────────────────── */
+/* ── 11. Quota Gate Overlay ──────────────────────── */
+#quotaGateOverlay {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: rgba(10, 10, 18, 0.88);
+    backdrop-filter: blur(24px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 1.5rem;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.4s ease;
+}
+
+#quotaGateOverlay.visible {
+    opacity: 1;
+    pointer-events: all;
+}
+
+/* ── 12. Layouts & Section Switching ──────────────── */
+.tab-content {
+    display: none;
+}
+
+.tab-content.active {
+    display: block;
+    animation: fadeInUp 0.3s ease both;
+}
+
+.stat-mini {
+    background: var(--glass-bg);
+    border: 1px solid var(--glass-border);
+    border-radius: 0.875rem;
+    padding: 1.25rem 1.5rem;
+}
+
+.admin-layout {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    gap: 1.5rem;
+    min-height: calc(100vh - 3.5rem);
+    align-items: start;
+}
+
+@media (max-width: 768px) {
+    .admin-layout {
+        grid-template-columns: 1fr;
+    }
+
+    .admin-sidebar {
+        display: none;
+    }
+}
+
+.sidebar-btn {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.625rem 1rem;
+    border-radius: 0.625rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    opacity: 0.5;
+    transition: all 0.2s;
+    width: 100%;
+    text-align: left;
+}
+
+.sidebar-btn:hover {
+    opacity: 0.8;
+    background: var(--glass-bg);
+}
+
+.sidebar-btn.active {
+    opacity: 1;
+    background: rgba(99, 102, 241, 0.15);
+    color: #a5b4fc;
+}
+
+input[type=number]::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+}
+
+/* ── 13. Alert / Toast ───────────────────────────── */
 .toast-top {
     position: fixed;
     top: 1rem;

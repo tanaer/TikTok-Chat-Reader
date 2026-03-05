@@ -13,42 +13,6 @@
     <script src="/auth.js"></script>
     <script src="/plan_service.js"></script>
     <script src="/nav_shared.js"></script>
-    <style>
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-            animation: fadeInUp 0.3s ease both;
-        }
-
-        .uc-tab-btn {
-            transition: all 0.2s;
-            border-radius: 0.5rem;
-            padding: 0.5rem 1.25rem;
-            font-weight: 600;
-            font-size: 0.875rem;
-            opacity: 0.5;
-        }
-
-        .uc-tab-btn.active {
-            opacity: 1;
-            background: rgba(99, 102, 241, 0.15);
-            color: #a5b4fc;
-        }
-
-        .uc-tab-btn:hover {
-            opacity: 0.8;
-        }
-
-        .stat-mini {
-            background: var(--glass-bg);
-            border: 1px solid var(--glass-border);
-            border-radius: 0.875rem;
-            padding: 1.25rem 1.5rem;
-        }
-    </style>
 </head>
 
 <body class="page-bg">
@@ -62,12 +26,15 @@
             <p class="text-base-content/40 text-sm mt-1" id="welcomeText">加载中...</p>
         </div>
 
-        <!-- Tab Navigation -->
-        <div class="flex gap-1 mb-6 glass-card p-1.5 w-fit animate-fade-in-up">
-            <button class="uc-tab-btn active" onclick="switchTab('sub',this)">💎 我的订阅</button>
-            <button class="uc-tab-btn" onclick="switchTab('balance',this)">📊 余额明细</button>
-            <button class="uc-tab-btn" onclick="switchTab('orders',this)">📋 订单记录</button>
-            <button class="uc-tab-btn" onclick="switchTab('profile',this)">👤 个人设置</button>
+        <!-- Secondary Tab Strip (in-page section switching) -->
+        <div class="sticky top-14 z-40 border-b border-white/5 mb-8"
+            style="background:rgba(10,10,20,0.85);backdrop-filter:blur(16px)">
+            <div class="max-w-[1024px] mx-auto px-4 flex items-center gap-1 overflow-x-auto h-11">
+                <button class="app-tab active" onclick="switchTab('sub',this)">💎 我的订阅</button>
+                <button class="app-tab" onclick="switchTab('balance',this)">📊 余额明细</button>
+                <button class="app-tab" onclick="switchTab('orders',this)">📋 订单记录</button>
+                <button class="app-tab" onclick="switchTab('profile',this)">👤 个人设置</button>
+            </div>
         </div>
 
         <!-- ── Tab 1: Subscription ──────────────────────────── -->

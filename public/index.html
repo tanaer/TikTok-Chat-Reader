@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="dark" data-nav-active="monitor">
 
 <head>
     <meta charset="UTF-8">
@@ -34,74 +34,15 @@
     <script src="room_analysis.js"></script>
     <script src="gift_config.js"></script>
     <script src="recording_ui.js"></script>
+    <script src="nav_shared.js"></script>
     <script src="app.js"></script>
 
 
 <body class="min-h-screen flex flex-col relative text-base-content page-bg"
     style="display:none; font-family: 'Inter', system-ui, sans-serif;">
-    <style>
-        .content-section {
-            animation: fadeInUp 0.3s ease-out both;
-        }
-
-        .card,
-        .modal-box,
-        .detail-tab-content {
-            background-color: rgba(255, 255, 255, 0.04) !important;
-            backdrop-filter: blur(12px) !important;
-            border: 1px solid rgba(255, 255, 255, 0.08) !important;
-        }
-
-        /* Secondary in-app tab strip */
-        .app-tab {
-            padding: 0.4rem 1rem;
-            border-radius: 0.5rem;
-            font-size: 0.8rem;
-            font-weight: 500;
-            opacity: 0.5;
-            transition: all 0.18s;
-            cursor: pointer;
-            border: none;
-            background: transparent;
-            color: inherit;
-            white-space: nowrap;
-        }
-
-        .app-tab:hover {
-            opacity: 0.85;
-            background: rgba(255, 255, 255, 0.06);
-        }
-
-        .app-tab.active {
-            opacity: 1;
-            background: rgba(99, 102, 241, 0.18);
-            color: #a5b4fc;
-        }
-    </style>
 
     <!-- Global Navbar (cross-page links) -->
-    <nav class="glass-navbar sticky top-0 z-50 w-full">
-        <div class="max-w-[1600px] mx-auto px-4 flex items-center h-14 gap-2">
-            <!-- Brand → Landing -->
-            <a href="/" class="flex items-center gap-2 mr-4 shrink-0">
-                <span class="text-xl">📺</span>
-                <span class="font-extrabold text-sm tracking-tight gradient-text-primary hidden sm:inline">TikTok
-                    Monitor</span>
-            </a>
-            <!-- Cross-page links (global context) -->
-            <div class="hidden md:flex items-center gap-1">
-                <a href="/" class="btn btn-ghost btn-sm rounded-lg opacity-50 hover:opacity-80 text-xs">🏠 首页</a>
-                <a href="/landing/user-center.html"
-                    class="btn btn-ghost btn-sm rounded-lg opacity-50 hover:opacity-80 text-xs">👤 用户中心</a>
-                <span id="adminNavLink" class="hidden">
-                    <a href="/landing/admin.html"
-                        class="btn btn-ghost btn-sm rounded-lg text-warning/60 hover:text-warning text-xs">⚙️ 管理后台</a>
-                </span>
-            </div>
-            <!-- Right: User Menu injected by initPage() -->
-            <div id="userMenuSlot" class="ml-auto shrink-0"></div>
-        </div>
-    </nav>
+    <div id="app-navbar"></div>
 
     <!-- Secondary Tab Strip (in-page section switching) -->
     <div class="sticky top-14 z-40 border-b border-white/5"
@@ -109,6 +50,7 @@
         <div class="max-w-[1600px] mx-auto px-4 flex items-center gap-1 overflow-x-auto h-11">
             <button class="app-tab active" id="tab-roomList" onclick="switchSection('roomList',this)">📺 房间列表</button>
             <button class="app-tab" id="tab-userAnalysis" onclick="switchSection('userAnalysis',this)">📊 用户分析</button>
+            <button class="app-tab" id="tab-roomAnalysis" onclick="switchSection('roomAnalysis',this)">📈 房间分析</button>
             <button class="app-tab" id="tab-giftConfig" onclick="switchSection('giftConfig',this)">🎁 礼物配置</button>
             <button class="app-tab admin-only" id="tab-recording" onclick="switchSection('recording',this)">🎥
                 录制管理</button>
@@ -1254,15 +1196,6 @@
                 }
             }
         });
-
-        // Section switching — controls the secondary tab strip
-        function switchSection(name, clickedBtn) {
-            document.querySelectorAll('.content-section').forEach(s => s.style.display = 'none');
-            document.querySelectorAll('.app-tab').forEach(b => b.classList.remove('active'));
-            const sec = document.getElementById('section-' + name);
-            if (sec) sec.style.display = 'block';
-            if (clickedBtn) clickedBtn.classList.add('active');
-        }
     </script>
 </body>
 

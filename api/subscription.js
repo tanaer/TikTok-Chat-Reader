@@ -166,19 +166,21 @@ router.post('/purchase', loadSubscription, async (req, res) => {
             // Calculate remaining value
             const now = new Date();
             const endDate = new Date(existingSub.endDate);
-            const startDate = new Date(existingSub.startDate);
-            const totalDays = Math.max(1, (endDate - startDate) / (1000 * 60 * 60 * 24));
-            const remainingDays = Math.max(0, (endDate - now) / (1000 * 60 * 60 * 24));
+            const startDate = existingSub.startDate ? new Date(existingSub.startDate) : now;
+
+            // Ensure valid numbers
+            const totalDays = Math.max(1, (endDate.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24));
+            const remainingDays = Math.max(0, (endDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
 
             // Get original price paid
             let oldPrice = 0;
             const oldCycle = existingSub.billingCycle;
-            if (oldCycle === 'monthly') oldPrice = existingSub.oldPriceMonthly;
-            else if (oldCycle === 'quarterly') oldPrice = existingSub.oldPriceQuarterly;
-            else if (oldCycle === 'annual') oldPrice = existingSub.oldPriceAnnual;
+            if (oldCycle === 'monthly') oldPrice = Number(existingSub.oldPriceMonthly) || 0;
+            else if (oldCycle === 'quarterly') oldPrice = Number(existingSub.oldPriceQuarterly) || 0;
+            else if (oldCycle === 'annual') oldPrice = Number(existingSub.oldPriceAnnual) || 0;
 
             if (oldPrice > 0 && remainingDays > 0) {
-                prorationRefund = Math.floor(oldPrice * (remainingDays / totalDays));
+                prorationRefund = Math.floor(oldPrice * (remainingDays / totalDays)) || 0;
             }
         }
 

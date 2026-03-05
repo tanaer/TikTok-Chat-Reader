@@ -13,112 +13,12 @@
     <script src="/auth.js"></script>
     <script src="/plan_service.js"></script>
     <script src="/nav_shared.js"></script>
-    <style>
-        .admin-layout {
-            display: grid;
-            grid-template-columns: 220px 1fr;
-            gap: 1.5rem;
-            min-height: calc(100vh - 3.5rem);
-            align-items: start;
-        }
-
-        @media (max-width: 768px) {
-            .admin-layout {
-                grid-template-columns: 1fr;
-            }
-
-            .admin-sidebar {
-                display: none;
-            }
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: block;
-            animation: fadeInUp 0.3s ease both;
-        }
-
-        .sidebar-btn {
-            display: flex;
-            align-items: center;
-            gap: 0.75rem;
-            padding: 0.625rem 1rem;
-            border-radius: 0.625rem;
-            font-size: 0.875rem;
-            font-weight: 500;
-            opacity: 0.5;
-            transition: all 0.2s;
-            width: 100%;
-            text-align: left;
-        }
-
-        .sidebar-btn:hover {
-            opacity: 0.8;
-            background: var(--glass-bg);
-        }
-
-        .sidebar-btn.active {
-            opacity: 1;
-            background: rgba(99, 102, 241, 0.15);
-            color: #a5b4fc;
-        }
-
-        input[type=number]::-webkit-inner-spin-button {
-            -webkit-appearance: none;
-        }
-    </style>
 </head>
 
 <body class="page-bg">
     <div id="app-navbar"></div>
 
-    <!-- Modal: Edit Plan -->
-    <dialog id="editPlanModal" class="modal">
-        <div class="modal-box max-w-sm glass-card border border-white/10" style="background:rgba(15,15,20,0.95)">
-            <h3 class="font-bold text-lg mb-4">编辑套餐价格与配额</h3>
-            <input type="hidden" id="editPlanId">
-            <input type="hidden" id="editPlanCode">
 
-            <div class="form-control w-full mb-3">
-                <label class="label pb-1"><span class="label-text opacity-70 text-xs">房间上限 (-1 为无限制)</span></label>
-                <input type="number" id="editPlanRoomLimit" class="input input-bordered glass-input input-sm w-full" />
-            </div>
-
-            <div class="form-control w-full mb-3">
-                <label class="label pb-1"><span class="label-text opacity-70 text-xs">月付价格 (分, 100=1元)</span></label>
-                <input type="number" id="editPlanPriceMonthly"
-                    class="input input-bordered glass-input input-sm w-full" />
-            </div>
-
-            <div class="form-control w-full mb-3">
-                <label class="label pb-1"><span class="label-text opacity-70 text-xs">季付价格 (分)</span></label>
-                <input type="number" id="editPlanPriceQuarterly"
-                    class="input input-bordered glass-input input-sm w-full" />
-            </div>
-
-            <div class="form-control w-full mb-4">
-                <label class="label pb-1"><span class="label-text opacity-70 text-xs">年付价格 (分)</span></label>
-                <input type="number" id="editPlanPriceAnnual"
-                    class="input input-bordered glass-input input-sm w-full" />
-            </div>
-
-            <div class="form-control w-full mb-6">
-                <label class="cursor-pointer label justify-start gap-4">
-                    <span class="label-text font-bold">套餐上架状态</span>
-                    <input type="checkbox" id="editPlanIsActive" class="toggle toggle-success toggle-sm" />
-                </label>
-            </div>
-
-            <div class="modal-action mt-0">
-                <form method="dialog"><button class="btn btn-sm btn-ghost rounded-lg">取消</button></form>
-                <button class="btn btn-sm btn-primary rounded-lg px-6" onclick="savePlan()">保存修改</button>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>close</button></form>
-    </dialog>
 
     <div class="max-w-[1400px] mx-auto px-4 py-6">
 
@@ -263,10 +163,13 @@
                     </div>
                 </div>
 
-                <!-- ── Plans ───────────────────────────────────────── -->
+                <!-- ── Plans & Addons ───────────────────────────────────────── -->
                 <div id="sec-plans" class="tab-content">
-                    <div class="mb-4 text-lg font-bold">套餐管理</div>
-                    <div class="glass-card overflow-hidden">
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="text-lg font-bold">套餐管理 (基础配置)</div>
+                        <button class="btn btn-sm btn-primary" onclick="openPlanModal()">+ 添加套餐</button>
+                    </div>
+                    <div class="glass-card overflow-hidden mb-8">
                         <table class="table dark-table w-full">
                             <thead>
                                 <tr>
@@ -281,6 +184,29 @@
                             <tbody id="plansTableBody">
                                 <tr>
                                     <td colspan="6" class="text-center py-10 opacity-30">加载中...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="flex items-center justify-between mb-4">
+                        <div class="text-lg font-bold text-accent">加量包管理 (Addons)</div>
+                        <button class="btn btn-sm btn-accent" onclick="openAddonModal()">+ 添加加量包</button>
+                    </div>
+                    <div class="glass-card overflow-hidden">
+                        <table class="table dark-table w-full">
+                            <thead>
+                                <tr>
+                                    <th>加量包名</th>
+                                    <th>Code</th>
+                                    <th>房间数 (附加)</th>
+                                    <th>月价</th>
+                                    <th>操作</th>
+                                </tr>
+                            </thead>
+                            <tbody id="addonsTableBody">
+                                <tr>
+                                    <td colspan="5" class="text-center py-10 opacity-30">加载中...</td>
                                 </tr>
                             </tbody>
                         </table>
@@ -414,6 +340,119 @@
             </main>
         </div>
     </div>
+
+    <!-- ── Plan Edit Modal ─────────────────────────────────── -->
+    <dialog id="editPlanModal" class="modal">
+        <div class="modal-box glass-card border border-white/8 max-w-lg">
+            <h3 class="font-bold text-lg mb-6">编辑 / 添加套餐</h3>
+            <input type="hidden" id="editPlanId">
+            <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">套餐名称</span></label>
+                        <input type="text" id="editPlanName"
+                            class="input input-sm input-bordered glass-input rounded-xl" placeholder="如: 高级版">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">代码 (例如 pro)</span></label>
+                        <input type="text" id="editPlanCode"
+                            class="input input-sm input-bordered glass-input rounded-xl" placeholder="仅允许英文/数字">
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">房间上限 (-1
+                                为无限)</span></label>
+                        <input type="number" id="editPlanRoomLimit"
+                            class="input input-sm input-bordered glass-input rounded-xl">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">当前状态</span></label>
+                        <label class="cursor-pointer label justify-start gap-4">
+                            <input type="checkbox" id="editPlanIsActive" class="toggle toggle-sm toggle-success"
+                                checked>
+                            <span class="label-text">启用</span>
+                        </label>
+                    </div>
+                </div>
+                <!-- Prices -->
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text opacity-60 text-xs text-primary">月付价格 (分) —
+                            必填</span></label>
+                    <input type="number" id="editPlanPriceMonthly"
+                        class="input input-sm input-bordered glass-input rounded-xl text-primary font-bold">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">季付价格 (分)</span></label>
+                        <input type="number" id="editPlanPriceQuarterly"
+                            class="input input-sm input-bordered glass-input rounded-xl">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">年付价格 (分)</span></label>
+                        <input type="number" id="editPlanPriceAnnual"
+                            class="input input-sm input-bordered glass-input rounded-xl">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-action gap-2 mt-6">
+                <form method="dialog"><button class="btn btn-ghost rounded-xl">取消</button></form>
+                <button onclick="savePlan()" class="btn gradient-btn text-white rounded-xl px-6">保存套餐</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button></button></form>
+    </dialog>
+
+    <!-- ── Addon Edit Modal ───────────────────────────────── -->
+    <dialog id="editAddonModal" class="modal">
+        <div class="modal-box glass-card border border-white/8 max-w-lg">
+            <h3 class="font-bold text-lg mb-6 text-accent">编辑 / 添加加量包</h3>
+            <input type="hidden" id="editAddonId">
+            <div class="space-y-4">
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">加量包名称</span></label>
+                        <input type="text" id="editAddonName"
+                            class="input input-sm input-bordered glass-input rounded-xl" placeholder="如: +5房间">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">代码</span></label>
+                        <input type="text" id="editAddonCode"
+                            class="input input-sm input-bordered glass-input rounded-xl" placeholder="如: plus5">
+                    </div>
+                </div>
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text opacity-60 text-xs">附加房间数</span></label>
+                    <input type="number" id="editAddonRoomCount"
+                        class="input input-sm input-bordered glass-input rounded-xl">
+                </div>
+                <!-- Prices -->
+                <div class="form-control">
+                    <label class="label pb-1"><span class="label-text opacity-60 text-xs text-accent">月付价格 (分) —
+                            必填</span></label>
+                    <input type="number" id="editAddonPriceMonthly"
+                        class="input input-sm input-bordered glass-input rounded-xl text-accent font-bold">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">季付价格 (分)</span></label>
+                        <input type="number" id="editAddonPriceQuarterly"
+                            class="input input-sm input-bordered glass-input rounded-xl">
+                    </div>
+                    <div class="form-control">
+                        <label class="label pb-1"><span class="label-text opacity-60 text-xs">年付价格 (分)</span></label>
+                        <input type="number" id="editAddonPriceAnnual"
+                            class="input input-sm input-bordered glass-input rounded-xl">
+                    </div>
+                </div>
+            </div>
+            <div class="modal-action gap-2 mt-6">
+                <form method="dialog"><button class="btn btn-ghost rounded-xl">取消</button></form>
+                <button onclick="saveAddon()" class="btn btn-accent text-white rounded-xl px-6">保存加量包</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button></button></form>
+    </dialog>
 
     <!-- ── User Edit Modal ─────────────────────────────────── -->
     <dialog id="userModal" class="modal">
@@ -582,20 +621,19 @@
             const role = document.getElementById('modalRole').value;
             const status = document.getElementById('modalStatus').value;
             try {
-                const res = await fetch(`/api/admin/users/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role, status }) });
-                if (!res.ok) throw new Error((await res.json()).error);
+                await $.ajax({ url: `/api/admin/users/${id}`, type: 'PUT', contentType: 'application/json', data: JSON.stringify({ role, status }) });
+
                 const adj = parseFloat(document.getElementById('modalBalanceAdj').value);
                 if (adj && adj !== 0) {
-                    const r2 = await fetch(`/api/admin/users/${id}/adjust-balance`, {
-                        method: 'POST', headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ amount: Math.round(adj * 100), reason: document.getElementById('modalBalanceReason').value })
+                    await $.ajax({
+                        url: `/api/admin/users/${id}/adjust-balance`, type: 'POST', contentType: 'application/json',
+                        data: JSON.stringify({ amount: Math.round(adj * 100), reason: document.getElementById('modalBalanceReason').value })
                     });
-                    if (!r2.ok) throw new Error((await r2.json()).error);
                 }
                 showAlert('用户信息已更新', 'success');
                 document.getElementById('userModal').close();
                 loadUsers(currentUserPage);
-            } catch (e) { showAlert(e.message || '操作失败', 'error'); }
+            } catch (e) { showAlert(e.responseJSON?.error || '操作失败', 'error'); }
         }
 
         async function setSubscription() {
@@ -670,14 +708,13 @@
         async function updateOrderStatus(id, status) {
             if (!status) return;
             try {
-                const res = await fetch(`/api/admin/orders/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status }) });
-                if (!res.ok) throw new Error((await res.json()).error);
+                await $.ajax({ url: `/api/admin/orders/${id}`, type: 'PUT', contentType: 'application/json', data: JSON.stringify({ status }) });
                 showAlert('订单状态已更新', 'success');
                 loadOrders(currentOrderPage);
-            } catch (e) { showAlert(e.message, 'error'); }
+            } catch (e) { showAlert(e.responseJSON?.error || '更新失败', 'error'); }
         }
 
-        // ── Plans ───────────────────────────────────────────────
+        // ── Plans & Addons ───────────────────────────────────────────────
         async function loadPlans() {
             try {
                 const data = await PlanService.loadPlans();
@@ -689,12 +726,37 @@
 
                 // Populate admin table
                 document.getElementById('plansTableBody').innerHTML = PlanService.renderPlanTableRows(plans);
+
+                // Load Addons too
+                loadAddons();
             } catch { document.getElementById('plansTableBody').innerHTML = '<tr><td colspan="6" class="text-center py-8 text-error text-sm">加载失败</td></tr>'; }
         }
+
+        async function loadAddons() {
+            try {
+                const data = await PlanService.loadAddons();
+                document.getElementById('addonsTableBody').innerHTML = PlanService.renderAddonTableRows(data.addons || []);
+            } catch {
+                document.getElementById('addonsTableBody').innerHTML = '<tr><td colspan="5" class="text-center py-8 text-error text-sm">加载失败</td></tr>';
+            }
+        }
+
+        window.openPlanModal = function () {
+            document.getElementById('editPlanId').value = 'new';
+            document.getElementById('editPlanCode').value = '';
+            document.getElementById('editPlanRoomLimit').value = 1;
+            document.getElementById('editPlanName').value = '';
+            document.getElementById('editPlanPriceMonthly').value = 0;
+            document.getElementById('editPlanPriceQuarterly').value = 0;
+            document.getElementById('editPlanPriceAnnual').value = 0;
+            document.getElementById('editPlanIsActive').checked = true;
+            document.getElementById('editPlanModal').showModal();
+        };
 
         window.editPlan = function (p) {
             document.getElementById('editPlanId').value = p.id;
             document.getElementById('editPlanCode').value = p.code;
+            document.getElementById('editPlanName').value = p.name || '';
             document.getElementById('editPlanRoomLimit').value = p.roomLimit;
             document.getElementById('editPlanPriceMonthly').value = p.priceMonthly || 0;
             document.getElementById('editPlanPriceQuarterly').value = p.priceQuarterly || 0;
@@ -706,6 +768,8 @@
         async function savePlan() {
             const id = document.getElementById('editPlanId').value;
             const payload = {
+                name: document.getElementById('editPlanName').value,
+                code: document.getElementById('editPlanCode').value,
                 room_limit: parseInt(document.getElementById('editPlanRoomLimit').value),
                 price_monthly: parseInt(document.getElementById('editPlanPriceMonthly').value) || 0,
                 price_quarterly: parseInt(document.getElementById('editPlanPriceQuarterly').value) || 0,
@@ -714,20 +778,91 @@
             };
 
             try {
-                const res = await fetch(`/api/admin/plans/${id}`, {
-                    method: 'PUT',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                const isNew = id === 'new';
+                await $.ajax({
+                    url: isNew ? '/api/admin/plans' : `/api/admin/plans/${id}`,
+                    type: isNew ? 'POST' : 'PUT',
+                    contentType: 'application/json',
+                    data: JSON.stringify(payload)
                 });
-                if (!res.ok) throw new Error((await res.json()).error);
-                showAlert('套餐修改成功', 'success');
+                showAlert(isNew ? '套餐创建成功' : '套餐修改成功', 'success');
                 document.getElementById('editPlanModal').close();
                 PlanService.invalidateCache();
                 loadPlans();
             } catch (err) {
-                showAlert(err.message || '修改失败', 'error');
+                showAlert(err.responseJSON?.error || '操作失败', 'error');
             }
         }
+
+        window.deletePlan = async function (id) {
+            if (!confirm('确定要删除此套餐吗？如果有用户正在使用，可能导致未知错误。建议直接禁用。')) return;
+            try {
+                await $.ajax({ url: `/api/admin/plans/${id}`, type: 'DELETE' });
+                showAlert('套餐已删除', 'success');
+                PlanService.invalidateCache();
+                loadPlans();
+            } catch (err) { showAlert(err.responseJSON?.error || '删除失败', 'error'); }
+        };
+
+        window.openAddonModal = function () {
+            document.getElementById('editAddonId').value = 'new';
+            document.getElementById('editAddonName').value = '';
+            document.getElementById('editAddonCode').value = '';
+            document.getElementById('editAddonRoomCount').value = 1;
+            document.getElementById('editAddonPriceMonthly').value = 0;
+            document.getElementById('editAddonPriceQuarterly').value = 0;
+            document.getElementById('editAddonPriceAnnual').value = 0;
+            document.getElementById('editAddonModal').showModal();
+        };
+
+        window.editAddon = function (a) {
+            document.getElementById('editAddonId').value = a.id;
+            document.getElementById('editAddonName').value = a.name || '';
+            document.getElementById('editAddonCode').value = a.code || '';
+            document.getElementById('editAddonRoomCount').value = a.roomCount || 1;
+            document.getElementById('editAddonPriceMonthly').value = a.priceMonthly || 0;
+            document.getElementById('editAddonPriceQuarterly').value = a.priceQuarterly || 0;
+            document.getElementById('editAddonPriceAnnual').value = a.priceAnnual || 0;
+            document.getElementById('editAddonModal').showModal();
+        };
+
+        window.saveAddon = async function () {
+            const id = document.getElementById('editAddonId').value;
+            const payload = {
+                name: document.getElementById('editAddonName').value,
+                code: document.getElementById('editAddonCode').value,
+                room_count: parseInt(document.getElementById('editAddonRoomCount').value) || 1,
+                price_monthly: parseFloat(document.getElementById('editAddonPriceMonthly').value) || 0,
+                price_quarterly: parseFloat(document.getElementById('editAddonPriceQuarterly').value) || 0,
+                price_annual: parseFloat(document.getElementById('editAddonPriceAnnual').value) || 0
+            };
+
+            try {
+                const isNew = id === 'new';
+                await $.ajax({
+                    url: isNew ? '/api/admin/addons' : `/api/admin/addons/${id}`,
+                    type: isNew ? 'POST' : 'PUT',
+                    contentType: 'application/json',
+                    data: JSON.stringify(payload)
+                });
+                showAlert(isNew ? '加量包创建成功' : '加量包修改成功', 'success');
+                document.getElementById('editAddonModal').close();
+                PlanService.invalidateCache();
+                loadAddons();
+            } catch (err) {
+                showAlert(err.responseJSON?.error || '操作失败', 'error');
+            }
+        };
+
+        window.deleteAddon = async function (id) {
+            if (!confirm('确定要删除此加量包吗？')) return;
+            try {
+                await $.ajax({ url: `/api/admin/addons/${id}`, type: 'DELETE' });
+                showAlert('加量包已删除', 'success');
+                PlanService.invalidateCache();
+                loadAddons();
+            } catch (err) { showAlert(err.responseJSON?.error || '删除失败', 'error'); }
+        };
 
         // ── Settings ─────────────────────────────────────────────
         async function loadSettings() {
@@ -785,24 +920,20 @@
             };
 
             try {
-                const res = await fetch('/api/admin/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
+                await $.ajax({
+                    url: '/api/admin/settings', type: 'POST', contentType: 'application/json',
+                    data: JSON.stringify(payload)
                 });
-
-                if (!res.ok) throw new Error((await res.json()).error || 'Save failed');
                 showAlert('设置已保存', 'success');
             } catch (err) {
-                showAlert(err.message, 'error');
+                showAlert(err.responseJSON?.error || 'Save failed', 'error');
             }
         }
 
         async function restartServer() {
             if (!confirm('确定要重启后台服务吗？所有进行中的录制和监控都将中断。')) return;
             try {
-                const res = await fetch('/api/admin/restart', { method: 'POST' });
-                if (!res.ok) throw new Error();
+                await $.ajax({ url: '/api/admin/restart', type: 'POST' });
                 showAlert('重启命令已发送，请等待服务恢复...', 'success');
                 setTimeout(() => location.reload(), 5000); // reload after 5s
             } catch {
@@ -824,6 +955,51 @@
             }
         });
     </script>
+
+    <!-- Modal: Edit Plan -->
+    <dialog id="editPlanModal" class="modal">
+        <div class="modal-box max-w-sm glass-card border border-white/10" style="background:rgba(15,15,20,0.95)">
+            <h3 class="font-bold text-lg mb-4">编辑套餐价格与配额</h3>
+            <input type="hidden" id="editPlanId">
+            <input type="hidden" id="editPlanCode">
+
+            <div class="form-control w-full mb-3">
+                <label class="label pb-1"><span class="label-text opacity-70 text-xs">房间上限 (-1 为无限制)</span></label>
+                <input type="number" id="editPlanRoomLimit" class="input input-bordered glass-input input-sm w-full" />
+            </div>
+
+            <div class="form-control w-full mb-3">
+                <label class="label pb-1"><span class="label-text opacity-70 text-xs">月付价格 (分, 100=1元)</span></label>
+                <input type="number" id="editPlanPriceMonthly"
+                    class="input input-bordered glass-input input-sm w-full" />
+            </div>
+
+            <div class="form-control w-full mb-3">
+                <label class="label pb-1"><span class="label-text opacity-70 text-xs">季付价格 (分)</span></label>
+                <input type="number" id="editPlanPriceQuarterly"
+                    class="input input-bordered glass-input input-sm w-full" />
+            </div>
+
+            <div class="form-control w-full mb-4">
+                <label class="label pb-1"><span class="label-text opacity-70 text-xs">年付价格 (分)</span></label>
+                <input type="number" id="editPlanPriceAnnual"
+                    class="input input-bordered glass-input input-sm w-full" />
+            </div>
+
+            <div class="form-control w-full mb-6">
+                <label class="cursor-pointer label justify-start gap-4">
+                    <span class="label-text font-bold">套餐上架状态</span>
+                    <input type="checkbox" id="editPlanIsActive" class="toggle toggle-success toggle-sm" />
+                </label>
+            </div>
+
+            <div class="modal-action mt-0">
+                <form method="dialog"><button class="btn btn-sm btn-ghost rounded-lg">取消</button></form>
+                <button class="btn btn-sm btn-primary rounded-lg px-6" onclick="savePlan()">保存修改</button>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button>close</button></form>
+    </dialog>
 </body>
 
 </html>
