@@ -15,13 +15,14 @@ function showSection(name) {
     document.querySelectorAll('#sidebar-menu a').forEach(a => a.classList.remove('active'));
     event.target.classList.add('active');
 
-    const titles = { overview: '系统概览', users: '用户管理', orders: '订单管理', plans: '套餐设置', settings: '系统设置' };
+    const titles = { overview: '系统概览', users: '用户管理', orders: '订单管理', plans: '套餐设置', gifts: '礼物配置', settings: '系统设置' };
     document.getElementById('section-title').textContent = titles[name] || name;
 
     if (name === 'overview') loadOverviewStats();
     else if (name === 'users') loadUsers(1);
     else if (name === 'orders') loadAdminOrders(1);
     else if (name === 'plans') { loadPlans(); loadAddons(); }
+    else if (name === 'gifts') loadAdminGiftConfig();
     else if (name === 'settings') loadSettingsForm();
 }
 
@@ -205,12 +206,12 @@ async function loadPlans() {
                 <div class="flex justify-between items-start">
                     <div>
                         <h4 class="font-bold">${p.name} <span class="text-xs text-base-content/60">(${p.code})</span></h4>
-                        <p class="text-sm">房间: ${p.roomLimit} | 月¥${p.priceMonthly} / 季¥${p.priceQuarterly} / 年¥${p.priceYearly}</p>
+                        <p class="text-sm">房间: ${p.roomLimit} | 月¥${p.priceMonthly} / 季¥${p.priceQuarterly} / 年¥${p.priceAnnual}</p>
                         ${!p.isActive ? '<span class="badge badge-error badge-sm">已下架</span>' : ''}
                     </div>
                     <div class="flex gap-1">
                         <button class="btn btn-xs btn-ghost" onclick="editPlan(${JSON.stringify(p).replace(/"/g, '&quot;')})">编辑</button>
-                        <button class="btn btn-xs btn-error btn-outline" onclick="deletePlan(${p.id})">${p.isActive ? '下架' : '已下架'}</button>
+                        <button class="btn btn-xs ${p.isActive ? 'btn-error' : 'btn-success'} btn-outline" onclick="togglePlanStatus(${p.id})">${p.isActive ? '下架' : '上架'}</button>
                     </div>
                 </div>
             </div>
@@ -226,7 +227,7 @@ function showPlanForm(plan) {
     document.getElementById('pf-room').value = plan?.roomLimit || '';
     document.getElementById('pf-pm').value = plan?.priceMonthly || '';
     document.getElementById('pf-pq').value = plan?.priceQuarterly || '';
-    document.getElementById('pf-py').value = plan?.priceYearly || '';
+    document.getElementById('pf-py').value = plan?.priceAnnual || '';
     document.getElementById('pf-sort').value = plan?.sortOrder || 0;
     document.getElementById('planFormModal').showModal();
 }
@@ -241,7 +242,7 @@ async function submitPlanForm() {
         roomLimit: parseInt(document.getElementById('pf-room').value),
         priceMonthly: parseFloat(document.getElementById('pf-pm').value),
         priceQuarterly: parseFloat(document.getElementById('pf-pq').value),
-        priceYearly: parseFloat(document.getElementById('pf-py').value),
+        priceAnnual: parseFloat(document.getElementById('pf-py').value),
         sortOrder: parseInt(document.getElementById('pf-sort').value) || 0,
     };
 
@@ -254,8 +255,7 @@ async function submitPlanForm() {
     else alert(data.error || '操作失败');
 }
 
-async function deletePlan(id) {
-    if (!confirm('确定要下架此套餐？')) return;
+async function togglePlanStatus(id) {
     const res = await Auth.apiFetch(`/api/admin/plans/${id}`, { method: 'DELETE' });
     const data = await res.json();
     if (res.ok) { alert(data.message); loadPlans(); }
@@ -391,4 +391,61 @@ function renderPagination(containerId, pagination, fnName) {
     }
     html += '</div>';
     container.innerHTML = html;
+}
+
+// ==================== Gift Config ====================
+async function loadAdminGiftConfig() {
+    try {
+        const res = await Auth.apiFetch('/api/gifts');
+        const gifts = await res.json();
+        const tbody = document.querySelector('#adminGiftConfigTable tbody');
+        document.getElementById('admin-giftCount').textContent = gifts.length;
+
+        if (!gifts || gifts.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="4" class="text-center opacity-50">暂无礼物数据，开启直播监控后会自动采集</td></tr>';
+            return;
+        }
+
+        tbody.innerHTML = gifts.map(g => {
+            const icon = g.iconUrl
+                ? `<img src="${g.iconUrl}" class="w-8 h-8 rounded" alt="${g.nameEn}" onerror="this.src=''">`
+                : '🎁';
+            return `<tr>
+                <td class="text-center">${icon}</td>
+                <td class="font-mono text-sm">${g.nameEn || '-'}</td>
+                <td><input type="text" class="input input-bordered input-sm w-full max-w-xs admin-gift-input" data-gift-id="${g.giftId}" value="${g.nameCn || ''}" placeholder="输入中文名..."></td>
+                <td class="text-right font-mono text-warning">💎 ${(g.diamondCount || 0).toLocaleString()}</td>
+            </tr>`;
+        }).join('');
+
+        // Bind save events
+        document.querySelectorAll('.admin-gift-input').forEach(input => {
+            input.addEventListener('blur', saveAdminGiftName);
+            input.addEventListener('keydown', function(e) {
+                if (e.key === 'Enter') { e.preventDefault(); saveAdminGiftName.call(this); }
+            });
+        });
+    } catch (err) {
+        console.error('Failed to load gift config:', err);
+        document.querySelector('#adminGiftConfigTable tbody').innerHTML = '<tr><td colspan="4" class="text-center text-error">加载失败</td></tr>';
+    }
+}
+
+async function saveAdminGiftName() {
+    const input = this;
+    const giftId = input.dataset.giftId;
+    const nameCn = input.value.trim();
+    try {
+        const res = await Auth.apiFetch(`/api/gifts/${encodeURIComponent(giftId)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ nameCn })
+        });
+        if (res.ok) {
+            input.classList.add('input-success');
+            setTimeout(() => input.classList.remove('input-success'), 1000);
+        }
+    } catch (err) {
+        input.classList.add('input-error');
+        setTimeout(() => input.classList.remove('input-error'), 2000);
+    }
 }

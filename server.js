@@ -13,6 +13,16 @@ const { AutoRecorder } = require('./auto_recorder');
 const recordingManager = require('./recording_manager');
 const ffmpegManager = require('./utils/ffmpeg_manager');
 const { router: userManagementRouter, startPeriodicTasks } = require('./routes/index');
+const { optionalAuth } = require('./middleware/auth');
+const db = require('./db');
+
+// Helper: get user's allowed room IDs (returns null for admin = no filter)
+async function getUserRoomFilter(req) {
+    if (!req.user) return null; // not logged in - show all (legacy)
+    if (req.user.role === 'admin') return null; // admin - show all
+    const rows = await db.all('SELECT room_id FROM user_room WHERE user_id = ?', [req.user.id]);
+    return rows.map(r => r.roomId);
+}
 
 
 const app = express();
@@ -368,14 +378,15 @@ app.post('/api/price', (req, res) => {
 });
 
 // Room API
-app.get('/api/rooms/stats', async (req, res) => {
+app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
     try {
         const liveRoomIds = autoRecorder.getLiveRoomIds();
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const search = req.query.search || '';
         const sort = req.query.sort || 'default';
-        const result = await manager.getRoomStats(liveRoomIds, { page, limit, search, sort });
+        const roomFilter = await getUserRoomFilter(req);
+        const result = await manager.getRoomStats(liveRoomIds, { page, limit, search, sort, roomFilter });
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -395,12 +406,13 @@ app.get('/api/debug/connections', (req, res) => {
     }
 });
 
-app.get('/api/rooms', async (req, res) => {
+app.get('/api/rooms', optionalAuth, async (req, res) => {
     try {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const search = req.query.search || '';
-        const result = await manager.getRooms({ page, limit, search });
+        const roomFilter = await getUserRoomFilter(req);
+        const result = await manager.getRooms({ page, limit, search, roomFilter });
 
         // Merge isLive status from autoRecorder activeConnections
         const liveRoomIds = autoRecorder.getLiveRoomIds();
@@ -528,7 +540,7 @@ app.get('/api/history', async (req, res) => {
 });
 
 // User Analysis API
-app.get('/api/analysis/users', async (req, res) => {
+app.get('/api/analysis/users', optionalAuth, async (req, res) => {
     try {
         const filters = {
             lang: req.query.lang || '',
@@ -542,6 +554,8 @@ app.get('/api/analysis/users', async (req, res) => {
         };
         const page = parseInt(req.query.page) || 1;
         const pageSize = parseInt(req.query.pageSize) || 50;
+        const roomFilter = await getUserRoomFilter(req);
+        if (roomFilter) filters.roomFilter = roomFilter;
         const result = await manager.getTopGifters(page, pageSize, filters);
         res.json(result);
     } catch (err) {
@@ -618,20 +632,21 @@ function formatPeakDays(dayStats) {
 
 
 
-app.get('/api/analysis/stats', async (req, res) => {
+app.get('/api/analysis/stats', optionalAuth, async (req, res) => {
     try {
-        const stats = await manager.getGlobalStats();
+        const roomFilter = await getUserRoomFilter(req);
+        const stats = await manager.getGlobalStats(roomFilter);
         res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
-
     }
 });
 
-app.get('/api/analysis/rooms/entry', async (req, res) => {
+app.get('/api/analysis/rooms/entry', optionalAuth, async (req, res) => {
     try {
         const { startDate, endDate, limit } = req.query;
-        const stats = await manager.getRoomEntryStats(startDate, endDate, limit);
+        const roomFilter = await getUserRoomFilter(req);
+        const stats = await manager.getRoomEntryStats(startDate, endDate, limit, roomFilter);
         res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -725,7 +740,7 @@ app.post('/api/analysis/ai', async (req, res) => {
 
 
 
-app.post('/api/rooms', async (req, res) => {
+app.post('/api/rooms', optionalAuth, async (req, res) => {
     try {
         let { roomId, name, address, isMonitorEnabled, language, priority, isRecordingEnabled, recordingAccountId } = req.body;
 
@@ -738,12 +753,16 @@ app.post('/api/rooms', async (req, res) => {
 
         console.log(`[API] POST /api/rooms - roomId: ${roomId}, isMonitorEnabled: ${isMonitorEnabled} (type: ${typeof isMonitorEnabled}), priority: ${priority}`);
 
-        // If isMonitorEnabled is undefined, default to 1 (true) for new rooms, or preserve existing?
-        // Manager handles upsert. We should pass what we have.
-        // Frontend "saveRoom" sends all fields.
         const room = await manager.updateRoom(roomId, name, address, isMonitorEnabled, language, priority, isRecordingEnabled, recordingAccountId);
         console.log(`[API] Room updated:`, room);
 
+        // Create user_room association if authenticated (non-admin users)
+        if (req.user && req.user.role !== 'admin') {
+            const existing = await db.get('SELECT id FROM user_room WHERE user_id = ? AND room_id = ?', [req.user.id, roomId]);
+            if (!existing) {
+                await db.run('INSERT INTO user_room (user_id, room_id) VALUES (?, ?)', [req.user.id, roomId]);
+            }
+        }
 
         // If monitor was just disabled, disconnect immediately and save session
         if (isMonitorEnabled === false || isMonitorEnabled === 0 || isMonitorEnabled === '0') {
@@ -1490,6 +1509,26 @@ httpServer.listen(PORT, async () => {
             console.error('[CRON] Global stats refresh error:', err.message);
         }
     }, 30 * 60 * 1000); // Every 30 minutes
+
+    // 7-day data retention cleanup - runs every 6 hours
+    setInterval(async () => {
+        try {
+            console.log('[CRON] Running expired room data cleanup (7-day retention)...');
+            await manager.cleanupExpiredRoomData();
+        } catch (err) {
+            console.error('[CRON] Room data cleanup error:', err.message);
+        }
+    }, 6 * 60 * 60 * 1000); // Every 6 hours
+
+    // Run initial cleanup 60 seconds after startup
+    setTimeout(async () => {
+        try {
+            console.log('[CRON] Initial expired room data cleanup...');
+            await manager.cleanupExpiredRoomData();
+        } catch (err) {
+            console.error('[CRON] Initial room data cleanup error:', err.message);
+        }
+    }, 60000); // 60 seconds after startup
 });
 
 // Graceful shutdown handling - save all active recordings before exit

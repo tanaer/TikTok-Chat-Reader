@@ -394,13 +394,16 @@ router.put('/plans/:id', async (req, res) => {
 });
 
 /**
- * DELETE /api/admin/plans/:id
+ * DELETE /api/admin/plans/:id - Toggle active status (下架/上架)
  */
 router.delete('/plans/:id', async (req, res) => {
     try {
-        // Soft delete - just deactivate
-        await db.run('UPDATE subscription_plans SET is_active = false WHERE id = ?', [req.params.id]);
-        res.json({ message: '套餐已下架' });
+        const plan = await db.get('SELECT is_active FROM subscription_plans WHERE id = ?', [req.params.id]);
+        if (!plan) return res.status(404).json({ error: '套餐不存在' });
+
+        const newStatus = !plan.isActive;
+        await db.run('UPDATE subscription_plans SET is_active = ?, updated_at = NOW() WHERE id = ?', [newStatus, req.params.id]);
+        res.json({ message: newStatus ? '套餐已上架' : '套餐已下架', isActive: newStatus });
     } catch (err) {
         res.status(500).json({ error: '操作失败' });
     }

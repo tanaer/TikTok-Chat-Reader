@@ -175,5 +175,51 @@ const Auth = {
                 <li><a href="/register.html" class="btn btn-primary btn-sm">注册</a></li>
             `;
         }
+
+        // Update global top nav if present
+        const globalNav = document.getElementById('global-top-nav');
+        if (globalNav) {
+            if (this.isLoggedIn()) {
+                globalNav.innerHTML = `
+                    <li><a href="/" class="btn btn-ghost btn-sm">首页</a></li>
+                    <li><a href="/user-center.html" class="btn btn-ghost btn-sm">用户中心</a></li>
+                    <li><a href="/" class="btn btn-ghost btn-sm" onclick="if(typeof switchSection==='function')switchSection('roomList')">监控中心</a></li>
+                `;
+            } else {
+                globalNav.innerHTML = `
+                    <li><a href="/login.html" class="btn btn-primary btn-sm">立即开始</a></li>
+                `;
+            }
+        }
+
+        // Apply admin-only visibility
+        this.applyAdminVisibility();
+    },
+
+    /**
+     * Hide/show elements based on admin role
+     * Elements with data-admin-only="true" are hidden for non-admins
+     */
+    applyAdminVisibility() {
+        const isAdmin = this.isAdmin();
+        document.querySelectorAll('[data-admin-only]').forEach(el => {
+            if (isAdmin) {
+                el.style.display = '';
+            } else {
+                el.style.display = 'none';
+            }
+        });
     }
 };
+
+// Auto-attach Authorization header to all jQuery AJAX requests
+if (typeof $ !== 'undefined') {
+    $.ajaxSetup({
+        beforeSend: function(xhr) {
+            const token = Auth.getAccessToken();
+            if (token) {
+                xhr.setRequestHeader('Authorization', 'Bearer ' + token);
+            }
+        }
+    });
+}

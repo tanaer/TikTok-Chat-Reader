@@ -104,15 +104,15 @@ router.delete('/:roomId', authenticate, async (req, res) => {
             [roomId]
         );
 
-        // If no other users, disable monitoring
+        // If no other users, disable monitoring and record the disable timestamp
         if (Number(otherUsers?.count || 0) === 0) {
             await db.run(
-                'UPDATE room SET is_monitor_enabled = 0 WHERE room_id = ?',
+                'UPDATE room SET is_monitor_enabled = 0, updated_at = NOW() WHERE room_id = ?',
                 [roomId]
             );
         }
 
-        res.json({ message: '房间已移除' });
+        res.json({ message: '房间已移除，数据将保留7天' });
     } catch (err) {
         console.error('[Rooms] Remove room error:', err.message);
         res.status(500).json({ error: '移除房间失败' });

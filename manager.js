@@ -223,21 +223,35 @@ class Manager {
 
     async getRooms(options = {}) {
         await this.ensureDb();
-        const { page = 1, limit = 50, search = '' } = options;
+        const { page = 1, limit = 50, search = '', roomFilter = null } = options;
         const offset = (page - 1) * limit;
 
+        let whereClauses = [];
         let sql = 'SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled, is_recording_enabled, recording_account_id FROM room';
         let countSql = 'SELECT COUNT(*) as total FROM room';
         const params = [];
         const countParams = [];
 
-        // Fuzzy search on room_id and name
         if (search && search.trim()) {
             const likePattern = `%${search.trim()}%`;
-            sql += ' WHERE room_id ILIKE ? OR name ILIKE ?';
-            countSql += ' WHERE room_id ILIKE ? OR name ILIKE ?';
+            whereClauses.push('(room_id ILIKE ? OR name ILIKE ?)');
             params.push(likePattern, likePattern);
             countParams.push(likePattern, likePattern);
+        }
+        if (roomFilter !== null) {
+            if (roomFilter.length === 0) {
+                return { data: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+            }
+            const placeholders = roomFilter.map(() => '?').join(',');
+            whereClauses.push(`room_id IN (${placeholders})`);
+            params.push(...roomFilter);
+            countParams.push(...roomFilter);
+        }
+
+        if (whereClauses.length > 0) {
+            const where = ' WHERE ' + whereClauses.join(' AND ');
+            sql += where;
+            countSql += where;
         }
 
         sql += ' ORDER BY updated_at DESC LIMIT ? OFFSET ?';
@@ -869,8 +883,13 @@ class Manager {
     async getTopGifters(page = 1, pageSize = 50, filters = {}) {
         await this.ensureDb();
 
-        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '' } = filters;
+        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '', roomFilter = null } = filters;
         const offset = (page - 1) * pageSize;
+
+        // If roomFilter is empty array, user has no rooms
+        if (roomFilter !== null && roomFilter !== undefined && roomFilter.length === 0) {
+            return { users: [], totalCount: 0, page, pageSize };
+        }
 
         // OPTIMIZED: Use pre-aggregated user_stats table instead of expensive event aggregation
         // Filters that require real-time event data (activeHour) fall back to slow path
@@ -919,6 +938,13 @@ class Manager {
             conditions.push('us.rose_value > us.tiktok_value');
         } else if (giftPreference === 'knife') {
             conditions.push('us.tiktok_value > us.rose_value');
+        }
+
+        // Room filter: only show users who have activity in specific rooms
+        if (roomFilter && roomFilter.length > 0) {
+            const rfPlaceholders = roomFilter.map(() => '?').join(',');
+            conditions.push(`us.user_id IN (SELECT DISTINCT user_id FROM event WHERE room_id IN (${rfPlaceholders}))`);
+            params.push(...roomFilter);
         }
 
         const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
@@ -1320,19 +1346,97 @@ class Manager {
         await run('DELETE FROM room WHERE room_id = ?', [roomId]);
     }
 
+    /**
+     * Clean up expired room data (7-day retention policy)
+     * Removes events, sessions, stats for rooms that:
+     * - Have is_monitor_enabled = 0 (disabled)
+     * - Have no user_room associations (no user watching)
+     * - Were disabled (updated_at) more than 7 days ago
+     */
+    async cleanupExpiredRoomData() {
+        await this.ensureDb();
+        const RETENTION_DAYS = 7;
+
+        try {
+            // Find rooms eligible for cleanup
+            const expiredRooms = await query(`
+                SELECT r.room_id, r.name, r.updated_at
+                FROM room r
+                WHERE r.is_monitor_enabled = 0
+                  AND r.updated_at < NOW() - INTERVAL '${RETENTION_DAYS} days'
+                  AND NOT EXISTS (
+                      SELECT 1 FROM user_room ur WHERE ur.room_id = r.room_id
+                  )
+            `);
+
+            if (expiredRooms.length === 0) {
+                console.log('[Cleanup] No expired rooms to clean up.');
+                return { cleaned: 0 };
+            }
+
+            console.log(`[Cleanup] Found ${expiredRooms.length} expired rooms to clean up.`);
+
+            let totalEvents = 0;
+            let totalSessions = 0;
+            for (const room of expiredRooms) {
+                const roomId = room.roomId;
+                console.log(`[Cleanup] Cleaning room ${roomId} (${room.name || 'unnamed'}) - disabled since ${room.updatedAt}`);
+
+                // Delete events
+                const eventResult = await query('SELECT COUNT(*) AS count FROM event WHERE room_id = ?', [roomId]);
+                const eventCount = Number(eventResult[0]?.count || 0);
+                await run('DELETE FROM event WHERE room_id = ?', [roomId]);
+                totalEvents += eventCount;
+
+                // Delete sessions
+                const sessionResult = await query('SELECT COUNT(*) AS count FROM session WHERE room_id = ?', [roomId]);
+                const sessionCount = Number(sessionResult[0]?.count || 0);
+                await run('DELETE FROM session WHERE room_id = ?', [roomId]);
+                totalSessions += sessionCount;
+
+                // Delete cached room stats
+                await run('DELETE FROM room_stats WHERE room_id = ?', [roomId]);
+
+                // Delete recording tasks
+                await run('DELETE FROM recording_task WHERE room_id = ?', [roomId]);
+
+                // Delete the room itself
+                await run('DELETE FROM room WHERE room_id = ?', [roomId]);
+
+                console.log(`[Cleanup] Room ${roomId}: deleted ${eventCount} events, ${sessionCount} sessions.`);
+            }
+
+            console.log(`[Cleanup] Complete: cleaned ${expiredRooms.length} rooms, ${totalEvents} events, ${totalSessions} sessions.`);
+            return { cleaned: expiredRooms.length, events: totalEvents, sessions: totalSessions };
+        } catch (err) {
+            console.error('[Cleanup] Error during expired room cleanup:', err.message);
+            return { cleaned: 0, error: err.message };
+        }
+    }
 
     // Room Entry Analysis
-    async getRoomEntryStats(startDate, endDate, limit = 100) {
+    async getRoomEntryStats(startDate, endDate, limit = 100, roomFilter = null) {
         await this.ensureDb();
 
-        // Ensure dates are valid
+        if (roomFilter !== null && roomFilter.length === 0) {
+            return [];
+        }
+
         const start = startDate ? new Date(startDate) : new Date(Date.now() - 24 * 60 * 60 * 1000);
         const end = endDate ? new Date(endDate) : new Date();
 
-        // Adjust end date to include the full day if it's just a date string (e.g. 2024-01-01)
         if (endDate && endDate.length <= 10) {
             end.setHours(23, 59, 59, 999);
         }
+
+        let roomFilterClause = '';
+        const params = [start.toISOString(), end.toISOString()];
+        if (roomFilter && roomFilter.length > 0) {
+            const placeholders = roomFilter.map(() => '?').join(',');
+            roomFilterClause = `AND e.room_id IN (${placeholders})`;
+            params.push(...roomFilter);
+        }
+        params.push(parseInt(limit) || 100);
 
         const stats = await query(`
             SELECT 
@@ -1346,10 +1450,11 @@ class Manager {
             WHERE e.type = 'member' 
             AND e.timestamp >= ? 
             AND e.timestamp <= ?
+            ${roomFilterClause}
             GROUP BY e.room_id
             ORDER BY count DESC
             LIMIT ?
-        `, [start.toISOString(), end.toISOString(), parseInt(limit) || 100]);
+        `, params);
 
         return stats.map(s => ({
             roomId: s.roomId,
@@ -1359,47 +1464,59 @@ class Manager {
         }));
     }
 
-    async getGlobalStats() {
+    async getGlobalStats(roomFilter = null) {
         await this.ensureDb();
 
-        // OPTIMIZED: Read from pre-aggregated global_stats cache table
-        // The cache is refreshed hourly by the cron job
-        const cached = await get(`SELECT hour_stats_json, day_stats_json, updated_at FROM global_stats WHERE id = 1`);
+        // Use cache only when no room filter (admin/global view)
+        if (!roomFilter) {
+            // OPTIMIZED: Read from pre-aggregated global_stats cache table
+            const cached = await get(`SELECT hour_stats_json, day_stats_json, updated_at FROM global_stats WHERE id = 1`);
 
-        if (cached && cached.hourStatsJson && cached.dayStatsJson) {
-            try {
-                const hourStats = JSON.parse(cached.hourStatsJson);
-                const dayStats = JSON.parse(cached.dayStatsJson);
-                return { hourStats, dayStats, cachedAt: cached.updatedAt };
-            } catch (e) {
-                console.error('[Manager] Error parsing global_stats cache:', e);
+            if (cached && cached.hourStatsJson && cached.dayStatsJson) {
+                try {
+                    const hourStats = JSON.parse(cached.hourStatsJson);
+                    const dayStats = JSON.parse(cached.dayStatsJson);
+                    return { hourStats, dayStats, cachedAt: cached.updatedAt };
+                } catch (e) {
+                    console.error('[Manager] Error parsing global_stats cache:', e);
+                }
             }
         }
 
-        // Fallback: compute in real-time if cache is empty or invalid
-        console.log('[Manager] Global stats cache miss, computing in real-time...');
+        // Real-time computation (for filtered view or cache miss)
+        console.log('[Manager] Computing stats in real-time...');
 
         const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
             .toISOString().replace('T', ' ').slice(0, 19);
 
         const chineseFilter = `(u.common_language = '中文' OR u.mastered_languages = '中文')`;
 
+        let roomFilterClause = '';
+        const extraParams = [];
+        if (roomFilter && roomFilter.length > 0) {
+            const placeholders = roomFilter.map(() => '?').join(',');
+            roomFilterClause = `AND e.room_id IN (${placeholders})`;
+            extraParams.push(...roomFilter);
+        } else if (roomFilter !== null && roomFilter.length === 0) {
+            return { hourStats: {}, dayStats: {} };
+        }
+
         const hourChatRows = await query(`
             SELECT to_char(e.timestamp, 'HH24') as hour, COUNT(*) as cnt
             FROM event e
             LEFT JOIN "user" u ON e.user_id = u.user_id
-            WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter}
+            WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter} ${roomFilterClause}
             GROUP BY hour
-        `, [thirtyDaysAgo]);
+        `, [thirtyDaysAgo, ...extraParams]);
 
         const hourGiftRows = await query(`
             SELECT to_char(e.timestamp, 'HH24') as hour, 
                    SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
             FROM event e
             LEFT JOIN "user" u ON e.user_id = u.user_id
-            WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter}
+            WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter} ${roomFilterClause}
             GROUP BY hour
-        `, [thirtyDaysAgo]);
+        `, [thirtyDaysAgo, ...extraParams]);
 
         const hourStats = {};
         for (let i = 0; i < 24; i++) hourStats[String(i).padStart(2, '0')] = { gift: 0, chat: 0 };
@@ -1414,18 +1531,18 @@ class Manager {
             SELECT EXTRACT(DOW FROM e.timestamp)::int as day, COUNT(*) as cnt
             FROM event e
             LEFT JOIN "user" u ON e.user_id = u.user_id
-            WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter}
+            WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter} ${roomFilterClause}
             GROUP BY day
-        `, [thirtyDaysAgo]);
+        `, [thirtyDaysAgo, ...extraParams]);
 
         const dayGiftRows = await query(`
             SELECT EXTRACT(DOW FROM e.timestamp)::int as day,
                    SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
             FROM event e
             LEFT JOIN "user" u ON e.user_id = u.user_id
-            WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter}
+            WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter} ${roomFilterClause}
             GROUP BY day
-        `, [thirtyDaysAgo]);
+        `, [thirtyDaysAgo, ...extraParams]);
 
         const dayStats = {};
         for (let i = 0; i < 7; i++) dayStats[i] = { gift: 0, chat: 0 };
@@ -1443,7 +1560,7 @@ class Manager {
 
     async getRoomStats(liveRoomIds = [], options = {}) {
         await this.ensureDb();
-        const { page = 1, limit = 50, search = '', sort = 'updated_at' } = options;
+        const { page = 1, limit = 50, search = '', sort = 'updated_at', roomFilter = null } = options;
         const offset = (page - 1) * limit;
 
         // Define which sorts use cached room_stats (can be done in SQL)
@@ -1460,14 +1577,24 @@ class Manager {
         ];
         const isCachedSort = cachedMetricSorts.includes(sort);
 
-        // Build WHERE clause for search
-        let whereClause = '';
+        // Build WHERE clause for search and room filter
+        let whereClauses = [];
         const searchParams = [];
         if (search && search.trim()) {
             const likePattern = `%${search.trim()}%`;
-            whereClause = 'WHERE (r.room_id ILIKE ? OR r.name ILIKE ?)';
+            whereClauses.push('(r.room_id ILIKE ? OR r.name ILIKE ?)');
             searchParams.push(likePattern, likePattern);
         }
+        if (roomFilter !== null) {
+            if (roomFilter.length === 0) {
+                // User has no rooms - return empty
+                return { data: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+            }
+            const placeholders = roomFilter.map(() => '?').join(',');
+            whereClauses.push(`r.room_id IN (${placeholders})`);
+            searchParams.push(...roomFilter);
+        }
+        const whereClause = whereClauses.length > 0 ? 'WHERE ' + whereClauses.join(' AND ') : '';
 
         // Get total count
         const countSql = `SELECT COUNT(*) as total FROM room r ${whereClause}`;

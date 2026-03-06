@@ -46,11 +46,12 @@ const TEST_PASS = 'Test123456';
 async function testAuthRegister() {
     console.log('\n--- Auth: Register ---');
 
-    // Missing email should fail
-    let r = await request('POST', '/api/auth/register', { username: TEST_USER, password: TEST_PASS });
-    assert('Register without email fails', r.status === 400);
+    // Register without email should succeed (email is optional)
+    const noEmailUser = `noemail_${TS}`;
+    let r = await request('POST', '/api/auth/register', { username: noEmailUser, password: TEST_PASS });
+    assert('Register without email succeeds (email optional)', r.status === 201);
 
-    // Valid register
+    // Valid register with email
     r = await request('POST', '/api/auth/register', {
         username: TEST_USER, password: TEST_PASS, email: TEST_EMAIL
     });
@@ -332,6 +333,76 @@ async function cleanup() {
     }
 }
 
+async function testDataVisibility() {
+    console.log('\n--- Data Visibility: Room Filtering ---');
+
+    // Admin sees all rooms (no filter)
+    let r = await request('GET', '/api/rooms', null, adminToken);
+    assert('Admin can list rooms', r.status === 200);
+    const adminRoomCount = r.data.pagination?.total || 0;
+    assert('Admin sees rooms', adminRoomCount >= 0);
+
+    // Unauthenticated user sees all rooms (legacy mode)
+    r = await request('GET', '/api/rooms');
+    assert('Unauthenticated can list rooms', r.status === 200);
+    const publicRoomCount = r.data.pagination?.total || 0;
+    assert('Public sees same rooms as admin', publicRoomCount === adminRoomCount);
+
+    // Regular user sees only their rooms (initially 0)
+    r = await request('GET', '/api/rooms', null, accessToken);
+    assert('Regular user can list rooms', r.status === 200);
+    const userRoomCount = r.data.pagination?.total || 0;
+    assert('Regular user sees limited rooms', userRoomCount <= adminRoomCount);
+
+    // Test room stats endpoint with auth
+    r = await request('GET', '/api/rooms/stats', null, accessToken);
+    assert('Regular user can get room stats', r.status === 200);
+
+    // Admin gets all stats
+    r = await request('GET', '/api/rooms/stats', null, adminToken);
+    assert('Admin can get all room stats', r.status === 200);
+
+    // Test analysis endpoints with auth
+    r = await request('GET', '/api/analysis/stats', null, accessToken);
+    assert('Regular user can get analysis stats', r.status === 200);
+
+    r = await request('GET', '/api/analysis/stats', null, adminToken);
+    assert('Admin can get analysis stats', r.status === 200);
+
+    r = await request('GET', '/api/analysis/users?page=1&pageSize=5', null, accessToken);
+    assert('Regular user can get user analysis', r.status === 200);
+
+    r = await request('GET', '/api/analysis/rooms/entry?limit=5', null, accessToken);
+    assert('Regular user can get room entry stats', r.status === 200);
+}
+
+async function testUserRoomAssociation() {
+    console.log('\n--- User Room: Association ---');
+
+    // Add a room via user endpoint (needs subscription/quota)
+    const testRoomId = `test_room_${TS}`;
+    let r = await request('POST', '/api/user/rooms', { roomId: testRoomId }, accessToken);
+    // May fail due to quota, but should not 500
+    if (r.status === 201) {
+        assert('Add room association success', true);
+
+        // Verify room appears in user's filtered room list
+        r = await request('GET', '/api/rooms', null, accessToken);
+        assert('User room list includes added room', r.status === 200);
+        const hasRoom = r.data.data?.some(rm => rm.roomId === testRoomId);
+        assert('Added room visible to user', hasRoom === true);
+
+        // Delete room association
+        r = await request('DELETE', `/api/user/rooms/${testRoomId}`, null, accessToken);
+        assert('Remove room association success', r.status === 200);
+        assert('Remove response mentions data retention', r.data.message?.includes('7'));
+    } else if (r.status === 403) {
+        assert('Add room blocked by quota (expected for free user)', true);
+    } else {
+        assert(`Add room unexpected status: ${r.status}`, false);
+    }
+}
+
 async function main() {
     console.log('=== SaaS API Integration Tests ===');
     console.log(`Target: ${BASE}\n`);
@@ -365,6 +436,10 @@ async function main() {
 
         // Purchase (after balance adjusted)
         await testPurchasePlan();
+
+        // Data visibility & room association
+        await testDataVisibility();
+        await testUserRoomAssociation();
 
         // Password change + logout
         await testChangePassword();

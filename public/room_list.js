@@ -78,6 +78,7 @@ function renderRoomCard(r, index = 0) {
     const recordingAccountId = escapeHtml(r.recordingAccountId || '');
     const safeRoomId = escapeHtml(r.roomId);
     const safeName = escapeHtml(r.name || '');
+    const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin();
 
 
     // Recording status
@@ -160,8 +161,8 @@ function renderRoomCard(r, index = 0) {
                 </div>
                 <div class="flex gap-1">
                     <button class="btn btn-xs btn-ghost text-error" onclick="deleteRoom('${safeRoomId}')">删除</button>
-                    <button class="btn btn-xs ${recoBtnClass}" onclick="toggleRecording('${safeRoomId}', '${safeRoomId}', this)" title="${recoBtnTooltip}">${recoBtnText}</button>
-                    ${r.lastSessionTime ? `<button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>` : ''}
+                    ${isAdmin ? `<button class="btn btn-xs ${recoBtnClass}" onclick="toggleRecording('${safeRoomId}', '${safeRoomId}', this)" title="${recoBtnTooltip}">${recoBtnText}</button>` : ''}
+                    ${isAdmin && r.lastSessionTime ? `<button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>` : ''}
                     <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn}, '${r.language || '中文'}', ${r.priority}, ${isRecordingEnabled}, '${recordingAccountId}')">编辑</button>
                     <button class="btn btn-sm btn-primary" onclick="enterRoom('${safeRoomId}', '${safeName}')">进入</button>
 
@@ -181,8 +182,8 @@ function renderRoomRow(r, index = 0) {
     const isRecordingEnabled = r.isRecordingEnabled === 1;
     const recordingAccountId = escapeHtml(r.recordingAccountId || '');
     const safeRoomId = escapeHtml(r.roomId);
-
     const safeName = escapeHtml(r.name || '');
+    const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin();
 
     // Recording status
     const isRecording = window.activeRecordingSet && window.activeRecordingSet.has(r.roomId);
@@ -238,8 +239,8 @@ function renderRoomRow(r, index = 0) {
         </td>
         <td class="p-2 text-center" onclick="event.stopPropagation()">
             <div class="flex gap-1 justify-center">
-                <button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>
-                <button class="btn btn-xs ${recoBtnClass}" onclick="toggleRecording('${safeRoomId}', '${safeRoomId}', this)" title="${isRecording ? '停止录制' : '开始录制'}">${recoBtnText}</button>
+                ${isAdmin ? `<button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>` : ''}
+                ${isAdmin ? `<button class="btn btn-xs ${recoBtnClass}" onclick="toggleRecording('${safeRoomId}', '${safeRoomId}', this)" title="${isRecording ? '停止录制' : '开始录制'}">${recoBtnText}</button>` : ''}
                 <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn}, '${r.language || '中文'}', ${r.priority}, ${isRecordingEnabled}, '${recordingAccountId}')">✏️</button>
                 <button class="btn btn-xs btn-ghost text-error" onclick="deleteRoom('${safeRoomId}')">🗑️</button>
 
@@ -569,7 +570,7 @@ window.openAddRoomModal = openAddRoomModal;
 window.closeRoomModal = closeRoomModal;
 window.enterRoom = enterRoom;
 window.deleteRoom = async function (id) {
-    if (!confirm('确定要删除该房间吗?')) return;
+    if (!confirm('确定要删除该房间吗？\n\n注意：房间数据将保留7天，超过7天后将被自动清理。')) return;
     try {
         // URL-encode room ID to handle special characters like @
         await $.ajax({ url: `/api/rooms/${encodeURIComponent(id)}`, type: 'DELETE' });

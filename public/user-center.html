@@ -13,6 +13,9 @@
     <div class="navbar bg-base-100 shadow-lg">
         <div class="flex-1">
             <a class="btn btn-ghost text-xl text-primary font-bold" href="/">TikTok Monitor</a>
+            <ul id="global-top-nav" class="menu menu-horizontal gap-1 ml-2">
+                <!-- Populated by Auth.updateNavbar() -->
+            </ul>
         </div>
         <div class="flex-none">
             <ul id="auth-nav-area" class="menu menu-horizontal gap-1"></ul>
@@ -37,7 +40,9 @@
                 <div class="stat bg-base-100 rounded-box shadow">
                     <div class="stat-title">账户余额</div>
                     <div class="stat-value text-primary" id="ov-balance">--</div>
-                    <div class="stat-desc">联系管理员充值</div>
+                    <div class="stat-actions">
+                        <button class="btn btn-sm btn-primary" onclick="showRechargeModal()">充值</button>
+                    </div>
                 </div>
                 <div class="stat bg-base-100 rounded-box shadow">
                     <div class="stat-title">当前套餐</div>
@@ -158,9 +163,42 @@
         </div>
     </dialog>
 
+    <!-- Recharge modal -->
+    <dialog id="rechargeModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">余额充值</h3>
+            <p class="text-sm text-base-content/60 mt-2">请联系管理员进行充值操作，或使用以下充值码：</p>
+            <div class="form-control w-full mt-4">
+                <label class="label"><span class="label-text">充值金额</span></label>
+                <div class="grid grid-cols-3 gap-2">
+                    <button class="btn btn-outline btn-sm" onclick="setRechargeAmount(50)">¥50</button>
+                    <button class="btn btn-outline btn-sm" onclick="setRechargeAmount(100)">¥100</button>
+                    <button class="btn btn-outline btn-sm" onclick="setRechargeAmount(200)">¥200</button>
+                    <button class="btn btn-outline btn-sm" onclick="setRechargeAmount(500)">¥500</button>
+                    <button class="btn btn-outline btn-sm" onclick="setRechargeAmount(1000)">¥1000</button>
+                    <input type="number" id="recharge-amount" class="input input-bordered input-sm" placeholder="自定义" min="1">
+                </div>
+            </div>
+            <div class="alert alert-info mt-4">
+                <span class="text-sm">目前仅支持联系管理员人工充值。请将充值金额和您的用户名告知管理员。</span>
+            </div>
+            <div class="modal-action">
+                <button class="btn" onclick="document.getElementById('rechargeModal').close()">关闭</button>
+            </div>
+        </div>
+    </dialog>
+
     <script>
     let currentTab = 'overview';
     let pendingPurchase = null;
+
+    function showRechargeModal() {
+        document.getElementById('rechargeModal').showModal();
+    }
+
+    function setRechargeAmount(amount) {
+        document.getElementById('recharge-amount').value = amount;
+    }
 
     // Init
     document.addEventListener('DOMContentLoaded', () => {
@@ -251,8 +289,8 @@
                                 <button class="btn btn-sm btn-outline btn-block" onclick="initPurchase('plan', ${p.id}, '${p.name} - 季付', ${p.priceQuarterly}, 'quarterly')">
                                     季付 ¥${p.priceQuarterly} <span class="badge badge-sm badge-success">省${Math.round((1 - p.priceQuarterly / (p.priceMonthly * 3)) * 100)}%</span>
                                 </button>
-                                <button class="btn btn-sm btn-primary btn-block" onclick="initPurchase('plan', ${p.id}, '${p.name} - 年付', ${p.priceYearly}, 'yearly')">
-                                    年付 ¥${p.priceYearly} <span class="badge badge-sm badge-success">省${Math.round((1 - p.priceYearly / (p.priceMonthly * 12)) * 100)}%</span>
+                                <button class="btn btn-sm btn-primary btn-block" onclick="initPurchase('plan', ${p.id}, '${p.name} - 年付', ${p.priceAnnual}, 'yearly')">
+                                    年付 ¥${p.priceAnnual} <span class="badge badge-sm badge-success">省${Math.round((1 - p.priceAnnual / (p.priceMonthly * 12)) * 100)}%</span>
                                 </button>
                             </div>
                         </div>
@@ -380,7 +418,7 @@
                     <td class="font-mono ${parseFloat(l.amount) >= 0 ? 'text-success' : 'text-error'}">${parseFloat(l.amount) >= 0 ? '+' : ''}${parseFloat(l.amount).toFixed(2)}</td>
                     <td class="font-mono">¥${parseFloat(l.balanceBefore).toFixed(2)}</td>
                     <td class="font-mono">¥${parseFloat(l.balanceAfter).toFixed(2)}</td>
-                    <td class="text-sm">${l.remark || '-'}</td>
+                    <td class="text-sm">${l.description || '-'}</td>
                     <td class="text-xs">${new Date(l.createdAt).toLocaleString('zh-CN')}</td>
                 </tr>`).join('');
 

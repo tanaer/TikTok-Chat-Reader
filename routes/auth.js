@@ -13,7 +13,7 @@ router.post('/register', [
     body('username').trim().isLength({ min: 3, max: 50 }).withMessage('用户名3-50个字符'),
     body('password').isLength({ min: 6, max: 100 }).withMessage('密码至少6个字符'),
     body('nickname').optional().trim().isLength({ max: 100 }),
-    body('email').isEmail().withMessage('请输入有效的邮箱地址'),
+    body('email').optional({ values: 'falsy' }).isEmail().withMessage('请输入有效的邮箱地址'),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -29,16 +29,18 @@ router.post('/register', [
             return res.status(409).json({ error: '用户名已被注册' });
         }
 
-        // Check email uniqueness
-        const emailExists = await db.get('SELECT id FROM users WHERE email = ?', [email]);
-        if (emailExists) {
-            return res.status(409).json({ error: '邮箱已被注册' });
+        // Check email uniqueness (only if email provided)
+        if (email) {
+            const emailExists = await db.get('SELECT id FROM users WHERE email = ?', [email]);
+            if (emailExists) {
+                return res.status(409).json({ error: '邮箱已被注册' });
+            }
         }
 
         const passwordHash = await authService.hashPassword(password);
         await db.run(
             `INSERT INTO users (username, email, password_hash, nickname) VALUES (?, ?, ?, ?)`,
-            [username, email, passwordHash, nickname || username]
+            [username, email || null, passwordHash, nickname || username]
         );
 
         const user = await db.get('SELECT id, username, nickname, email, balance, role FROM users WHERE username = ?', [username]);

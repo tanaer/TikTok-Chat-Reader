@@ -20,6 +20,7 @@
             <li><a onclick="showSection('users')">用户管理</a></li>
             <li><a onclick="showSection('orders')">订单管理</a></li>
             <li><a onclick="showSection('plans')">套餐设置</a></li>
+            <li><a onclick="showSection('gifts')">礼物配置</a></li>
             <li><a onclick="showSection('settings')">系统设置</a></li>
             <li class="mt-4"><a href="/" class="text-base-content/60">← 返回前台</a></li>
         </ul>
@@ -126,6 +127,34 @@
                         <div id="settings-form" class="space-y-4"></div>
                         <div class="mt-6">
                             <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Gift Config Section -->
+            <section id="sec-gifts" class="hidden">
+                <div class="card bg-base-100 shadow-xl">
+                    <div class="card-body">
+                        <div class="flex justify-between items-center mb-4">
+                            <h3 class="card-title">礼物配置</h3>
+                            <span class="text-sm opacity-50">共 <span id="admin-giftCount">0</span> 种礼物</span>
+                        </div>
+                        <p class="text-sm opacity-70 mb-4">礼物信息会自动从直播中采集。您可以编辑中文名称，系统将优先显示中文名。</p>
+                        <div class="overflow-x-auto">
+                            <table class="table table-zebra table-sm" id="adminGiftConfigTable">
+                                <thead>
+                                    <tr>
+                                        <th class="w-16">图标</th>
+                                        <th>英文名</th>
+                                        <th>中文名 (可编辑)</th>
+                                        <th class="text-right">单价</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td colspan="4" class="text-center opacity-50">加载中...</td></tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>

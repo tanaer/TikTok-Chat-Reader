@@ -46,9 +46,9 @@ async function adjustBalance(userId, amount, type, remark, refOrderNo = null, op
 
         // Record balance log
         await client.query(
-            `INSERT INTO balance_log (user_id, type, amount, balance_before, balance_after, ref_order_no, description, operator_id)
+            `INSERT INTO balance_log (user_id, type, amount, balance_before, balance_after, order_id, remark, operator_id)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-            [userId, type, Math.round(amount), balanceBefore, balanceAfter, refOrderNo, remark, operatorId]
+            [userId, type, Math.round(amount), balanceBefore, balanceAfter, null, remark, operatorId]
         );
 
         await client.query('COMMIT');
@@ -105,11 +105,11 @@ async function purchaseWithBalance(userId, amount, orderType, itemName, remark) 
             [balanceAfter, userId]
         );
 
-        // Record balance log
+        // Record balance log (order_id is INT FK, remark is TEXT)
         await client.query(
-            `INSERT INTO balance_log (user_id, type, amount, balance_before, balance_after, ref_order_no, description)
+            `INSERT INTO balance_log (user_id, type, amount, balance_before, balance_after, order_id, remark)
              VALUES ($1, 'purchase', $2, $3, $4, $5, $6)`,
-            [userId, -amountInt, balanceBefore, balanceAfter, orderNo, itemName]
+            [userId, -amountInt, balanceBefore, balanceAfter, orderId, itemName]
         );
 
         await client.query('COMMIT');

@@ -326,6 +326,9 @@ async function initDb() {
         // No CREATE TABLE here - production tables already exist.
         // Run migrate_saas.js to add any missing columns on production.
 
+        // Migration: make users.email nullable (business requirement: email is optional)
+        await pool.query(`ALTER TABLE users ALTER COLUMN email DROP NOT NULL`).catch(() => {});
+
         // Seed default admin and plans (into production tables)
         await seedDefaultData();
 

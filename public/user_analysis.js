@@ -326,7 +326,7 @@ function showUserDetails(userId, nickname, uniqueId) {
         </div>
 
         <!-- AI Analysis -->
-        <div class="card bg-base-100 shadow-sm border border-base-200">
+        <div class="card bg-base-100 shadow-sm border border-base-200" ${typeof Auth !== 'undefined' && Auth.isAdmin() ? '' : 'style="display:none"'}>
             <div class="card-body p-4">
                 <div class="flex justify-between items-center mb-2">
                     <h4 class="card-title text-sm m-0">🤖 AI 性格分析</h4>
