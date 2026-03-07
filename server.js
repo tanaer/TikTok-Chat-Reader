@@ -445,7 +445,7 @@ app.post('/api/settings', authenticate, requireAdmin, async (req, res) => {
         }
         // Reset email transporter if SMTP settings changed
         if (Object.keys(settings).some(k => k.startsWith('smtp_') || k === 'email_verification_enabled')) {
-            try { require('./services/emailService').resetTransporter(); } catch (e) {}
+            try { require('./services/emailService').resetTransporter(); } catch (e) { }
         }
         res.json({ success: true });
     } catch (err) {
@@ -467,7 +467,7 @@ app.post('/api/config', authenticate, requireAdmin, async (req, res) => {
         }
         // Reset email transporter if SMTP settings changed
         if (Object.keys(settings).some(k => k.startsWith('smtp_') || k === 'email_verification_enabled')) {
-            try { require('./services/emailService').resetTransporter(); } catch (e) {}
+            try { require('./services/emailService').resetTransporter(); } catch (e) { }
         }
         res.json({ success: true });
     } catch (err) {
@@ -929,7 +929,7 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
         });
     } catch (err) {
         console.error('[AI] Session recap error:', err);
-        res.status(500).json({ error: '生成老板摘要失败，请稍后重试' });
+        res.status(500).json({ error: '生成直播摘要失败，请稍后重试' });
     }
 });
 
@@ -1296,7 +1296,7 @@ async function saveSessionAiReviewRecord(userId, roomId, sessionId, review, mode
         await client.query('COMMIT');
         return { success: true };
     } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
+        await client.query('ROLLBACK').catch(() => { });
         console.error('[AI] Save session recap review error:', err.message);
         return { success: false, error: err.message };
     } finally {
@@ -1512,7 +1512,7 @@ async function generateSessionAiReviewFromRecap(roomId, sessionId, recap) {
                 },
                 {
                     role: 'user',
-                    content: `请基于以下单场复盘数据生成老板摘要：
+                    content: `请基于以下单场复盘数据生成直播摘要：
 ${JSON.stringify(promptPayload)}`
                 }
             ]
