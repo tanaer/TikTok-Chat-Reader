@@ -207,20 +207,51 @@
     justify-content: center;
     gap: 0.3rem;
     flex: 1 1 180px;
+    position: relative;
+}
+.recharge-option-head {
+    width: 100%;
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.6rem;
 }
 .recharge-option-title {
     font-size: 0.95rem;
     font-weight: 700;
     line-height: 1.2;
 }
-.recharge-option-range {
+.recharge-option-range,
+.recharge-option-fee {
     font-size: 0.76rem;
     color: rgba(226, 232, 240, 0.62);
     line-height: 1.2;
 }
+.recharge-option-fee {
+    color: rgba(250, 204, 21, 0.88);
+}
+.recharge-option-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.18rem 0.5rem;
+    border-radius: 999px;
+    background: rgba(250, 204, 21, 0.18);
+    color: #fde68a;
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
 .recharge-option-chip:hover .recharge-option-range,
-.recharge-option-chip.is-active .recharge-option-range {
-    color: rgba(255, 255, 255, 0.88);
+.recharge-option-chip.is-active .recharge-option-range,
+.recharge-option-chip:hover .recharge-option-fee,
+.recharge-option-chip.is-active .recharge-option-fee {
+    color: rgba(255, 255, 255, 0.9);
+}
+.recharge-option-chip:hover .recharge-option-badge,
+.recharge-option-chip.is-active .recharge-option-badge {
+    background: rgba(255, 255, 255, 0.2);
+    color: #fff7d6;
 }
 .recharge-loading-shell {
     padding: 2rem 1rem;
@@ -1445,7 +1476,7 @@
                                 </div>
                             </div>
                             <div class="recharge-summary-item">
-                                <span>金额</span>
+                                <span>支付金额</span>
                                 <strong id="recharge-order-amount">-</strong>
                             </div>
                             <div class="recharge-summary-item">
@@ -2620,16 +2651,22 @@ function renderRechargeOptions(options) {
 
     emptyEl.classList.add('hidden');
     wrap.classList.remove('hidden');
-    container.innerHTML = visibleOptions.map(option => `
+    container.innerHTML = visibleOptions.map(option => {
+        const feeAmount = Number(option.feeAmount || 0);
+        return `
         <button
             type="button"
             class="recharge-option-chip ${option.key === currentRechargeOptionKey ? 'is-active' : ''}"
             onclick="createRechargeOrder('${option.key}')"
         >
-            <span class="recharge-option-title">${buildRechargeOptionLabel(option)}</span>
+            <span class="recharge-option-head">
+                <span class="recharge-option-title">${buildRechargeOptionLabel(option)}</span>
+                ${option.recommended ? '<span class="recharge-option-badge">推荐</span>' : ''}
+            </span>
             <span class="recharge-option-range">${option.rangeText || formatRechargeOptionRange(option)}</span>
-        </button>
-    `).join('');
+            ${feeAmount > 0 ? `<span class="recharge-option-fee">手续费 +¥${feeAmount.toFixed(2)}</span>` : ''}
+        </button>`;
+    }).join('');
 }
 
 function getRechargeAmount() {
@@ -2770,9 +2807,12 @@ function renderRechargeOrder(order) {
     currentRechargeOrder = order;
     document.getElementById('recharge-result').classList.remove('hidden');
     const statusMeta = getRechargeStatusMeta(order.status);
+    const payableAmount = Number((order.payableAmount ?? order.metadata?.payableAmount ?? order.amount) || 0);
+    const creditAmount = Number((order.creditAmount ?? order.metadata?.creditAmount ?? order.amount) || 0);
+    const feeAmount = Number((order.feeAmount ?? order.metadata?.feeAmount) || 0);
     document.getElementById('recharge-order-no').textContent = order.orderNo || '-';
     document.getElementById('recharge-copy-order-btn').disabled = !order.orderNo;
-    document.getElementById('recharge-order-amount').textContent = `¥${Number(order.amount || 0).toFixed(2)}`;
+    document.getElementById('recharge-order-amount').textContent = `¥${payableAmount.toFixed(2)}`;
     const statusEl = document.getElementById('recharge-order-status');
     statusEl.textContent = statusMeta.text;
     statusEl.className = `recharge-status-pill ${statusMeta.cls}`;
@@ -2780,7 +2820,10 @@ function renderRechargeOrder(order) {
 
     const extraLabelEl = document.getElementById('recharge-order-extra-label');
     const extraValueEl = document.getElementById('recharge-order-extra');
-    if (order.actualAmount) {
+    if (feeAmount > 0) {
+        extraLabelEl.textContent = '到账金额';
+        extraValueEl.textContent = `¥${creditAmount.toFixed(2)}（手续费 ¥${feeAmount.toFixed(2)}）`;
+    } else if (order.actualAmount) {
         extraLabelEl.textContent = '到账金额';
         extraValueEl.textContent = String(order.actualAmount);
     } else if (order.tradeType) {

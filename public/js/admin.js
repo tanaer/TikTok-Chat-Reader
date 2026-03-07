@@ -1157,11 +1157,15 @@ async function loadPaymentConfig() {
         document.getElementById('pay-fixed-wechat-enabled').checked = !!config.fixedQr?.wechat?.enabled;
         document.getElementById('pay-fixed-wechat-data').value = config.fixedQr?.wechat?.imageData || '';
         setPaymentRangeFields('pay-fixed-wechat-min', 'pay-fixed-wechat-max', config.fixedQr?.wechat);
+        document.getElementById('pay-fixed-wechat-fee').value = config.fixedQr?.wechat?.feeAmount ?? 0;
+        document.getElementById('pay-fixed-wechat-recommended').checked = !!config.fixedQr?.wechat?.recommended;
         updatePaymentImagePreview('pay-fixed-wechat-preview', 'pay-fixed-wechat-empty', config.fixedQr?.wechat?.imageData || '');
 
         document.getElementById('pay-fixed-alipay-enabled').checked = !!config.fixedQr?.alipay?.enabled;
         document.getElementById('pay-fixed-alipay-data').value = config.fixedQr?.alipay?.imageData || '';
         setPaymentRangeFields('pay-fixed-alipay-min', 'pay-fixed-alipay-max', config.fixedQr?.alipay);
+        document.getElementById('pay-fixed-alipay-fee').value = config.fixedQr?.alipay?.feeAmount ?? 0;
+        document.getElementById('pay-fixed-alipay-recommended').checked = !!config.fixedQr?.alipay?.recommended;
         updatePaymentImagePreview('pay-fixed-alipay-preview', 'pay-fixed-alipay-empty', config.fixedQr?.alipay?.imageData || '');
 
         document.getElementById('pay-futong-enabled').checked = !!config.futong?.enabled;
@@ -1172,8 +1176,12 @@ async function loadPaymentConfig() {
         document.getElementById('pay-futong-wxpay-enabled').checked = !!config.futong?.wxpayEnabled;
         document.getElementById('pay-futong-alipay-min').value = config.futong?.alipayMinAmount ?? '';
         document.getElementById('pay-futong-alipay-max').value = config.futong?.alipayMaxAmount ?? '';
+        document.getElementById('pay-futong-alipay-fee').value = config.futong?.alipayFeeAmount ?? 0;
+        document.getElementById('pay-futong-alipay-recommended').checked = !!config.futong?.alipayRecommended;
         document.getElementById('pay-futong-wxpay-min').value = config.futong?.wxpayMinAmount ?? '';
         document.getElementById('pay-futong-wxpay-max').value = config.futong?.wxpayMaxAmount ?? '';
+        document.getElementById('pay-futong-wxpay-fee').value = config.futong?.wxpayFeeAmount ?? 0;
+        document.getElementById('pay-futong-wxpay-recommended').checked = !!config.futong?.wxpayRecommended;
         document.getElementById('pay-futong-notify-url').value = config.futong?.notifyUrl || '';
         document.getElementById('pay-futong-return-url').value = config.futong?.returnUrl || '';
         document.getElementById('pay-futong-open-mode').value = config.futong?.openMode || 'qrcode';
@@ -1185,6 +1193,8 @@ async function loadPaymentConfig() {
         document.getElementById('pay-bepusdt-trade-type').value = config.bepusdt?.tradeType || 'usdt.bep20';
         document.getElementById('pay-bepusdt-min').value = config.bepusdt?.minAmount ?? '';
         document.getElementById('pay-bepusdt-max').value = config.bepusdt?.maxAmount ?? '';
+        document.getElementById('pay-bepusdt-fee').value = config.bepusdt?.feeAmount ?? 0;
+        document.getElementById('pay-bepusdt-recommended').checked = !!config.bepusdt?.recommended;
         document.getElementById('pay-bepusdt-notify-url').value = config.bepusdt?.notifyUrl || '';
         document.getElementById('pay-bepusdt-open-mode').value = config.bepusdt?.openMode || 'redirect';
 
@@ -1229,13 +1239,17 @@ async function savePaymentConfig() {
                 enabled: document.getElementById('pay-fixed-wechat-enabled').checked,
                 imageData: document.getElementById('pay-fixed-wechat-data').value || '',
                 minAmount: fixedWechatRange.minAmount,
-                maxAmount: fixedWechatRange.maxAmount
+                maxAmount: fixedWechatRange.maxAmount,
+                feeAmount: getPositiveIntegerInputValue('pay-fixed-wechat-fee', 0) || 0,
+                recommended: document.getElementById('pay-fixed-wechat-recommended').checked
             },
             alipay: {
                 enabled: document.getElementById('pay-fixed-alipay-enabled').checked,
                 imageData: document.getElementById('pay-fixed-alipay-data').value || '',
                 minAmount: fixedAlipayRange.minAmount,
-                maxAmount: fixedAlipayRange.maxAmount
+                maxAmount: fixedAlipayRange.maxAmount,
+                feeAmount: getPositiveIntegerInputValue('pay-fixed-alipay-fee', 0) || 0,
+                recommended: document.getElementById('pay-fixed-alipay-recommended').checked
             }
         },
         futong: {
@@ -1250,8 +1264,12 @@ async function savePaymentConfig() {
             wxpayEnabled: document.getElementById('pay-futong-wxpay-enabled').checked,
             alipayMinAmount: futongAlipayRange.minAmount,
             alipayMaxAmount: futongAlipayRange.maxAmount,
+            alipayFeeAmount: getPositiveIntegerInputValue('pay-futong-alipay-fee', 0) || 0,
+            alipayRecommended: document.getElementById('pay-futong-alipay-recommended').checked,
             wxpayMinAmount: futongWxpayRange.minAmount,
-            wxpayMaxAmount: futongWxpayRange.maxAmount
+            wxpayMaxAmount: futongWxpayRange.maxAmount,
+            wxpayFeeAmount: getPositiveIntegerInputValue('pay-futong-wxpay-fee', 0) || 0,
+            wxpayRecommended: document.getElementById('pay-futong-wxpay-recommended').checked
         },
         bepusdt: {
             enabled: document.getElementById('pay-bepusdt-enabled').checked,
@@ -1262,7 +1280,9 @@ async function savePaymentConfig() {
             notifyUrl: document.getElementById('pay-bepusdt-notify-url').value.trim(),
             tradeType: document.getElementById('pay-bepusdt-trade-type').value || 'usdt.bep20',
             minAmount: bepusdtRange.minAmount,
-            maxAmount: bepusdtRange.maxAmount
+            maxAmount: bepusdtRange.maxAmount,
+            feeAmount: getPositiveIntegerInputValue('pay-bepusdt-fee', 0) || 0,
+            recommended: document.getElementById('pay-bepusdt-recommended').checked
         },
         pushplus: {
             enabled: document.getElementById('pay-pushplus-enabled').checked,

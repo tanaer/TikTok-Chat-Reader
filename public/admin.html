@@ -191,6 +191,8 @@
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                                                     <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-fixed-wechat-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                     <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-fixed-wechat-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-fixed-wechat-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                    <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-fixed-wechat-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                                 </div>
                                                 <input type="hidden" id="pay-fixed-wechat-data">
                                                 <input type="file" id="pay-fixed-wechat-file" class="file-input file-input-bordered file-input-sm w-full" accept="image/*" onchange="handlePaymentImageUpload(this, 'pay-fixed-wechat-data', 'pay-fixed-wechat-preview', 'pay-fixed-wechat-empty')">
@@ -205,6 +207,8 @@
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
                                                     <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-fixed-alipay-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                     <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-fixed-alipay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-fixed-alipay-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                    <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-fixed-alipay-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                                 </div>
                                                 <input type="hidden" id="pay-fixed-alipay-data">
                                                 <input type="file" id="pay-fixed-alipay-file" class="file-input file-input-bordered file-input-sm w-full" accept="image/*" onchange="handlePaymentImageUpload(this, 'pay-fixed-alipay-data', 'pay-fixed-alipay-preview', 'pay-fixed-alipay-empty')">
@@ -232,6 +236,8 @@
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                     <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-futong-alipay-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                     <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-futong-alipay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-futong-alipay-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                    <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-futong-alipay-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                                 </div>
                                             </div>
                                             <div class="rounded-box border border-base-300 p-3">
@@ -239,6 +245,8 @@
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                     <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-futong-wxpay-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                     <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-futong-wxpay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-futong-wxpay-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                    <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-futong-wxpay-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                                 </div>
                                             </div>
                                             <div class="form-control"><label class="label"><span class="label-text">回调地址</span></label><input type="text" id="pay-futong-notify-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前站点域名"></div>
@@ -275,6 +283,8 @@
                                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                 <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-bepusdt-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                 <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-bepusdt-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                                <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-bepusdt-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-bepusdt-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                             </div>
                                             <div class="form-control"><label class="label"><span class="label-text">回调地址</span></label><input type="text" id="pay-bepusdt-notify-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前站点域名"></div>
                                             <div class="form-control">
