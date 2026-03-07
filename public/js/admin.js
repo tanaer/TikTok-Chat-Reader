@@ -7,6 +7,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 let currentSection = 'overview';
+let currentAdminUserDetailId = null;
+let adminDocsLoadedOnce = false;
+let adminDocsListCache = [];
+let currentAdminDocPath = '';
 
 function showSection(name) {
     currentSection = name;
@@ -17,7 +21,7 @@ function showSection(name) {
 
     const titles = {
         overview: '系统概览', users: '用户管理', orders: '订单管理', payment: '支付管理', plans: '套餐设置',
-        gifts: '礼物配置', settings: '系统设置', eulerKeys: 'Euler API Keys', aiModels: 'AI 通道配置'
+        gifts: '礼物配置', settings: '系统设置', docs: '系统文档', eulerKeys: 'Euler API Keys', aiModels: 'AI 通道配置'
     };
     document.getElementById('section-title').textContent = titles[name] || name;
 
@@ -28,6 +32,7 @@ function showSection(name) {
     else if (name === 'plans') { loadPlans(); loadAddons(); loadAiCreditPackages(); }
     else if (name === 'gifts') loadAdminGiftConfig();
     else if (name === 'settings') loadSettingsForm();
+    else if (name === 'docs') loadAdminDocs();
     else if (name === 'eulerKeys') loadEulerKeys();
     else if (name === 'aiModels') loadAiModels();
 }
@@ -83,38 +88,148 @@ async function loadUsers(page) {
     } catch (err) { console.error('Load users error:', err); }
 }
 
+function formatAdminQuotaLimit(value, fallback = '-') {
+    const parsed = Number(value);
+    if (parsed === -1) return '不限';
+    if (!Number.isFinite(parsed)) return fallback;
+    return String(parsed);
+}
+
+function formatDateTimeLocalInput(value) {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    const pad = (num) => String(num).padStart(2, '0');
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function getAdminQuotaSourceText(overrideMeta) {
+    if (!overrideMeta) return '默认';
+    if (overrideMeta.source === 'temporary') {
+        return `临时${overrideMeta.temporaryExpiresAt ? ` · 至 ${new Date(overrideMeta.temporaryExpiresAt).toLocaleString('zh-CN')}` : ''}`;
+    }
+    if (overrideMeta.source === 'permanent') return '永久';
+    return '默认';
+}
+
+async function saveUserQuotaOverrides(userId) {
+    const roomLimitTemporary = document.getElementById('ud-room-limit-temporary')?.value ?? '';
+    const roomLimitTemporaryExpiresAt = document.getElementById('ud-room-limit-temporary-expires')?.value ?? '';
+    const dailyRoomCreateLimitTemporary = document.getElementById('ud-daily-limit-temporary')?.value ?? '';
+    const dailyRoomCreateLimitTemporaryExpiresAt = document.getElementById('ud-daily-limit-temporary-expires')?.value ?? '';
+
+    if (roomLimitTemporary !== '' && !roomLimitTemporaryExpiresAt) {
+        alert('请填写临时可建房间数的到期时间');
+        return;
+    }
+    if (dailyRoomCreateLimitTemporary !== '' && !dailyRoomCreateLimitTemporaryExpiresAt) {
+        alert('请填写临时每日可添加次数的到期时间');
+        return;
+    }
+
+    const body = {
+        roomLimitPermanent: document.getElementById('ud-room-limit-permanent')?.value ?? '',
+        roomLimitTemporary,
+        roomLimitTemporaryExpiresAt,
+        dailyRoomCreateLimitPermanent: document.getElementById('ud-daily-limit-permanent')?.value ?? '',
+        dailyRoomCreateLimitTemporary,
+        dailyRoomCreateLimitTemporaryExpiresAt,
+    };
+
+    const res = await Auth.apiFetch(`/api/admin/users/${userId}/quota-overrides`, {
+        method: 'PUT',
+        body: JSON.stringify(body)
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        alert(data.error || '保存配额失败');
+        return;
+    }
+
+    alert(data.message || '配额已保存');
+    await showUserDetail(userId);
+}
+
 async function showUserDetail(userId) {
     try {
+        currentAdminUserDetailId = userId;
         const res = await Auth.apiFetch(`/api/admin/users/${userId}`);
         const data = await res.json();
         const u = data.user;
+        const quota = data.quota || {};
+        const roomOverride = quota.quotaOverrides?.roomLimit || {};
+        const dailyOverride = quota.quotaOverrides?.dailyCreateLimit || {};
         const content = document.getElementById('user-detail-content');
 
         content.innerHTML = `
-            <div class="grid grid-cols-2 gap-4 mb-4">
-                <div><strong>用户名:</strong> ${u.username}</div>
-                <div><strong>昵称:</strong> ${u.nickname || '-'}</div>
-                <div><strong>邮箱:</strong> ${u.email || '-'}</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div><strong>用户名:</strong> ${escapeHtml(u.username)}</div>
+                <div><strong>昵称:</strong> ${escapeHtml(u.nickname || '-')}</div>
+                <div><strong>邮箱:</strong> ${escapeHtml(u.email || '-')}</div>
                 <div><strong>余额:</strong> ¥${parseFloat(u.balance).toFixed(2)}</div>
-                <div><strong>角色:</strong> ${u.role}</div>
-                <div><strong>状态:</strong> ${u.status}</div>
+                <div><strong>角色:</strong> ${escapeHtml(u.role)}</div>
+                <div><strong>状态:</strong> ${escapeHtml(u.status)}</div>
                 <div><strong>最后登录:</strong> ${u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('zh-CN') : '从未'}</div>
                 <div><strong>注册时间:</strong> ${new Date(u.createdAt).toLocaleString('zh-CN')}</div>
             </div>
+            <div class="divider">配额</div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div class="rounded-box bg-base-200 p-4">
+                    <div class="text-sm text-base-content/60">可建房间数</div>
+                    <div class="text-xl font-bold mt-1">剩余 ${formatAdminQuotaLimit(quota.remaining, '0')} / 总 ${formatAdminQuotaLimit(quota.limit, '0')}</div>
+                    <div class="text-xs text-base-content/60 mt-2">已用 ${Number(quota.used || 0)} · 基础 ${formatAdminQuotaLimit(quota.baseTotalLimit, '0')} · 当前来源 ${getAdminQuotaSourceText(roomOverride)}</div>
+                </div>
+                <div class="rounded-box bg-base-200 p-4">
+                    <div class="text-sm text-base-content/60">每日可添加次数</div>
+                    <div class="text-xl font-bold mt-1">已添加 ${Number(quota.dailyUsed || 0)} / 可添加 ${formatAdminQuotaLimit(quota.dailyLimit, '0')}</div>
+                    <div class="text-xs text-base-content/60 mt-2">剩余 ${formatAdminQuotaLimit(quota.dailyRemaining, '0')} · 基础 ${formatAdminQuotaLimit(quota.baseDailyRoomCreateLimit, '0')} · 当前来源 ${getAdminQuotaSourceText(dailyOverride)}</div>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div class="rounded-box border border-base-300 p-4 space-y-3">
+                    <div class="font-semibold">可建房间数调整</div>
+                    <label class="form-control">
+                        <span class="label-text text-sm">永久值</span>
+                        <input id="ud-room-limit-permanent" type="number" min="-1" class="input input-bordered input-sm" value="${roomOverride.permanent ?? ''}" placeholder="留空=跟随默认/清除永久值">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text text-sm">临时值</span>
+                        <input id="ud-room-limit-temporary" type="number" min="-1" class="input input-bordered input-sm" value="${roomOverride.temporary ?? ''}" placeholder="留空=清除临时值">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text text-sm">临时到期</span>
+                        <input id="ud-room-limit-temporary-expires" type="datetime-local" class="input input-bordered input-sm" value="${formatDateTimeLocalInput(roomOverride.temporaryExpiresAt)}">
+                    </label>
+                    <div class="text-xs text-base-content/60">支持填 -1 表示不限；留空后保存可清除对应覆盖值。</div>
+                </div>
+                <div class="rounded-box border border-base-300 p-4 space-y-3">
+                    <div class="font-semibold">每日可添加次数调整</div>
+                    <label class="form-control">
+                        <span class="label-text text-sm">永久值</span>
+                        <input id="ud-daily-limit-permanent" type="number" min="-1" class="input input-bordered input-sm" value="${dailyOverride.permanent ?? ''}" placeholder="留空=跟随默认/清除永久值">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text text-sm">临时值</span>
+                        <input id="ud-daily-limit-temporary" type="number" min="-1" class="input input-bordered input-sm" value="${dailyOverride.temporary ?? ''}" placeholder="留空=清除临时值">
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text text-sm">临时到期</span>
+                        <input id="ud-daily-limit-temporary-expires" type="datetime-local" class="input input-bordered input-sm" value="${formatDateTimeLocalInput(dailyOverride.temporaryExpiresAt)}">
+                    </label>
+                    <div class="text-xs text-base-content/60">支持填 -1 表示不限；留空后保存可清除对应覆盖值。</div>
+                </div>
+            </div>
+            <div class="mb-4 flex gap-2 flex-wrap">
+                <button class="btn btn-sm btn-primary" onclick="saveUserQuotaOverrides(${u.id})">保存配额调整</button>
+                <button class="btn btn-sm btn-warning" onclick="resetPassword(${u.id})">重置密码</button>
+            </div>
             <div class="divider">订阅记录</div>
             <div class="overflow-x-auto"><table class="table table-xs"><thead><tr><th>套餐</th><th>周期</th><th>开始</th><th>结束</th><th>状态</th></tr></thead><tbody>
-            ${data.subscriptions.map(s => `<tr><td>${s.planName}</td><td>${s.billingCycle}</td><td>${new Date(s.startAt).toLocaleDateString('zh-CN')}</td><td>${new Date(s.endAt).toLocaleDateString('zh-CN')}</td><td><span class="badge badge-xs ${s.status === 'active' ? 'badge-success' : 'badge-ghost'}">${s.status}</span></td></tr>`).join('') || '<tr><td colspan="5" class="text-center">无</td></tr>'}
+            ${data.subscriptions.map(s => `<tr><td>${escapeHtml(s.planName)}</td><td>${escapeHtml(s.billingCycle)}</td><td>${new Date(s.startAt).toLocaleDateString('zh-CN')}</td><td>${new Date(s.endAt).toLocaleDateString('zh-CN')}</td><td><span class="badge badge-xs ${s.status === 'active' ? 'badge-success' : 'badge-ghost'}">${escapeHtml(s.status)}</span></td></tr>`).join('') || '<tr><td colspan="5" class="text-center">无</td></tr>'}
             </tbody></table></div>
             <div class="divider">房间</div>
             <div class="flex flex-wrap gap-2">
-            ${data.rooms.map(r => `<span class="badge badge-outline">${r.roomName || r.roomId}</span>`).join('') || '<span class="text-base-content/60">无</span>'}
-            </div>
-            <div class="divider">最近订单</div>
-            <div class="overflow-x-auto"><table class="table table-xs"><thead><tr><th>订单号</th><th>类型</th><th>金额</th><th>时间</th></tr></thead><tbody>
-            ${data.recentOrders.map(o => `<tr><td class="text-xs">${o.orderNo}</td><td>${o.type}</td><td>¥${parseFloat(o.amount).toFixed(2)}</td><td class="text-xs">${new Date(o.createdAt).toLocaleString('zh-CN')}</td></tr>`).join('') || '<tr><td colspan="4" class="text-center">无</td></tr>'}
-            </tbody></table></div>
-            <div class="mt-4 flex gap-2">
-                <button class="btn btn-sm btn-warning" onclick="resetPassword(${u.id})">重置密码</button>
+            ${data.rooms.map(r => `<span class="badge badge-outline">${escapeHtml(r.roomName || r.roomId)}</span>`).join('') || '<span class="text-base-content/60">无</span>'}
             </div>`;
 
         document.getElementById('userDetailModal').showModal();
@@ -167,7 +282,94 @@ async function resetPassword(userId) {
 
 // ==================== Orders ====================
 const typeLabels = { plan: '套餐', addon: '扩容包', recharge: '充值' };
-const statusLabels = { paid: '已支付', pending: '待支付', cancelled: '已取消', refunded: '已退款' };
+const statusLabels = { paid: '已支付', pending: '待支付', cancelled: '已取消', refunded: '已退款', failed: '失败' };
+const adminOrderCache = new Map();
+
+function escapeHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function parseOrderMetadata(order) {
+    if (!order) return {};
+    const raw = order.metadata;
+    if (raw && typeof raw === 'object') return raw;
+    if (typeof raw === 'string') {
+        try {
+            return JSON.parse(raw);
+        } catch {
+            return {};
+        }
+    }
+    return {};
+}
+
+function formatJsonBlock(value, fallback = '暂无') {
+    if (value == null || value === '') return fallback;
+    if (typeof value === 'string') {
+        try {
+            return JSON.stringify(JSON.parse(value), null, 2);
+        } catch {
+            return value;
+        }
+    }
+    try {
+        return JSON.stringify(value, null, 2);
+    } catch {
+        return String(value);
+    }
+}
+
+function getAdminRechargeChannelLabel(order) {
+    const metadata = parseOrderMetadata(order);
+    if (metadata.label) return String(metadata.label);
+    const paymentMethod = String(order?.paymentMethod || '').trim();
+    if (!paymentMethod) return '';
+    const [channel, ...rest] = paymentMethod.split('_');
+    const method = rest.join('_');
+    const channelMap = { fixed_qr: '固定码', futong: '三方支付', bepusdt: '虚拟币支付' };
+    const methodMap = { wxpay: '微信', alipay: '支付宝', usdt: 'USDT' };
+    const channelLabel = channelMap[channel] || channel;
+    const methodLabel = methodMap[method] || method || '';
+    return methodLabel && method !== 'usdt' ? `${channelLabel} · ${methodLabel}` : channelLabel;
+}
+
+function showOrderRequestDetail(orderId) {
+    const order = adminOrderCache.get(Number(orderId));
+    if (!order) {
+        alert('订单数据不存在，请刷新后重试');
+        return;
+    }
+    const metadata = parseOrderMetadata(order);
+    const request = metadata.channelRequest || null;
+    const upstream = metadata.upstream || null;
+    document.getElementById('order-detail-title').textContent = `订单详情 · ${order.orderNo || '-'}`;
+    document.getElementById('order-detail-channel').textContent = getAdminRechargeChannelLabel(order) || '暂无';
+    document.getElementById('order-detail-url').textContent = request?.url || '暂无';
+    document.getElementById('order-detail-request').textContent = formatJsonBlock(request?.payload || null);
+    document.getElementById('order-detail-response').textContent = formatJsonBlock(upstream || metadata.notifyPayload || null);
+    document.getElementById('orderRequestModal').showModal();
+}
+
+function formatAdminOrderContent(order) {
+    const metadata = parseOrderMetadata(order);
+    const responseStatus = metadata.channelResponseStatus;
+    const channelLabel = order?.type === 'recharge' ? getAdminRechargeChannelLabel(order) : '';
+    const info = [];
+
+    if (channelLabel) {
+        info.push(`<div class="text-[11px] leading-5 text-base-content/60"><span class="font-semibold text-base-content/70">充值通道：</span>${escapeHtml(channelLabel)}</div>`);
+    }
+    if (responseStatus) {
+        info.push(`<div class="text-[11px] leading-5 text-base-content/60"><span class="font-semibold text-base-content/70">响应状态：</span>${escapeHtml(responseStatus)}</div>`);
+    }
+
+    return `<div class="space-y-1"><div>${escapeHtml(order.itemName || '-')}</div>${info.join('')}</div>`;
+}
 
 async function loadAdminOrders(page) {
     try {
@@ -183,23 +385,29 @@ async function loadAdminOrders(page) {
             return;
         }
 
+        adminOrderCache.clear();
         tbody.innerHTML = data.orders.map(o => {
+            adminOrderCache.set(Number(o.id), o);
             const isPendingRecharge = o.type === 'recharge' && o.status === 'pending';
+            const badgeClass = o.status === 'paid'
+                ? 'badge-success'
+                : (o.status === 'failed' ? 'badge-error' : 'badge-ghost');
+            const viewButton = `<button class="btn btn-xs btn-ghost" onclick="showOrderRequestDetail(${o.id})">查看</button>`;
             const actionHtml = isPendingRecharge
-                ? `<div class="flex gap-1 flex-wrap justify-end">
+                ? `<div class="flex gap-1 flex-wrap justify-end">${viewButton}
                     <button class="btn btn-xs btn-success btn-outline" onclick="markRechargeOrderPaid(${o.id})">标记已支付</button>
                     <button class="btn btn-xs btn-error btn-outline" onclick="cancelRechargeOrder(${o.id})">取消</button>
                 </div>`
-                : '<span class="text-base-content/30">-</span>';
+                : `<div class="flex gap-1 flex-wrap justify-end">${viewButton}</div>`;
             return `<tr>
-                <td class="text-xs">${o.orderNo}</td>
-                <td>${o.username || '-'}</td>
-                <td>${typeLabels[o.type] || o.type}</td>
-                <td>${o.itemName || '-'}</td>
-                <td class="font-mono">¥${parseFloat(o.amount).toFixed(2)}</td>
-                <td><span class="badge badge-sm ${o.status === 'paid' ? 'badge-success' : 'badge-ghost'}">${statusLabels[o.status] || o.status}</span></td>
-                <td class="text-xs">${new Date(o.createdAt).toLocaleString('zh-CN')}</td>
-                <td>${actionHtml}</td>
+                <td class="text-xs align-top">${escapeHtml(o.orderNo || '-')}</td>
+                <td class="align-top">${escapeHtml(o.username || '-')}</td>
+                <td class="align-top">${escapeHtml(typeLabels[o.type] || o.type || '-')}</td>
+                <td class="align-top min-w-[360px]">${formatAdminOrderContent(o)}</td>
+                <td class="font-mono align-top">¥${parseFloat(o.amount).toFixed(2)}</td>
+                <td class="align-top"><span class="badge badge-sm ${badgeClass}">${escapeHtml(statusLabels[o.status] || o.status || '-')}</span></td>
+                <td class="text-xs align-top">${new Date(o.createdAt).toLocaleString('zh-CN')}</td>
+                <td class="align-top">${actionHtml}</td>
             </tr>`;
         }).join('');
 
@@ -226,7 +434,7 @@ async function loadPlans() {
                 <div class="flex justify-between items-start">
                     <div>
                         <h4 class="font-bold">${p.name} <span class="text-xs text-base-content/60">(${p.code})</span></h4>
-                        <p class="text-sm">房间: ${roomText} | 可打开: ${openText} | 每日新建: ${dailyText} | AI: ${p.aiCreditsMonthly || 0}次/月 | 月¥${p.priceMonthly} / 季¥${p.priceQuarterly} / 年¥${p.priceAnnual}</p>
+                        <p class="text-sm">房间: ${roomText} | 可打开: ${openText} | 每日新建: ${dailyText} | AI: ${p.aiCreditsMonthly || 0}点/月 | 月¥${p.priceMonthly} / 季¥${p.priceQuarterly} / 年¥${p.priceAnnual}</p>
                         ${!p.isActive ? '<span class="badge badge-error badge-sm">已下架</span>' : ''}
                     </div>
                     <div class="flex gap-1">
@@ -798,16 +1006,23 @@ async function loadAiCreditPackages() {
         const pkgs = data.packages || [];
         const container = document.getElementById('ai-credits-list');
         if (pkgs.length === 0) {
-            container.innerHTML = '<p class="text-base-content/60">暂无AI额度包</p>';
+            container.innerHTML = '<p class="text-base-content/60">暂无 AI 点数包</p>';
             return;
         }
-        container.innerHTML = pkgs.map(p => `
+        container.innerHTML = pkgs.map(p => {
+            const normalizedDescription = String(p.description || '')
+                .replace(/AI分析/g, 'AI')
+                .replace(/AI 分析/g, 'AI')
+                .replace(/分析额度/g, '点数')
+                .replace(/额度包/g, '点数包')
+                .replace(/(\d+)次/g, '$1点');
+            return `
             <div class="card bg-base-100 border ${p.isActive ? 'border-base-300' : 'border-error opacity-60'}">
                 <div class="card-body p-4">
                     <div class="flex justify-between items-center">
                         <div>
                             <h4 class="font-bold">${p.name}</h4>
-                            <p class="text-sm">${p.credits} 次 | ¥${(p.priceCents / 100).toFixed(2)} ${p.description ? '| ' + p.description : ''}</p>
+                            <p class="text-sm">${p.credits} 点 | ¥${(p.priceCents / 100).toFixed(2)} ${normalizedDescription ? '| ' + normalizedDescription : ''}</p>
                         </div>
                         <div class="flex gap-1">
                             <button class="btn btn-xs btn-ghost" onclick='editAiCreditPkg(${JSON.stringify(p).replace(/'/g,"&#39;")})'>编辑</button>
@@ -815,12 +1030,13 @@ async function loadAiCreditPackages() {
                         </div>
                     </div>
                 </div>
-            </div>`).join('');
+            </div>`;
+        }).join('');
     } catch (err) { console.error('Load AI credit packages error:', err); }
 }
 
 function showAiCreditForm(pkg) {
-    document.getElementById('aic-form-title').textContent = pkg ? '编辑 AI 额度包' : '新增 AI 额度包';
+    document.getElementById('aic-form-title').textContent = pkg ? '编辑 AI 点数包' : '新增 AI 点数包';
     document.getElementById('aic-id').value = pkg?.id || '';
     document.getElementById('aic-name').value = pkg?.name || '';
     document.getElementById('aic-credits').value = pkg?.credits || '';
@@ -907,6 +1123,22 @@ function getPositiveIntegerInputValue(id, fallback = '') {
     return value;
 }
 
+function parseQuickAmountList(value) {
+    const uniqueAmounts = [];
+    String(value || '')
+        .split(/[，,\s|/]+/)
+        .map(item => parseInt(item, 10))
+        .forEach(amount => {
+            if (!Number.isFinite(amount) || amount <= 0 || uniqueAmounts.includes(amount)) return;
+            uniqueAmounts.push(amount);
+        });
+    return uniqueAmounts;
+}
+
+function formatQuickAmountList(amounts) {
+    return Array.isArray(amounts) ? amounts.join(',') : '';
+}
+
 function readPaymentRange(minId, maxId, fallbackMin) {
     return {
         minAmount: getPositiveIntegerInputValue(minId, fallbackMin),
@@ -916,10 +1148,11 @@ function readPaymentRange(minId, maxId, fallbackMin) {
 
 async function loadPaymentConfig() {
     try {
-        const res = await Auth.apiFetch('/api/admin/payment/config');
+        const res = await Auth.apiFetch(`/api/admin/payment/config?_=${Date.now()}`, { cache: 'no-store' });
         const data = await res.json();
         const config = data.config || {};
         document.getElementById('pay-min-recharge').value = config.minRechargeAmount || 1;
+        document.getElementById('pay-quick-amounts').value = formatQuickAmountList(config.quickAmounts);
 
         document.getElementById('pay-fixed-wechat-enabled').checked = !!config.fixedQr?.wechat?.enabled;
         document.getElementById('pay-fixed-wechat-data').value = config.fixedQr?.wechat?.imageData || '';
@@ -942,6 +1175,8 @@ async function loadPaymentConfig() {
         document.getElementById('pay-futong-wxpay-min').value = config.futong?.wxpayMinAmount ?? '';
         document.getElementById('pay-futong-wxpay-max').value = config.futong?.wxpayMaxAmount ?? '';
         document.getElementById('pay-futong-notify-url').value = config.futong?.notifyUrl || '';
+        document.getElementById('pay-futong-return-url').value = config.futong?.returnUrl || '';
+        document.getElementById('pay-futong-open-mode').value = config.futong?.openMode || 'qrcode';
 
         document.getElementById('pay-bepusdt-enabled').checked = !!config.bepusdt?.enabled;
         document.getElementById('pay-bepusdt-api-url').value = config.bepusdt?.apiUrl || '';
@@ -951,6 +1186,12 @@ async function loadPaymentConfig() {
         document.getElementById('pay-bepusdt-min').value = config.bepusdt?.minAmount ?? '';
         document.getElementById('pay-bepusdt-max').value = config.bepusdt?.maxAmount ?? '';
         document.getElementById('pay-bepusdt-notify-url').value = config.bepusdt?.notifyUrl || '';
+        document.getElementById('pay-bepusdt-open-mode').value = config.bepusdt?.openMode || 'redirect';
+
+        document.getElementById('pay-pushplus-enabled').checked = !!config.pushplus?.enabled;
+        document.getElementById('pay-pushplus-api-url').value = config.pushplus?.apiUrl || 'https://www.pushplus.plus/batchSend';
+        document.getElementById('pay-pushplus-token').value = config.pushplus?.token || '';
+        document.getElementById('pay-pushplus-channel').value = config.pushplus?.channel || 'app';
     } catch (err) {
         console.error('Load payment config error:', err);
         alert('加载支付配置失败');
@@ -959,6 +1200,7 @@ async function loadPaymentConfig() {
 
 async function savePaymentConfig() {
     const minRechargeAmount = getPositiveIntegerInputValue('pay-min-recharge', 1) || 1;
+    const quickAmounts = parseQuickAmountList(document.getElementById('pay-quick-amounts')?.value || '');
     const ranges = [
         { label: '固定码微信', ...readPaymentRange('pay-fixed-wechat-min', 'pay-fixed-wechat-max', minRechargeAmount) },
         { label: '固定码支付宝', ...readPaymentRange('pay-fixed-alipay-min', 'pay-fixed-alipay-max', minRechargeAmount) },
@@ -981,6 +1223,7 @@ async function savePaymentConfig() {
 
     const payload = {
         minRechargeAmount,
+        quickAmounts,
         fixedQr: {
             wechat: {
                 enabled: document.getElementById('pay-fixed-wechat-enabled').checked,
@@ -1000,7 +1243,9 @@ async function savePaymentConfig() {
             apiUrl: document.getElementById('pay-futong-api-url').value.trim(),
             pid: document.getElementById('pay-futong-pid').value.trim(),
             secretKey: document.getElementById('pay-futong-secret').value.trim(),
+            openMode: document.getElementById('pay-futong-open-mode').value || 'qrcode',
             notifyUrl: document.getElementById('pay-futong-notify-url').value.trim(),
+            returnUrl: document.getElementById('pay-futong-return-url').value.trim(),
             alipayEnabled: document.getElementById('pay-futong-alipay-enabled').checked,
             wxpayEnabled: document.getElementById('pay-futong-wxpay-enabled').checked,
             alipayMinAmount: futongAlipayRange.minAmount,
@@ -1013,10 +1258,17 @@ async function savePaymentConfig() {
             apiUrl: document.getElementById('pay-bepusdt-api-url').value.trim(),
             authToken: document.getElementById('pay-bepusdt-token').value.trim(),
             signSecret: document.getElementById('pay-bepusdt-secret').value.trim(),
+            openMode: document.getElementById('pay-bepusdt-open-mode').value || 'redirect',
             notifyUrl: document.getElementById('pay-bepusdt-notify-url').value.trim(),
-            tradeType: document.getElementById('pay-bepusdt-trade-type').value.trim() || 'usdt.bep20',
+            tradeType: document.getElementById('pay-bepusdt-trade-type').value || 'usdt.bep20',
             minAmount: bepusdtRange.minAmount,
             maxAmount: bepusdtRange.maxAmount
+        },
+        pushplus: {
+            enabled: document.getElementById('pay-pushplus-enabled').checked,
+            apiUrl: document.getElementById('pay-pushplus-api-url').value.trim(),
+            token: document.getElementById('pay-pushplus-token').value.trim(),
+            channel: document.getElementById('pay-pushplus-channel').value.trim() || 'app'
         }
     };
 
@@ -1055,5 +1307,235 @@ async function cancelRechargeOrder(orderId) {
         loadAdminOrders(1);
     } else {
         alert(data.error || '取消失败');
+    }
+}
+
+
+function formatAdminDocTime(value) {
+    if (!value) return '--';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '--';
+    return date.toLocaleString('zh-CN');
+}
+
+function formatAdminDocSize(size) {
+    const num = Number(size || 0);
+    if (!Number.isFinite(num) || num <= 0) return '0 B';
+    if (num < 1024) return `${num} B`;
+    if (num < 1024 * 1024) return `${(num / 1024).toFixed(1)} KB`;
+    return `${(num / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function renderAdminDocList() {
+    const container = document.getElementById('admin-docs-list');
+    if (!container) return;
+
+    if (!adminDocsListCache.length) {
+        container.innerHTML = '<div class="rounded-box bg-base-200 px-4 py-6 text-sm text-base-content/60">`docs/` 目录下还没有 Markdown 文档。</div>';
+        return;
+    }
+
+    container.innerHTML = adminDocsListCache.map(doc => {
+        const active = doc.path === currentAdminDocPath;
+        const buttonClass = active
+            ? 'border-primary bg-primary/10 text-primary'
+            : 'border-base-300 bg-base-200/60 hover:border-primary/40 hover:bg-base-200';
+        const encodedPath = encodeURIComponent(doc.path);
+        return `
+            <button class="w-full text-left rounded-box border px-4 py-3 transition ${buttonClass}" onclick="loadAdminDocContent(decodeURIComponent('${encodedPath}'))">
+                <div class="font-semibold leading-6">${escapeHtml(doc.title || doc.path)}</div>
+                <div class="text-xs text-base-content/60 mt-1">${escapeHtml(doc.path)}</div>
+                <div class="text-xs text-base-content/50 mt-2">更新于 ${formatAdminDocTime(doc.updatedAt)}</div>
+            </button>
+        `;
+    }).join('');
+}
+
+function renderAdminMarkdownInline(text) {
+    let html = escapeHtml(text ?? '');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    return html;
+}
+
+function renderAdminMarkdown(markdown) {
+    const lines = String(markdown || '').replace(/\r\n?/g, '\n').split('\n');
+    const html = [];
+    let paragraphLines = [];
+    let listType = null;
+    let listItems = [];
+    let inCodeBlock = false;
+    let codeLines = [];
+
+    const flushParagraph = () => {
+        if (!paragraphLines.length) return;
+        html.push(`<p>${renderAdminMarkdownInline(paragraphLines.join(' '))}</p>`);
+        paragraphLines = [];
+    };
+
+    const flushList = () => {
+        if (!listType || !listItems.length) return;
+        html.push(`<${listType}>${listItems.map(item => `<li>${renderAdminMarkdownInline(item)}</li>`).join('')}</${listType}>`);
+        listType = null;
+        listItems = [];
+    };
+
+    const flushCodeBlock = () => {
+        if (!inCodeBlock) return;
+        html.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+        inCodeBlock = false;
+        codeLines = [];
+    };
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+
+        if (inCodeBlock) {
+            if (trimmed.startsWith('```')) {
+                flushCodeBlock();
+            } else {
+                codeLines.push(line);
+            }
+            continue;
+        }
+
+        if (trimmed.startsWith('```')) {
+            flushParagraph();
+            flushList();
+            inCodeBlock = true;
+            codeLines = [];
+            continue;
+        }
+
+        if (!trimmed) {
+            flushParagraph();
+            flushList();
+            continue;
+        }
+
+        if (/^---+$/.test(trimmed)) {
+            flushParagraph();
+            flushList();
+            html.push('<hr>');
+            continue;
+        }
+
+        const headingMatch = trimmed.match(/^(#{1,6})\s+(.+)$/);
+        if (headingMatch) {
+            flushParagraph();
+            flushList();
+            const level = headingMatch[1].length;
+            html.push(`<h${level}>${renderAdminMarkdownInline(headingMatch[2])}</h${level}>`);
+            continue;
+        }
+
+        const quoteMatch = trimmed.match(/^>\s?(.*)$/);
+        if (quoteMatch) {
+            flushParagraph();
+            flushList();
+            html.push(`<blockquote>${renderAdminMarkdownInline(quoteMatch[1])}</blockquote>`);
+            continue;
+        }
+
+        const unorderedMatch = trimmed.match(/^[-*]\s+(.+)$/);
+        if (unorderedMatch) {
+            flushParagraph();
+            if (listType && listType !== 'ul') flushList();
+            listType = 'ul';
+            listItems.push(unorderedMatch[1]);
+            continue;
+        }
+
+        const orderedMatch = trimmed.match(/^\d+\.\s+(.+)$/);
+        if (orderedMatch) {
+            flushParagraph();
+            if (listType && listType !== 'ol') flushList();
+            listType = 'ol';
+            listItems.push(orderedMatch[1]);
+            continue;
+        }
+
+        paragraphLines.push(trimmed);
+    }
+
+    flushParagraph();
+    flushList();
+    flushCodeBlock();
+    return html.join('');
+}
+
+function setAdminDocLoading(message = '正在加载文档...') {
+    const titleEl = document.getElementById('admin-doc-title');
+    const metaEl = document.getElementById('admin-doc-meta');
+    const pathEl = document.getElementById('admin-doc-path');
+    const contentEl = document.getElementById('admin-doc-content');
+    if (titleEl) titleEl.textContent = message;
+    if (metaEl) metaEl.textContent = '请稍候';
+    if (pathEl) pathEl.textContent = 'docs/';
+    if (contentEl) {
+        contentEl.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-base-content/60">正在读取文档内容...</div>';
+    }
+}
+
+async function loadAdminDocContent(docPath) {
+    currentAdminDocPath = docPath;
+    renderAdminDocList();
+    setAdminDocLoading('正在打开文档...');
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/docs/content?path=${encodeURIComponent(docPath)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '读取文档失败');
+
+        document.getElementById('admin-doc-title').textContent = data.title || docPath;
+        document.getElementById('admin-doc-meta').textContent = `最后更新 ${formatAdminDocTime(data.updatedAt)} · ${formatAdminDocSize(data.size)}`;
+        document.getElementById('admin-doc-path').textContent = `docs/${data.path}`;
+        document.getElementById('admin-doc-content').innerHTML = renderAdminMarkdown(data.content || '');
+        renderAdminDocList();
+    } catch (err) {
+        console.error('Load admin doc content error:', err);
+        document.getElementById('admin-doc-title').textContent = '文档加载失败';
+        document.getElementById('admin-doc-meta').textContent = err.message || '请稍后重试';
+        document.getElementById('admin-doc-path').textContent = 'docs/';
+        document.getElementById('admin-doc-content').innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-5 py-6 text-error">${escapeHtml(err.message || '读取文档失败')}</div>`;
+    }
+}
+
+async function loadAdminDocs(forceRefresh = false) {
+    const listEl = document.getElementById('admin-docs-list');
+    if (!listEl) return;
+
+    if (!forceRefresh && adminDocsLoadedOnce && adminDocsListCache.length) {
+        renderAdminDocList();
+        if (currentAdminDocPath) return;
+        await loadAdminDocContent(adminDocsListCache[0].path);
+        return;
+    }
+
+    listEl.innerHTML = '<div class="rounded-box bg-base-200 px-4 py-6 text-sm text-base-content/60">正在加载文档列表...</div>';
+    try {
+        const res = await Auth.apiFetch('/api/admin/docs');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '加载文档列表失败');
+
+        adminDocsLoadedOnce = true;
+        adminDocsListCache = Array.isArray(data.docs) ? data.docs : [];
+        if (!adminDocsListCache.some(doc => doc.path === currentAdminDocPath)) {
+            currentAdminDocPath = adminDocsListCache[0]?.path || '';
+        }
+        renderAdminDocList();
+
+        if (currentAdminDocPath) {
+            await loadAdminDocContent(currentAdminDocPath);
+        } else {
+            document.getElementById('admin-doc-title').textContent = '暂无系统文档';
+            document.getElementById('admin-doc-meta').textContent = '请在 `docs/` 目录下添加 Markdown 文件';
+            document.getElementById('admin-doc-path').textContent = 'docs/';
+            document.getElementById('admin-doc-content').innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-base-content/60">当前还没有可展示的 Markdown 文档。</div>';
+        }
+    } catch (err) {
+        console.error('Load admin docs error:', err);
+        listEl.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-4 py-6 text-sm text-error">${escapeHtml(err.message || '加载文档列表失败')}</div>`;
     }
 }

@@ -1,11 +1,29 @@
 const express = require('express');
-const { body, param, validationResult } = require('express-validator');
+const { body, param, query, validationResult } = require('express-validator');
 const { authenticate } = require('../middleware/auth');
 const paymentService = require('../services/paymentService');
 
 const router = express.Router();
-router.use(express.json({ limit: '10mb' }));
-router.use(express.urlencoded({ extended: false, limit: '10mb' }));
+
+function parseNotifyBody(body, fallback = {}) {
+    if (body && typeof body === 'object' && !Array.isArray(body)) return body;
+    if (typeof body === 'string') {
+        const raw = body.trim();
+        if (!raw) return fallback;
+        try {
+            return JSON.parse(raw);
+        } catch {
+            try {
+                const params = new URLSearchParams(raw);
+                const parsed = Object.fromEntries(params.entries());
+                return Object.keys(parsed).length > 0 ? parsed : fallback;
+            } catch {
+                return fallback;
+            }
+        }
+    }
+    return fallback;
+}
 
 router.get('/recharge/options', authenticate, async (req, res) => {
     try {
@@ -54,31 +72,87 @@ router.get('/orders/:orderNo', authenticate, [
     }
 });
 
-router.post('/notify/futong', async (req, res) => {
+router.post('/orders/:orderNo/manual-review-request', authenticate, [
+    param('orderNo').trim().notEmpty().withMessage('订单号不能为空')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
     try {
-        const result = await paymentService.handleFutongNotify(req.body || {});
-        if (!result.success && !result.skipped) {
-            console.error('[Payment] futong notify failed:', result.error);
-            return res.status(400).send('fail');
-        }
-        return res.send('success');
+        const order = await paymentService.requestFixedQrManualReview({
+            userId: req.user.id,
+            orderNo: req.params.orderNo,
+            baseUrl: paymentService.getPublicBaseUrl(req)
+        });
+        res.json({ message: '请等待确认入账', order });
     } catch (error) {
-        console.error('[Payment] futong notify error:', error.message);
-        return res.status(500).send('fail');
+        console.error('[Payment] manual review request error:', error.message);
+        res.status(400).json({ error: error.publicMessage || error.message || '提交失败，请联系管理员处理' });
     }
 });
 
-router.post('/notify/bepusdt', async (req, res) => {
+router.get('/manual-review', [
+    query('token').trim().notEmpty().withMessage('缺少确认令牌')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
     try {
-        const result = await paymentService.handleBepusdtNotify(req.body || {});
+        const order = await paymentService.getManualReviewOrderByToken(req.query.token);
+        res.json({ order });
+    } catch (error) {
+        console.error('[Payment] get manual review order error:', error.message);
+        res.status(400).json({ error: error.message || '获取订单详情失败' });
+    }
+});
+
+router.post('/manual-review/mark-paid', [
+    body('token').trim().notEmpty().withMessage('缺少确认令牌')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+    try {
+        const result = await paymentService.markManualReviewOrderPaidByToken(req.body.token);
+        if (!result.success) return res.status(400).json({ error: result.error || '处理失败' });
+        res.json({
+            message: result.alreadyPaid ? '订单已是支付状态' : '订单已标记为支付成功',
+            order: result.order,
+            alreadyPaid: result.alreadyPaid === true
+        });
+    } catch (error) {
+        console.error('[Payment] mark manual review order paid error:', error.message);
+        res.status(500).json({ error: '移动确认入账失败' });
+    }
+});
+
+router.all('/notify/futong', express.text({ type: ['text/plain', 'text/*'], limit: '1mb' }), async (req, res) => {
+    try {
+        const payload = parseNotifyBody(req.body, req.query || {});
+        const result = await paymentService.handleFutongNotify(payload);
+        if (!result.success && !result.skipped) {
+            console.error('[Payment] futong notify failed:', result.error);
+            return res.status(400).type('text/plain').send('fail');
+        }
+        return res.type('text/plain').send('success');
+    } catch (error) {
+        console.error('[Payment] futong notify error:', error.message);
+        return res.status(500).type('text/plain').send('fail');
+    }
+});
+
+router.all('/notify/bepusdt', express.text({ type: ['text/plain', 'text/*'], limit: '1mb' }), async (req, res) => {
+    try {
+        const payload = parseNotifyBody(req.body, req.query || {});
+        const result = await paymentService.handleBepusdtNotify(payload);
         if (!result.success && !result.skipped) {
             console.error('[Payment] bepusdt notify failed:', result.error);
-            return res.status(400).json({ status_code: 400, message: 'fail' });
+            return res.status(400).type('text/plain').send('fail');
         }
-        return res.json({ status_code: 200, message: 'success' });
+        return res.type('text/plain').send('success');
     } catch (error) {
         console.error('[Payment] bepusdt notify error:', error.message);
-        return res.status(500).json({ status_code: 500, message: 'fail' });
+        return res.status(500).type('text/plain').send('fail');
     }
 });
 

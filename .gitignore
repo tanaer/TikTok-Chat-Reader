@@ -126,3 +126,6 @@ doc/DouyinLiveRecorder-main
 *.db-shm
 bin/*.exe
 .qoder
+.env.swp
+.claude/
+bin/ffmpeg

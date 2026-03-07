@@ -30,6 +30,10 @@ function convertToBeijingTimeString(input) {
     return utc8.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+function isLikelyExactRoomIdSearch(value) {
+    return typeof value === 'string' && /^[A-Za-z0-9._@-]+$/.test(value.trim());
+}
+
 class Manager {
     constructor() {
         this.prices = this.loadPrices();
@@ -139,7 +143,7 @@ class Manager {
             finalName = existing ? existing.name : roomId; // Default to roomId for new rooms
         }
 
-        // Preserve address if null/undefined passed  
+        // Preserve address if null/undefined passed
         let finalAddress = address;
         if (address === null || address === undefined) {
             finalAddress = existing ? existing.address : null;
@@ -195,10 +199,10 @@ class Manager {
         // console.log(`[Manager] updateRoom - monitorVal: ${monitorVal}, recVal: ${recordingVal}`);
 
         await run(`
-            INSERT INTO room (room_id, name, address, language, updated_at, is_monitor_enabled, priority, is_recording_enabled, recording_account_id) 
+            INSERT INTO room (room_id, name, address, language, updated_at, is_monitor_enabled, priority, is_recording_enabled, recording_account_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(room_id) DO UPDATE SET 
-                name = excluded.name, 
+            ON CONFLICT(room_id) DO UPDATE SET
+                name = excluded.name,
                 address = excluded.address,
                 language = excluded.language,
                 updated_at = excluded.updated_at,
@@ -233,10 +237,33 @@ class Manager {
         const countParams = [];
 
         if (search && search.trim()) {
-            const likePattern = `%${search.trim()}%`;
-            whereClauses.push('(room_id ILIKE ? OR name ILIKE ?)');
-            params.push(likePattern, likePattern);
-            countParams.push(likePattern, likePattern);
+            const trimmedSearch = search.trim();
+            let usedExactMatch = false;
+            if (isLikelyExactRoomIdSearch(trimmedSearch)) {
+                const exactWhere = ['room_id = ?'];
+                const exactParams = [trimmedSearch];
+                if (roomFilter !== null) {
+                    if (roomFilter.length === 0) {
+                        return { data: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+                    }
+                    const exactPlaceholders = roomFilter.map(() => '?').join(',');
+                    exactWhere.push(`room_id IN (${exactPlaceholders})`);
+                    exactParams.push(...roomFilter);
+                }
+                const exactMatch = await get(`SELECT room_id FROM room WHERE ${exactWhere.join(' AND ')} LIMIT 1`, exactParams);
+                if (exactMatch) {
+                    whereClauses.push('room_id = ?');
+                    params.push(trimmedSearch);
+                    countParams.push(trimmedSearch);
+                    usedExactMatch = true;
+                }
+            }
+            if (!usedExactMatch) {
+                const likePattern = `%${trimmedSearch}%`;
+                whereClauses.push('(room_id ILIKE ? OR name ILIKE ?)');
+                params.push(likePattern, likePattern);
+                countParams.push(likePattern, likePattern);
+            }
         }
         if (roomFilter !== null) {
             if (roomFilter.length === 0) {
@@ -307,7 +334,7 @@ class Manager {
 
         for (const room of rooms) {
             const updated = await run(`
-                UPDATE event SET room_id = ? 
+                UPDATE event SET room_id = ?
                 WHERE room_id = ? AND room_id != ?
             `, [room.room_id, room.numeric_room_id, room.room_id]);
             console.log(`[Manager] Migrated events from ${room.numeric_room_id} to ${room.room_id}`);
@@ -355,8 +382,8 @@ class Manager {
             SELECT s.session_id, s.room_id, s.created_at, et.end_time
             FROM session s
             LEFT JOIN LATERAL (
-                SELECT MAX(timestamp) as end_time 
-                FROM event 
+                SELECT MAX(timestamp) as end_time
+                FROM event
                 WHERE event.session_id = s.session_id
             ) et ON true
             ORDER BY s.created_at DESC
@@ -510,7 +537,7 @@ class Manager {
         // Find all distinct room_id + date combinations with orphaned events
         const orphanGroups = await query(`
             SELECT room_id, DATE(timestamp) as event_date, COUNT(*) as cnt
-            FROM event 
+            FROM event
             WHERE session_id IS NULL
             GROUP BY room_id, DATE(timestamp)
             ORDER BY event_date DESC
@@ -580,7 +607,7 @@ class Manager {
 
         // 1. Missing Sessions
         const missingSessions = await query(`
-            SELECT DISTINCT e.session_id, e.room_id, 
+            SELECT DISTINCT e.session_id, e.room_id,
                    MIN(e.timestamp) as first_event,
                    MAX(e.timestamp) as last_event,
                    COUNT(*) as event_count
@@ -667,8 +694,8 @@ class Manager {
 
         // Pre-compute ALL session boundaries in one query (MUCH faster than N+1)
         const allSessions = await query(`
-            SELECT s.session_id, s.room_id, s.created_at, 
-                   MIN(e.timestamp) as start_time, 
+            SELECT s.session_id, s.room_id, s.created_at,
+                   MIN(e.timestamp) as start_time,
                    MAX(e.timestamp) as end_time
             FROM session s
             LEFT JOIN event e ON s.session_id = e.session_id
@@ -704,8 +731,8 @@ class Manager {
 
         // Pre-compute ALL recent session boundaries in one query
         const recentSessions = await query(`
-            SELECT s.session_id, s.room_id, s.created_at, 
-                   MIN(e.timestamp) as start_time, 
+            SELECT s.session_id, s.room_id, s.created_at,
+                   MIN(e.timestamp) as start_time,
                    MAX(e.timestamp) as end_time
             FROM session s
             LEFT JOIN event e ON s.session_id = e.session_id
@@ -806,7 +833,7 @@ class Manager {
 
             // Just count them first to see if we need to act
             const staleCountRow = await get(`
-                SELECT COUNT(*) as c FROM event 
+                SELECT COUNT(*) as c FROM event
                 WHERE room_id = ? AND session_id IS NULL AND timestamp < ?
             `, [room.room_id, twoHoursAgo]);
 
@@ -878,9 +905,9 @@ class Manager {
         await this.ensureDb();
         // Use upsert pattern - insert if not exists, update if exists
         await run(`
-            INSERT INTO "user" (user_id, ai_analysis, updated_at) 
+            INSERT INTO "user" (user_id, ai_analysis, updated_at)
             VALUES (?, ?, NOW())
-            ON CONFLICT(user_id) DO UPDATE SET 
+            ON CONFLICT(user_id) DO UPDATE SET
                 ai_analysis = EXCLUDED.ai_analysis,
                 updated_at = NOW()
         `, [userId, analysis]);
@@ -965,7 +992,7 @@ class Manager {
 
         // Get total count
         const countSql = `
-            SELECT COUNT(*) as total 
+            SELECT COUNT(*) as total
             FROM user_stats us
             JOIN "user" u ON us.user_id = u.user_id
             ${whereClause}
@@ -976,7 +1003,7 @@ class Manager {
         // Main query from cache
         const mainParams = [...params, pageSize, offset];
         const rows = await query(`
-            SELECT 
+            SELECT
                 u.user_id as userId,
                 u.unique_id as uniqueId,
                 u.nickname as nickname,
@@ -1155,16 +1182,16 @@ class Manager {
 
         if (giftPreference === 'true_love') {
             havingConditions.push(`
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose' 
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) >
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok' 
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0)
             `);
         } else if (giftPreference === 'knife') {
             havingConditions.push(`
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok' 
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) >
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose' 
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0)
             `);
         }
@@ -1193,7 +1220,7 @@ class Manager {
 
         const mainParams = [...params, parseInt(minRooms), pageSize, offset];
         const rows = await query(`
-            SELECT 
+            SELECT
                 u.user_id as userId,
                 u.unique_id as uniqueId,
                 u.nickname as nickname,
@@ -1203,9 +1230,9 @@ class Manager {
                 SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as totalValue,
                 COUNT(DISTINCT e.room_id) as roomCount,
                 MAX(e.timestamp) as lastActive,
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose' 
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) as rose_value,
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok' 
+                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) as tiktok_value
             FROM event e
             JOIN "user" u ON e.user_id = u.user_id
@@ -1296,8 +1323,8 @@ class Manager {
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
-            WHERE type = 'gift' 
-              AND user_id IN (${placeholders}) 
+            WHERE type = 'gift'
+              AND user_id IN (${placeholders})
               AND LOWER(data_json::json->>'giftName') IN ('rose', 'tiktok')
             GROUP BY user_id, LOWER(data_json::json->>'giftName')
         `, userIds);
@@ -1335,15 +1362,30 @@ class Manager {
         return { users: rows, totalCount, page, pageSize };
     }
 
-    async getUserChatHistory(userId, limit = 50) {
+    async getUserChatHistory(userId, limit = 50, roomFilter = null) {
         await this.ensureDb();
+
+        if (roomFilter !== null && roomFilter.length === 0) {
+            return [];
+        }
+
+        let roomFilterClause = '';
+        const params = [userId];
+        if (roomFilter && roomFilter.length > 0) {
+            const placeholders = roomFilter.map(() => '?').join(',');
+            roomFilterClause = ` AND room_id IN (${placeholders})`;
+            params.push(...roomFilter);
+        }
+
+        params.push(limit);
+
         return await query(`
             SELECT comment, timestamp
             FROM event
-            WHERE type = 'chat' AND user_id = ?
+            WHERE type = 'chat' AND user_id = ?${roomFilterClause}
             ORDER BY timestamp DESC
             LIMIT ?
-        `, [userId, limit]);
+        `, params);
     }
 
     // Config Management
@@ -1490,16 +1532,16 @@ class Manager {
         params.push(parseInt(limit) || 100);
 
         const stats = await query(`
-            SELECT 
-                e.room_id, 
-                MAX(r.name) as room_name, 
+            SELECT
+                e.room_id,
+                MAX(r.name) as room_name,
                 COUNT(*) as count,
                 MAX(rs.valid_daily_avg) as daily_avg
             FROM event e
             LEFT JOIN room r ON e.room_id = r.room_id
             LEFT JOIN room_stats rs ON e.room_id = rs.room_id
-            WHERE e.type = 'member' 
-            AND e.timestamp >= ? 
+            WHERE e.type = 'member'
+            AND e.timestamp >= ?
             AND e.timestamp <= ?
             ${roomFilterClause}
             GROUP BY e.room_id
@@ -1642,9 +1684,31 @@ class Manager {
         let whereClauses = [];
         const searchParams = [];
         if (search && search.trim()) {
-            const likePattern = `%${search.trim()}%`;
-            whereClauses.push('(r.room_id ILIKE ? OR r.name ILIKE ?)');
-            searchParams.push(likePattern, likePattern);
+            const trimmedSearch = search.trim();
+            let usedExactMatch = false;
+            if (isLikelyExactRoomIdSearch(trimmedSearch)) {
+                const exactWhere = ['r.room_id = ?'];
+                const exactParams = [trimmedSearch];
+                if (roomFilter !== null) {
+                    if (roomFilter.length === 0) {
+                        return { data: [], pagination: { page, limit, total: 0, totalPages: 0 } };
+                    }
+                    const exactPlaceholders = roomFilter.map(() => '?').join(',');
+                    exactWhere.push(`r.room_id IN (${exactPlaceholders})`);
+                    exactParams.push(...roomFilter);
+                }
+                const exactMatch = await get(`SELECT r.room_id FROM room r WHERE ${exactWhere.join(' AND ')} LIMIT 1`, exactParams);
+                if (exactMatch) {
+                    whereClauses.push('r.room_id = ?');
+                    searchParams.push(trimmedSearch);
+                    usedExactMatch = true;
+                }
+            }
+            if (!usedExactMatch) {
+                const likePattern = `%${trimmedSearch}%`;
+                whereClauses.push('(r.room_id ILIKE ? OR r.name ILIKE ?)');
+                searchParams.push(likePattern, likePattern);
+            }
         }
         if (roomFilter !== null) {
             if (roomFilter.length === 0) {
@@ -1755,9 +1819,9 @@ class Manager {
 
         if (useRoomStatsJoin) {
             mainSql = `
-                SELECT r.*, 
+                SELECT r.*,
                        rs.all_time_gift_value, rs.all_time_visit_count, rs.all_time_chat_count,
-                       rs.valid_daily_avg, rs.valid_days, 
+                       rs.valid_daily_avg, rs.valid_days,
                        rs.top1_ratio, rs.top3_ratio, rs.top10_ratio, rs.top30_ratio,
                        rs.gift_efficiency, rs.interact_efficiency, rs.account_quality,
                        rs.monthly_gift_value, rs.last_session_time
@@ -1796,24 +1860,30 @@ class Manager {
         const roomIds = rooms.map(r => r.roomId);
         const placeholders = roomIds.map(() => '?').join(',');
 
-        // Fetch current session stats (live stats - only untagged events)
-        // PERF: session_id IS NULL in WHERE clause enables partial index usage
-        const currentStats = await query(`
-            SELECT 
-                room_id,
-                COUNT(*) FILTER (WHERE type = 'member') as curr_visits,
-                COUNT(*) FILTER (WHERE type = 'chat') as curr_comments,
-                COALESCE(SUM(CASE WHEN type = 'gift'
-                    THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as curr_gift,
-                MAX(CASE WHEN type = 'like'
-                    THEN COALESCE(total_like_count, 0) ELSE 0 END) as curr_likes,
-                EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) as duration_secs,
-                MIN(timestamp) as start_time
-            FROM event 
-            WHERE room_id IN (${placeholders}) AND session_id IS NULL
-            GROUP BY room_id
-        `, roomIds);
-        const currentStatsMap = Object.fromEntries(currentStats.map(r => [r.roomId, r]));
+        // Fetch current session stats only for live rooms on the current page
+        // PERF: room list主要展示当前直播表现，离线房间直接返回 0，可避免对大 event 表做无意义聚合
+        const liveRoomIdSet = new Set(liveRoomIds);
+        const currentStatRoomIds = roomIds.filter(roomId => liveRoomIdSet.has(roomId));
+        let currentStatsMap = {};
+        if (currentStatRoomIds.length > 0) {
+            const currentStatsPlaceholders = currentStatRoomIds.map(() => '?').join(',');
+            const currentStats = await query(`
+                SELECT
+                    room_id,
+                    COUNT(*) FILTER (WHERE type = 'member') as curr_visits,
+                    COUNT(*) FILTER (WHERE type = 'chat') as curr_comments,
+                    COALESCE(SUM(CASE WHEN type = 'gift'
+                        THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as curr_gift,
+                    MAX(CASE WHEN type = 'like'
+                        THEN COALESCE(total_like_count, 0) ELSE 0 END) as curr_likes,
+                    EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) as duration_secs,
+                    MIN(timestamp) as start_time
+                FROM event
+                WHERE room_id IN (${currentStatsPlaceholders}) AND session_id IS NULL
+                GROUP BY room_id
+            `, currentStatRoomIds);
+            currentStatsMap = Object.fromEntries(currentStats.map(r => [r.roomId, r]));
+        }
 
         // If we didn't use room_stats JOIN, fetch cached stats now
         let cachedStatsMap = {};
@@ -2032,7 +2102,7 @@ class Manager {
 
         // 1. Create new room with same properties
         await run(`
-            INSERT INTO room (room_id, numeric_room_id, name, address, language, updated_at, is_monitor_enabled, priority, owner_user_id) 
+            INSERT INTO room (room_id, numeric_room_id, name, address, language, updated_at, is_monitor_enabled, priority, owner_user_id)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
             newRoomId,
@@ -2092,12 +2162,12 @@ class Manager {
         // For Likes: MAX(likeCount) is best for snapshot.
 
         const summary = await get(`
-            SELECT 
+            SELECT
                 SUM(CASE WHEN type='chat' THEN 1 ELSE 0 END) as totalComments,
                 SUM(CASE WHEN type='member' THEN 1 ELSE 0 END) as totalVisits,
                 MAX(CASE WHEN type='like' THEN COALESCE(total_like_count, 0) ELSE 0 END) as maxLikes,
                 SUM(CASE WHEN type='gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as totalGiftValue
-            FROM event 
+            FROM event
             ${whereClause}
         `, params);
 
@@ -2115,7 +2185,7 @@ class Manager {
 
         // Top Gifters
         const topGifters = await query(`
-            SELECT 
+            SELECT
                 MAX(nickname) as nickname,
                 user_id as userId,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as value
@@ -2128,7 +2198,7 @@ class Manager {
 
         // Top Chatters
         const topChatters = await query(`
-            SELECT 
+            SELECT
                 MAX(nickname) as nickname,
                 user_id as userId,
                 COUNT(*) as count
@@ -2142,7 +2212,7 @@ class Manager {
         // Top Likers
         // likeCount is the number of likes in each packet, SUM gives total contribution
         const topLikers = await query(`
-            SELECT 
+            SELECT
                 MAX(nickname) as nickname,
                 user_id as userId,
                 SUM(COALESCE(like_count, 0)) as count
@@ -2156,7 +2226,7 @@ class Manager {
         // Use LEFT JOIN gift table for gift names since data_json is no longer written
         // Note: e.gift_id is INTEGER but g.gift_id is TEXT, need to cast for JOIN
         const giftDetails = await query(`
-            SELECT 
+            SELECT
                 MAX(e.nickname) as nickname,
                 MAX(e.unique_id) as uniqueId,
                 e.gift_id as giftId,
@@ -2231,7 +2301,7 @@ class Manager {
 
         // Top 50 Likers (all time) - include unique_id for clickable search
         const topLikers = await query(`
-            SELECT 
+            SELECT
                 MAX(nickname) as nickname,
                 MAX(unique_id) as unique_id,
                 user_id as userId,
@@ -2262,9 +2332,9 @@ class Manager {
 
         // Get all timestamps of current live events
         const events = await query(`
-            SELECT id, timestamp 
-            FROM event 
-            WHERE room_id = ? AND session_id IS NULL 
+            SELECT id, timestamp
+            FROM event
+            WHERE room_id = ? AND session_id IS NULL
             ORDER BY timestamp ASC
         `, [roomId]);
 
@@ -2358,8 +2428,8 @@ class Manager {
 
             // Update events
             await run(`
-                UPDATE event 
-                SET session_id = ? 
+                UPDATE event
+                SET session_id = ?
                 WHERE room_id = ? AND session_id IS NULL AND timestamp <= ?
             `, [finalSessionId, roomId, lastT]);
 
@@ -2377,7 +2447,7 @@ class Manager {
 
         // Get users who haven't been analyzed yet (language_analyzed = 0 or NULL)
         const users = await query(`
-            SELECT user_id FROM "user" 
+            SELECT user_id FROM "user"
             WHERE (language_analyzed IS NULL OR language_analyzed = 0)
             LIMIT ?
         `, [limit]);
@@ -2397,7 +2467,7 @@ class Manager {
         for (const user of users) {
             // Get last 20 chat messages for this user
             const chats = await query(`
-                SELECT comment FROM event 
+                SELECT comment FROM event
                 WHERE user_id = ? AND type = 'chat' AND comment IS NOT NULL
                 ORDER BY timestamp DESC LIMIT 20
             `, [user.userId]);
@@ -2454,7 +2524,7 @@ class Manager {
 
             // Update user
             await run(`
-                UPDATE "user" SET 
+                UPDATE "user" SET
                     common_language = ?,
                     mastered_languages = ?,
                     language_analyzed = 1
@@ -2488,14 +2558,14 @@ class Manager {
 
             // 1. Basic stats (all-time gift value, visit count, chat count)
             const basicStats = await query(`
-                SELECT 
+                SELECT
                     room_id,
-                    COALESCE(SUM(CASE WHEN type = 'gift' 
+                    COALESCE(SUM(CASE WHEN type = 'gift'
                         THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as all_gift,
                     COUNT(*) FILTER (WHERE type = 'member') as all_visits,
                     COUNT(*) FILTER (WHERE type = 'chat') as all_comments,
                     EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) as all_time_duration_secs
-                FROM event 
+                FROM event
                 WHERE room_id IN (${placeholders})
                 GROUP BY room_id
             `, roomIds);
@@ -2504,17 +2574,17 @@ class Manager {
             // 2. Valid daily average (days with >= 2 hours of activity)
             const dailyStats = await query(`
                 WITH daily_stats AS (
-                    SELECT 
+                    SELECT
                         room_id,
                         DATE(timestamp) as day,
                         SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as gift_value,
                         EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 as hours
-                    FROM event 
+                    FROM event
                     WHERE room_id IN (${placeholders})
                     GROUP BY room_id, DATE(timestamp)
                     HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 2
                 )
-                SELECT room_id, 
+                SELECT room_id,
                        AVG(gift_value) as avg_gift,
                        COUNT(*) as valid_days
                 FROM daily_stats
@@ -2530,7 +2600,7 @@ class Manager {
                 WITH user_gifts AS (
                     SELECT room_id, user_id,
                            SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as user_total
-                    FROM event 
+                    FROM event
                     WHERE room_id IN (${placeholders}) AND type = 'gift' AND user_id IS NOT NULL
                     GROUP BY room_id, user_id
                 ),
@@ -2564,7 +2634,7 @@ class Manager {
             const monthlyStats = await query(`
                 SELECT room_id,
                        COALESCE(SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)), 0) as monthly_gift
-                FROM event 
+                FROM event
                 WHERE room_id IN (${placeholders})
                 AND type = 'gift'
                 AND timestamp >= ?
@@ -2613,7 +2683,7 @@ class Manager {
                     INSERT INTO room_stats (
                         room_id, all_time_gift_value, all_time_visit_count, all_time_chat_count,
                         valid_daily_avg, valid_days, top1_ratio, top3_ratio, top10_ratio, top30_ratio,
-                        gift_efficiency, interact_efficiency, account_quality, 
+                        gift_efficiency, interact_efficiency, account_quality,
                         monthly_gift_value, last_session_time, updated_at
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                     ON CONFLICT (room_id) DO UPDATE SET
@@ -2688,12 +2758,12 @@ class Manager {
 
                 // 2. Basic gift stats per user
                 const basicStats = await query(`
-                    SELECT 
+                    SELECT
                         user_id,
                         SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_gift,
                         COUNT(DISTINCT room_id) as room_count,
                         MAX(timestamp) as last_active
-                    FROM event 
+                    FROM event
                     WHERE type = 'gift' AND user_id IN (${placeholders})
                     GROUP BY user_id
                 `, batchIds);
@@ -2710,14 +2780,14 @@ class Manager {
 
                 // 4. Rose and TikTok gift stats
                 const roseTiktokStats = await query(`
-                    SELECT 
+                    SELECT
                         user_id,
                         LOWER(data_json::json->>'giftName') as gift_type,
                         SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                         SUM(COALESCE(repeat_count, 1)) as gift_count
                     FROM event
-                    WHERE type = 'gift' 
-                      AND user_id IN (${placeholders}) 
+                    WHERE type = 'gift'
+                      AND user_id IN (${placeholders})
                       AND LOWER(data_json::json->>'giftName') IN ('rose', 'tiktok')
                     GROUP BY user_id, LOWER(data_json::json->>'giftName')
                 `, batchIds);
@@ -2833,7 +2903,7 @@ class Manager {
             `, [thirtyDaysAgo]);
 
             const hourGiftRows = await query(`
-                SELECT to_char(e.timestamp, 'HH24') as hour, 
+                SELECT to_char(e.timestamp, 'HH24') as hour,
                        SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
                 FROM event e
                 LEFT JOIN "user" u ON e.user_id = u.user_id
@@ -2883,7 +2953,7 @@ class Manager {
             await run(`
                 INSERT INTO global_stats (id, hour_stats_json, day_stats_json, updated_at)
                 VALUES (1, ?, ?, NOW())
-                ON CONFLICT (id) DO UPDATE SET 
+                ON CONFLICT (id) DO UPDATE SET
                     hour_stats_json = EXCLUDED.hour_stats_json,
                     day_stats_json = EXCLUDED.day_stats_json,
                     updated_at = NOW()

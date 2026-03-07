@@ -4,12 +4,14 @@ const { authenticate, requireAdmin } = require('../middleware/auth');
 const paymentService = require('../services/paymentService');
 
 const router = express.Router();
-router.use(express.json({ limit: '10mb' }));
 router.use(authenticate, requireAdmin);
 
 router.get('/config', async (req, res) => {
     try {
         const config = await paymentService.getAdminPaymentConfig(paymentService.getPublicBaseUrl(req));
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
         res.json({ config });
     } catch (error) {
         console.error('[AdminPayment] config load error:', error.message);

@@ -32,33 +32,44 @@ router.post('/', authenticate, checkRoomQuota, [
 
         // Check if user already has this room
         const existing = await db.get(
-            'SELECT id FROM user_room WHERE user_id = ? AND room_id = ?',
+            'SELECT id FROM user_room WHERE user_id = ? AND room_id = ? AND deleted_at IS NULL',
             [userId, roomId]
         );
         if (existing) {
             return res.status(409).json({ error: '您已添加过该房间' });
         }
 
+        const deletedAssoc = await db.get(
+            'SELECT id FROM user_room WHERE user_id = ? AND room_id = ? AND deleted_at IS NOT NULL ORDER BY deleted_at DESC LIMIT 1',
+            [userId, roomId]
+        );
+
         // Ensure room exists in global room table (reuse if exists)
-        const room = await db.get('SELECT room_id FROM room WHERE room_id = ?', [roomId]);
+        const room = await db.get('SELECT room_id, owner_user_id, is_admin_room FROM room WHERE room_id = ?', [roomId]);
         if (!room) {
             await db.run(
-                'INSERT INTO room (room_id, name, is_monitor_enabled) VALUES (?, ?, 1)',
-                [roomId, roomId]
+                'INSERT INTO room (room_id, name, is_monitor_enabled, owner_user_id, is_admin_room) VALUES (?, ?, 1, ?, ?)',
+                [roomId, roomId, req.user.role === 'admin' ? null : userId, req.user.role === 'admin' ? 1 : 0]
             );
         } else {
-            // Ensure monitoring is enabled
             await db.run(
                 'UPDATE room SET is_monitor_enabled = 1 WHERE room_id = ? AND is_monitor_enabled = 0',
                 [roomId]
             );
         }
 
-        // Create user-room association
-        await db.run(
-            'INSERT INTO user_room (user_id, room_id, alias) VALUES (?, ?, ?)',
-            [userId, roomId, alias || null]
-        );
+        // Create or restore user-room association
+        if (deletedAssoc) {
+            await db.run(
+                'UPDATE user_room SET alias = ?, deleted_at = NULL, is_enabled = true, updated_at = NOW() WHERE id = ?',
+                [alias || null, deletedAssoc.id]
+            );
+        } else {
+            await db.run(
+                'INSERT INTO user_room (user_id, room_id, alias) VALUES (?, ?, ?)',
+                [userId, roomId, alias || null]
+            );
+        }
 
         res.status(201).json({
             message: '房间添加成功',
@@ -85,27 +96,67 @@ router.delete('/:roomId', authenticate, async (req, res) => {
 
         // Check if association exists
         const assoc = await db.get(
-            'SELECT id FROM user_room WHERE user_id = ? AND room_id = ?',
+            'SELECT id FROM user_room WHERE user_id = ? AND room_id = ? AND deleted_at IS NULL',
             [userId, roomId]
         );
         if (!assoc) {
             return res.status(404).json({ error: '房间关联不存在' });
         }
 
-        // Remove association
+        // Soft delete association
         await db.run(
-            'DELETE FROM user_room WHERE user_id = ? AND room_id = ?',
-            [userId, roomId]
+            'UPDATE user_room SET deleted_at = NOW(), is_enabled = false, updated_at = NOW() WHERE id = ?',
+            [assoc.id]
         );
 
-        // Check if any other users still have this room
         const otherUsers = await db.get(
-            'SELECT COUNT(*) AS count FROM user_room WHERE room_id = ?',
+            'SELECT COUNT(*) AS count FROM user_room WHERE room_id = ? AND deleted_at IS NULL',
             [roomId]
         );
 
-        // If no other users, disable monitoring and record the disable timestamp
+        const roomRecord = await db.get(
+            `SELECT r.room_id, r.owner_user_id, r.is_admin_room, u.role AS owner_role
+             FROM room r
+             LEFT JOIN users u ON u.id = r.owner_user_id
+             WHERE r.room_id = ?
+             LIMIT 1`,
+            [roomId]
+        );
+
+        let shouldDisableMonitoring = false;
         if (Number(otherUsers?.count || 0) === 0) {
+            if (Number(roomRecord?.isAdminRoom || 0) === 1) {
+                shouldDisableMonitoring = false;
+            } else if (roomRecord?.ownerUserId) {
+                shouldDisableMonitoring = roomRecord.ownerRole !== 'admin';
+            } else {
+                const creatorAssoc = await db.get(
+                    `SELECT ur.user_id, u.role
+                     FROM user_room ur
+                     LEFT JOIN users u ON u.id = ur.user_id
+                     WHERE ur.room_id = ?
+                     ORDER BY COALESCE(ur.first_added_at, ur.created_at) ASC, ur.id ASC
+                     LIMIT 1`,
+                    [roomId]
+                );
+                const isAdminCreatedRoom = !!creatorAssoc && creatorAssoc.role === 'admin';
+                shouldDisableMonitoring = !!creatorAssoc && creatorAssoc.role !== 'admin';
+
+                if (isAdminCreatedRoom) {
+                    await db.run(
+                        'UPDATE room SET is_admin_room = 1, updated_at = NOW() WHERE room_id = ? AND COALESCE(is_admin_room, 0) = 0',
+                        [roomId]
+                    );
+                } else if (shouldDisableMonitoring && creatorAssoc?.userId) {
+                    await db.run(
+                        'UPDATE room SET owner_user_id = ?, updated_at = NOW() WHERE room_id = ? AND owner_user_id IS NULL',
+                        [creatorAssoc.userId, roomId]
+                    );
+                }
+            }
+        }
+
+        if (shouldDisableMonitoring) {
             await db.run(
                 'UPDATE room SET is_monitor_enabled = 0, updated_at = NOW() WHERE room_id = ?',
                 [roomId]

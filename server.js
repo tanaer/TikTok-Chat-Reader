@@ -18,45 +18,60 @@ const { checkRoomQuota, getUserQuota } = require('./middleware/quota');
 const db = require('./db');
 const keyManager = require('./utils/keyManager');
 
+// Helper: get user's room access context in a single query per request
+async function getUserRoomAccessContext(req) {
+    if (req._userRoomAccessContext) return req._userRoomAccessContext;
+
+    if (!req.user) {
+        req._userRoomAccessContext = { roomFilter: [], userRoomData: {}, dataStartTimes: {} };
+        return req._userRoomAccessContext;
+    }
+    if (req.user.role === 'admin') {
+        req._userRoomAccessContext = { roomFilter: null, userRoomData: null, dataStartTimes: null };
+        return req._userRoomAccessContext;
+    }
+
+    const rows = await db.all(
+        'SELECT room_id, alias, first_added_at FROM user_room WHERE user_id = ? AND deleted_at IS NULL',
+        [req.user.id]
+    );
+
+    const roomFilter = [];
+    const userRoomData = {};
+    const dataStartTimes = {};
+    for (const row of rows) {
+        roomFilter.push(row.roomId);
+        userRoomData[row.roomId] = { alias: row.alias, firstAddedAt: row.firstAddedAt };
+        if (row.firstAddedAt) dataStartTimes[row.roomId] = row.firstAddedAt;
+    }
+
+    req._userRoomAccessContext = { roomFilter, userRoomData, dataStartTimes };
+    return req._userRoomAccessContext;
+}
+
 // Helper: get user's allowed room IDs (returns null for admin = no filter)
 async function getUserRoomFilter(req) {
-    if (!req.user) return []; // not logged in - return empty (no access)
-    if (req.user.role === 'admin') return null; // admin - show all
-    const rows = await db.all('SELECT room_id FROM user_room WHERE user_id = ? AND deleted_at IS NULL', [req.user.id]);
-    return rows.map(r => r.roomId);
+    const { roomFilter } = await getUserRoomAccessContext(req);
+    return roomFilter;
 }
 
 // Helper: get user's room data map { roomId -> { alias, firstAddedAt } } for display name & time filter
 async function getUserRoomDataMap(req) {
-    if (!req.user) return {};
-    if (req.user.role === 'admin') return null; // admin sees system names
-    const rows = await db.all('SELECT room_id, alias, first_added_at FROM user_room WHERE user_id = ? AND deleted_at IS NULL', [req.user.id]);
-    const map = {};
-    for (const r of rows) {
-        map[r.roomId] = { alias: r.alias, firstAddedAt: r.firstAddedAt };
-    }
-    return map;
+    const { userRoomData } = await getUserRoomAccessContext(req);
+    return userRoomData;
 }
 
 // Helper: get data start time for a specific room (member's first_added_at, null for admin)
 async function getDataStartTime(req, roomId) {
-    if (!req.user || req.user.role === 'admin') return null;
-    const row = await db.get(
-        'SELECT first_added_at FROM user_room WHERE user_id = ? AND room_id = ? AND deleted_at IS NULL',
-        [req.user.id, roomId]
-    );
-    return row ? row.firstAddedAt : null;
+    const dataStartTimes = await getDataStartTimes(req);
+    if (dataStartTimes === null) return null;
+    return dataStartTimes[roomId] || null;
 }
 
 // Helper: get data start times map for all user's rooms { roomId: ISO string }
 async function getDataStartTimes(req) {
-    if (!req.user || req.user.role === 'admin') return null;
-    const rows = await db.all('SELECT room_id, first_added_at FROM user_room WHERE user_id = ? AND deleted_at IS NULL', [req.user.id]);
-    const map = {};
-    for (const r of rows) {
-        if (r.firstAddedAt) map[r.roomId] = r.firstAddedAt;
-    }
-    return map;
+    const { dataStartTimes } = await getUserRoomAccessContext(req);
+    return dataStartTimes;
 }
 
 // Helper: Check if user can access a specific room
@@ -85,6 +100,58 @@ recordingManager.startMonitoring(); // Start stall detection for recordings
 
 // Enable CORS & request body parsing
 const REQUEST_BODY_LIMIT = '20mb';
+const ROOM_LIST_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ROOM_LIST_CACHE_TTL_MS || '10000', 10) || 10000);
+const ROOM_LIST_CACHE_MAX_ENTRIES = 200;
+const roomListResponseCache = new Map();
+let roomListCacheVersion = 0;
+
+function getRoomListActorCacheKey(req) {
+    if (!req.user) return 'guest';
+    return `${req.user.role}:${req.user.id || 0}`;
+}
+
+function buildRoomListCacheKey(endpoint, req, params = {}) {
+    return JSON.stringify([
+        endpoint,
+        roomListCacheVersion,
+        getRoomListActorCacheKey(req),
+        Number(params.page || 1),
+        Number(params.limit || 50),
+        String(params.search || ''),
+        String(params.sort || '')
+    ]);
+}
+
+function readRoomListCache(cacheKey) {
+    if (ROOM_LIST_CACHE_TTL_MS <= 0) return null;
+    const cached = roomListResponseCache.get(cacheKey);
+    if (!cached) return null;
+    if (cached.expiresAt <= Date.now()) {
+        roomListResponseCache.delete(cacheKey);
+        return null;
+    }
+    return cached.payload;
+}
+
+function writeRoomListCache(cacheKey, payload) {
+    if (ROOM_LIST_CACHE_TTL_MS <= 0) return payload;
+    if (roomListResponseCache.size >= ROOM_LIST_CACHE_MAX_ENTRIES) {
+        const oldestKey = roomListResponseCache.keys().next().value;
+        if (oldestKey) roomListResponseCache.delete(oldestKey);
+    }
+    roomListResponseCache.set(cacheKey, {
+        payload,
+        expiresAt: Date.now() + ROOM_LIST_CACHE_TTL_MS,
+    });
+    return payload;
+}
+
+function invalidateRoomListCaches(reason = 'manual') {
+    roomListCacheVersion += 1;
+    roomListResponseCache.clear();
+    console.log(`[CACHE] Room list cache invalidated: ${reason}`);
+}
+
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
 app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
 app.use(express.static('public')); // Serve static files first for performance
@@ -475,25 +542,24 @@ app.get('/api/rooms/quota', optionalAuth, async (req, res) => {
     try {
         if (!req.user) return res.json({ quota: null });
         if (req.user.role === 'admin') {
-            return res.json({ quota: { isAdmin: true, limit: -1, used: 0, remaining: -1, isUnlimited: true, openRoomLimit: -1, dailyLimit: -1, dailyUsed: 0 } });
+            return res.json({
+                quota: {
+                    isAdmin: true,
+                    limit: -1,
+                    totalLimit: -1,
+                    used: 0,
+                    remaining: -1,
+                    isUnlimited: true,
+                    openRoomLimit: -1,
+                    openRemaining: -1,
+                    dailyLimit: -1,
+                    dailyUsed: 0,
+                    dailyRemaining: -1,
+                }
+            });
         }
         const quota = await getUserQuota(req.user.id);
-        // Get daily creation limit
-        const sub = await db.get(
-            `SELECT sp.daily_room_create_limit FROM user_subscriptions us
-             JOIN subscription_plans sp ON us.plan_id = sp.id
-             WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
-             ORDER BY us.end_date DESC LIMIT 1`,
-            [req.user.id]
-        );
-        const dailyLimit = sub ? Number(sub.dailyRoomCreateLimit) : -1;
-        // Count today's creations
-        const todayCount = await db.get(
-            `SELECT COUNT(*) AS count FROM user_room WHERE user_id = ? AND created_at >= CURRENT_DATE AND created_at < CURRENT_DATE + INTERVAL '1 day'`,
-            [req.user.id]
-        );
-        const dailyUsed = Number(todayCount?.count || 0);
-        res.json({ quota: { ...quota, dailyLimit, dailyUsed } });
+        res.json({ quota });
     } catch (err) {
         console.error('[API] Quota error:', err.message);
         res.status(500).json({ error: '获取配额失败' });
@@ -507,8 +573,13 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
         const limit = parseInt(req.query.limit) || 50;
         const search = req.query.search || '';
         const sort = req.query.sort || 'default';
-        const roomFilter = await getUserRoomFilter(req);
-        const userRoomData = await getUserRoomDataMap(req);
+        const cacheKey = buildRoomListCacheKey('stats', req, { page, limit, search, sort });
+        const cached = readRoomListCache(cacheKey);
+        if (cached) {
+            return res.json(cached);
+        }
+
+        const { roomFilter, userRoomData } = await getUserRoomAccessContext(req);
 
         console.log(`[API] /api/rooms/stats - user: ${req.user?.username || 'anonymous'}, role: ${req.user?.role || 'none'}, roomFilter: ${roomFilter === null ? 'null(admin)' : roomFilter?.length + ' rooms'}`);
 
@@ -526,7 +597,8 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
             });
         }
 
-        res.json(result);
+        const payload = writeRoomListCache(cacheKey, result);
+        res.json(payload);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -550,8 +622,13 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
         const page = parseInt(req.query.page) || 1;
         const limit = parseInt(req.query.limit) || 50;
         const search = req.query.search || '';
-        const roomFilter = await getUserRoomFilter(req);
-        const userRoomData = await getUserRoomDataMap(req);
+        const cacheKey = buildRoomListCacheKey('rooms', req, { page, limit, search });
+        const cached = readRoomListCache(cacheKey);
+        if (cached) {
+            return res.json(cached);
+        }
+
+        const { roomFilter, userRoomData } = await getUserRoomAccessContext(req);
         const result = await manager.getRooms({ page, limit, search, roomFilter });
 
         // Merge isLive status from autoRecorder activeConnections
@@ -566,7 +643,8 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
             };
         });
 
-        res.json(result);
+        const payload = writeRoomListCache(cacheKey, result);
+        res.json(payload);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -583,6 +661,7 @@ app.delete('/api/rooms/:id', authenticate, async (req, res) => {
         if (isAdmin) {
             // Admin: hard delete system room + all data
             await manager.deleteRoom(roomId);
+            invalidateRoomListCaches('admin room delete');
             return res.json({ success: true });
         }
 
@@ -606,6 +685,7 @@ app.delete('/api/rooms/:id', authenticate, async (req, res) => {
             await autoRecorder.disconnectRoom(roomId);
         }
 
+        invalidateRoomListCaches('member room delete');
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -752,7 +832,14 @@ app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
         if (!req.user) return res.status(401).json({ error: '请先登录' });
         const roomFilter = await getUserRoomFilter(req);
         const data = await manager.getUserAnalysis(req.params.userId, roomFilter);
-        res.json(data);
+
+        const response = serializeUserAnalysisDetail(data);
+        if (req.user.role !== 'admin') {
+            const memberAnalysis = await getLatestMemberAnalysis(req.user.id, req.params.userId);
+            response.aiAnalysis = memberAnalysis?.result || null;
+        }
+
+        res.json(response);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -791,14 +878,22 @@ app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
 
         // Get user list first
         const result = await manager.getTopGifters(1, limit, filters);
+        const memberAnalysisMap = req.user.role === 'admin'
+            ? new Map()
+            : await getLatestMemberAnalysisMap(req.user.id, result.users.map(user => user.userId));
 
         // Fetch details for each user
         const usersWithDetails = [];
         for (const user of result.users) {
             const details = await manager.getUserAnalysis(user.userId, roomFilter);
+            const aiAnalysis = req.user.role === 'admin'
+                ? (details.aiAnalysis || null)
+                : (memberAnalysisMap.get(user.userId)?.result || null);
+
             usersWithDetails.push({
                 ...user,
                 ...details,
+                aiAnalysis,
                 // Format top gifts
                 topGiftsText: (user.topGifts || []).map(g => `${g.giftName || g.giftId}(${g.totalValue})`).join(', '),
                 roseValue: user.roseValue || 0,
@@ -833,6 +928,66 @@ function formatPeakDays(dayStats) {
     return sorted.slice(0, 3).map(d => dayNames[parseInt(d.day)] || '').join(', ');
 }
 
+function serializeUserAnalysisDetail(data = {}) {
+    return {
+        totalValue: data.totalValue || 0,
+        activeDays: data.activeDays || 0,
+        dailyAvg: data.dailyAvg || 0,
+        giftRooms: Array.isArray(data.giftRooms) ? data.giftRooms : [],
+        visitRooms: Array.isArray(data.visitRooms) ? data.visitRooms : [],
+        hourStats: Array.isArray(data.hourStats) ? data.hourStats : [],
+        dayStats: Array.isArray(data.dayStats) ? data.dayStats : [],
+        isAdmin: data.isAdmin || 0,
+        isSuperAdmin: data.isSuperAdmin || 0,
+        isModerator: data.isModerator || 0,
+        fanLevel: data.fanLevel || 0,
+        fanClubName: data.fanClubName || '',
+        commonLanguage: data.commonLanguage || '',
+        masteredLanguages: data.masteredLanguages || '',
+        region: data.region || '',
+        aiAnalysis: data.aiAnalysis || null,
+        moderatorRooms: Array.isArray(data.moderatorRooms) ? data.moderatorRooms : []
+    };
+}
+
+async function getLatestMemberAnalysis(memberId, targetUserId) {
+    if (!memberId || !targetUserId) return null;
+
+    return await db.get(
+        `SELECT result, chat_count, created_at, model_name, latency_ms, source
+         FROM user_ai_analysis
+         WHERE member_id = ? AND target_user_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`,
+        [memberId, targetUserId]
+    );
+}
+
+async function getLatestMemberAnalysisMap(memberId, targetUserIds = []) {
+    if (!memberId || !Array.isArray(targetUserIds) || targetUserIds.length === 0) {
+        return new Map();
+    }
+
+    const placeholders = targetUserIds.map(() => '?').join(',');
+    const rows = await db.query(
+        `SELECT DISTINCT ON (target_user_id) target_user_id, result, chat_count, created_at, model_name, latency_ms, source
+         FROM user_ai_analysis
+         WHERE member_id = ? AND target_user_id IN (${placeholders})
+         ORDER BY target_user_id, created_at DESC`,
+        [memberId, ...targetUserIds]
+    );
+
+    return new Map(rows.map(row => [row.targetUserId, row]));
+}
+
+function getSimulatedAiDelayMs() {
+    return 2000 + Math.floor(Math.random() * 2001);
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 
 
 app.get('/api/analysis/stats', optionalAuth, async (req, res) => {
@@ -860,71 +1015,78 @@ app.get('/api/analysis/rooms/entry', optionalAuth, async (req, res) => {
 
 app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
     try {
+        if (!req.user) return res.status(401).json({ error: '请先登录' });
+
         const { userId, force = false } = req.body;
-        const memberId = req.user?.id || null;
+        const memberId = req.user.id;
         const isAdmin = req.user?.role === 'admin';
+        const roomFilter = await getUserRoomFilter(req);
 
         // 1. Get chat history and check minimum corpus (10 messages)
-        const history = await manager.getUserChatHistory(userId, 200);
+        const history = await manager.getUserChatHistory(userId, 200, roomFilter);
         const chatCount = history ? history.length : 0;
         if (chatCount < 10) {
             return res.json({ result: '待分析语料不足（需至少10条弹幕记录）', chatCount, skipped: true });
         }
 
         // 2. For non-admin members: check if already in their personal analysis table
-        if (!force && memberId && !isAdmin) {
-            const memberCache = await db.get(
-                `SELECT result, chat_count, created_at FROM user_ai_analysis
-                 WHERE member_id = ? AND target_user_id = ? ORDER BY created_at DESC LIMIT 1`,
-                [memberId, userId]
-            );
+        if (!force && !isAdmin) {
+            const memberCache = await getLatestMemberAnalysis(memberId, userId);
             if (memberCache) {
                 return res.json({ result: memberCache.result, cached: true, chatCount: memberCache.chatCount, analyzedAt: memberCache.createdAt, source: 'member_cache' });
             }
         }
 
         // 3. Check system-level cache ("user".ai_analysis) - within 3 months
+        let systemAnalysis = null;
         if (!force) {
-            const sysUser = await db.get(
+            systemAnalysis = await db.get(
                 `SELECT ai_analysis, updated_at FROM "user" WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
                 [userId]
             );
-            if (sysUser && sysUser.aiAnalysis) {
-                const updatedAt = new Date(sysUser.updatedAt);
+            if (systemAnalysis && systemAnalysis.aiAnalysis) {
+                const updatedAt = new Date(systemAnalysis.updatedAt);
                 const threeMonthsAgo = new Date();
                 threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
                 if (updatedAt > threeMonthsAgo) {
                     // System cache is fresh — use it, write to member table, and charge
-                    if (memberId && !isAdmin) {
+                    if (!isAdmin) {
                         // Check credits before charging
                         const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
                         const remaining = Number(credits?.aiCreditsRemaining || 0);
                         if (remaining <= 0) {
-                            return res.status(403).json({ error: 'AI 分析次数已用完，请购买额度包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
+                            return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
                         }
+
+                        const simulatedLatency = getSimulatedAiDelayMs();
+                        await sleep(simulatedLatency);
+
                         // Write to member table
                         await db.run(
                             `INSERT INTO user_ai_analysis (member_id, target_user_id, result, chat_count, model_name, latency_ms, source)
-                             VALUES (?, ?, ?, ?, 'system_cache', 0, 'cache')`,
-                            [memberId, userId, sysUser.aiAnalysis, chatCount]
+                             VALUES (?, ?, ?, ?, ?, ?, ?)`,
+                            [memberId, userId, systemAnalysis.aiAnalysis, chatCount, 'system_cache', simulatedLatency, 'system_cache']
                         );
                         // Deduct credit
                         await db.run('UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - 1, 0), ai_credits_used = ai_credits_used + 1 WHERE id = ?', [memberId]);
                         await db.run('INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, 1, ?)', [memberId, 'analysis', userId]);
+
+                        console.log(`[AI] Reused system cache for member ${memberId}, target ${userId}, simulated ${simulatedLatency}ms`);
+                        return res.json({ result: systemAnalysis.aiAnalysis, cached: false, chatCount, latency: simulatedLatency, source: 'api' });
                     }
                     console.log(`[AI] Using system cache for ${userId} (updated ${updatedAt.toISOString()})`);
-                    return res.json({ result: sysUser.aiAnalysis, cached: true, chatCount, source: 'system_cache' });
+                    return res.json({ result: systemAnalysis.aiAnalysis, cached: true, chatCount, analyzedAt: systemAnalysis.updatedAt, source: 'system_cache' });
                 }
             }
         }
 
         // 4. Need fresh AI analysis — check credits for non-admin
-        if (memberId && !isAdmin) {
+        if (!isAdmin) {
             const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
             const remaining = Number(credits?.aiCreditsRemaining || 0);
             if (remaining <= 0) {
-                return res.status(403).json({ error: 'AI 分析次数已用完，请购买额度包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
+                return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
             }
         }
 
@@ -995,11 +1157,23 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
             );
         }
 
-        // 8. Save to system-level user table
-        await manager.updateAIAnalysis(userId, result);
+        // 8. Save to system-level user table when missing, or always refresh for admin
+        let shouldPersistSystemAnalysis = isAdmin;
+        if (!isAdmin) {
+            if (!systemAnalysis) {
+                systemAnalysis = await db.get(
+                    `SELECT ai_analysis FROM "user" WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
+                    [userId]
+                );
+            }
+            shouldPersistSystemAnalysis = !systemAnalysis?.aiAnalysis;
+        }
+        if (shouldPersistSystemAnalysis) {
+            await manager.updateAIAnalysis(userId, result);
+        }
 
         // 9. Save to member's personal table & deduct credits
-        if (memberId && !isAdmin) {
+        if (!isAdmin) {
             await db.run(
                 `INSERT INTO user_ai_analysis (member_id, target_user_id, result, chat_count, model_name, latency_ms, source)
                  VALUES (?, ?, ?, ?, ?, ?, 'api')`,
@@ -1044,6 +1218,7 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
                 await autoRecorder.disconnectRoom(roomId);
             }
 
+            invalidateRoomListCaches('admin room update');
             return res.json({ success: true, room });
         }
 
@@ -1083,31 +1258,14 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
                 });
             }
 
-            // Check daily room creation limit from subscription plan
-            const sub = await db.get(
-                `SELECT sp.daily_room_create_limit FROM user_subscriptions us
-                 JOIN subscription_plans sp ON us.plan_id = sp.id
-                 WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
-                 ORDER BY us.end_date DESC LIMIT 1`,
-                [req.user.id]
-            );
-            const dailyLimit = sub ? Number(sub.dailyRoomCreateLimit) : -1;
-            if (dailyLimit !== -1) {
-                // Count today's creations (using created_at, exclude soft-deleted restores by checking deleted_at IS NULL or created today)
-                const todayCount = await db.get(
-                    `SELECT COUNT(*) AS count FROM user_room
-                     WHERE user_id = ? AND created_at >= CURRENT_DATE AND created_at < CURRENT_DATE + INTERVAL '1 day'`,
-                    [req.user.id]
-                );
-                const createdToday = Number(todayCount?.count || 0);
-                if (createdToday >= dailyLimit) {
-                    return res.status(403).json({
-                        error: `今日新建房间次数已达上限（${dailyLimit}次/天），请明天再试`,
-                        code: 'DAILY_LIMIT_EXCEEDED',
-                        dailyLimit,
-                        createdToday
-                    });
-                }
+            if (quota.dailyLimit !== -1 && quota.dailyRemaining <= 0) {
+                return res.status(403).json({
+                    error: `今日新建房间次数已达上限（${quota.dailyLimit}次/天），请明天再试`,
+                    code: 'DAILY_LIMIT_EXCEEDED',
+                    dailyLimit: quota.dailyLimit,
+                    createdToday: quota.dailyUsed,
+                    quota
+                });
             }
         }
 
@@ -1156,6 +1314,7 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
             console.log(`[API] User ${req.user.id} added new room copy: ${roomId}`);
         }
 
+        invalidateRoomListCaches('member room upsert');
         res.json({ success: true, room: { room_id: roomId, name: alias || roomId } });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1176,6 +1335,7 @@ app.post('/api/rooms/:id/rename', optionalAuth, async (req, res) => {
         }
 
         await manager.migrateRoomId(roomId, newRoomId);
+        invalidateRoomListCaches('room rename');
         res.json({ success: true, oldRoomId: roomId, newRoomId });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1191,6 +1351,7 @@ app.post('/api/rooms/:id/stop', authenticate, requireAdmin, async (req, res) => 
         if (recordingManager.isRecording(roomId)) {
             await recordingManager.stopRecording(roomId);
         }
+        invalidateRoomListCaches('room stop');
         res.json({ success: true, stopped: result });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1725,11 +1886,43 @@ app.post('/api/rebuild-missing-sessions', async (req, res) => {
     }
 });
 
+const ENABLE_PERIODIC_STATS_REFRESH = String(process.env.ENABLE_PERIODIC_STATS_REFRESH || 'false').toLowerCase() === 'true';
+const ENABLE_STARTUP_STATS_WARMUP = String(process.env.ENABLE_STARTUP_STATS_WARMUP || 'false').toLowerCase() === 'true';
+let isRoomStatsRefreshRunning = false;
+let isUserStatsRefreshRunning = false;
+
+async function runRoomStatsRefreshJob(trigger = 'manual') {
+    if (isRoomStatsRefreshRunning) {
+        console.log(`[CRON] Skip room stats refresh (${trigger}) because a previous run is still active`);
+        return { skipped: true, trigger };
+    }
+    isRoomStatsRefreshRunning = true;
+    try {
+        console.log(`[CRON] Running room stats refresh (${trigger})...`);
+        return await manager.refreshRoomStats();
+    } finally {
+        isRoomStatsRefreshRunning = false;
+    }
+}
+
+async function runUserStatsRefreshJob(trigger = 'manual') {
+    if (isUserStatsRefreshRunning) {
+        console.log(`[CRON] Skip user stats refresh (${trigger}) because a previous run is still active`);
+        return { skipped: true, trigger };
+    }
+    isUserStatsRefreshRunning = true;
+    try {
+        console.log(`[CRON] Running user stats refresh (${trigger})...`);
+        return await manager.refreshUserStats();
+    } finally {
+        isUserStatsRefreshRunning = false;
+    }
+}
+
 // Manually refresh room_stats cache (for immediate update after changes)
 app.post('/api/maintenance/refresh_room_stats', async (req, res) => {
     try {
-        console.log('[API] Manual room stats refresh requested...');
-        const result = await manager.refreshRoomStats();
+        const result = await runRoomStatsRefreshJob('manual-api');
         res.json({ success: true, ...result });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1739,8 +1932,7 @@ app.post('/api/maintenance/refresh_room_stats', async (req, res) => {
 // Manually refresh user_stats cache (for immediate update after changes)
 app.post('/api/maintenance/refresh_user_stats', async (req, res) => {
     try {
-        console.log('[API] Manual user stats refresh requested...');
-        const result = await manager.refreshUserStats();
+        const result = await runUserStatsRefreshJob('manual-api');
         res.json({ success: true, ...result });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1779,25 +1971,27 @@ httpServer.listen(PORT, async () => {
         }
     }, 60 * 60 * 1000); // Every hour
 
-    // Refresh room_stats cache every 30 minutes (for fast API responses)
-    setInterval(async () => {
-        try {
-            console.log('[CRON] Refreshing room stats cache...');
-            await manager.refreshRoomStats();
-        } catch (err) {
-            console.error('[CRON] Room stats refresh error:', err.message);
-        }
-    }, 30 * 60 * 1000); // Every 30 minutes
+    if (ENABLE_PERIODIC_STATS_REFRESH) {
+        // Refresh room_stats cache every 30 minutes (for fast API responses)
+        setInterval(async () => {
+            try {
+                await runRoomStatsRefreshJob('interval');
+            } catch (err) {
+                console.error('[CRON] Room stats refresh error:', err.message);
+            }
+        }, 30 * 60 * 1000); // Every 30 minutes
 
-    // Refresh user_stats cache every 30 minutes (for fast user analysis API)
-    setInterval(async () => {
-        try {
-            console.log('[CRON] Refreshing user stats cache...');
-            await manager.refreshUserStats();
-        } catch (err) {
-            console.error('[CRON] User stats refresh error:', err.message);
-        }
-    }, 30 * 60 * 1000); // Every 30 minutes
+        // Refresh user_stats cache every 30 minutes (for fast user analysis API)
+        setInterval(async () => {
+            try {
+                await runUserStatsRefreshJob('interval');
+            } catch (err) {
+                console.error('[CRON] User stats refresh error:', err.message);
+            }
+        }, 30 * 60 * 1000); // Every 30 minutes
+    } else {
+        console.log('[CRON] Periodic room_stats/user_stats refresh disabled in web process');
+    }
 
     // Run initial tasks after startup
     setTimeout(async () => {
@@ -1809,25 +2003,27 @@ httpServer.listen(PORT, async () => {
         }
     }, 30000); // 30 seconds after startup
 
-    // Refresh room stats on startup (for API performance)
-    setTimeout(async () => {
-        try {
-            console.log('[CRON] Initial room stats refresh...');
-            await manager.refreshRoomStats();
-        } catch (err) {
-            console.error('[CRON] Initial room stats refresh error:', err.message);
-        }
-    }, 10000); // 10 seconds after startup
+    if (ENABLE_STARTUP_STATS_WARMUP) {
+        // Refresh room stats on startup (for API performance)
+        setTimeout(async () => {
+            try {
+                await runRoomStatsRefreshJob('startup');
+            } catch (err) {
+                console.error('[CRON] Initial room stats refresh error:', err.message);
+            }
+        }, 10000); // 10 seconds after startup
 
-    // Refresh user stats on startup (for API performance)
-    setTimeout(async () => {
-        try {
-            console.log('[CRON] Initial user stats refresh...');
-            await manager.refreshUserStats();
-        } catch (err) {
-            console.error('[CRON] Initial user stats refresh error:', err.message);
-        }
-    }, 15000); // 15 seconds after startup
+        // Refresh user stats on startup (for API performance)
+        setTimeout(async () => {
+            try {
+                await runUserStatsRefreshJob('startup');
+            } catch (err) {
+                console.error('[CRON] Initial user stats refresh error:', err.message);
+            }
+        }, 15000); // 15 seconds after startup
+    } else {
+        console.log('[CRON] Startup room_stats/user_stats warmup disabled in web process');
+    }
 
     // Refresh global stats on startup (for /api/analysis/stats performance)
     setTimeout(async () => {

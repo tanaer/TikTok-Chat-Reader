@@ -1,8 +1,11 @@
 const express = require('express');
-const { body, validationResult } = require('express-validator');
+const { body, param, validationResult } = require('express-validator');
 const db = require('../db');
 const { authenticate } = require('../middleware/auth');
 const subscriptionService = require('../services/subscriptionService');
+const emailService = require('../services/emailService');
+const paymentService = require('../services/paymentService');
+const notificationService = require('../services/notificationService');
 
 const router = express.Router();
 
@@ -33,7 +36,6 @@ router.get('/profile', authenticate, async (req, res) => {
  */
 router.put('/profile', authenticate, [
     body('nickname').optional().trim().isLength({ min: 1, max: 100 }).withMessage('昵称1-100个字符'),
-    body('email').optional({ values: 'falsy' }).isEmail().withMessage('邮箱格式不正确'),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -42,6 +44,10 @@ router.put('/profile', authenticate, [
 
     try {
         const { nickname, email } = req.body;
+        if (email !== undefined) {
+            return res.status(400).json({ error: '邮箱请通过验证码流程修改' });
+        }
+
         const updates = [];
         const params = [];
         let paramIdx = 0;
@@ -49,17 +55,6 @@ router.put('/profile', authenticate, [
         if (nickname !== undefined) {
             updates.push(`nickname = $${++paramIdx}`);
             params.push(nickname);
-        }
-        if (email !== undefined) {
-            // Check email uniqueness
-            if (email) {
-                const existing = await db.get('SELECT id FROM users WHERE email = ? AND id != ?', [email, req.user.id]);
-                if (existing) {
-                    return res.status(409).json({ error: '邮箱已被使用' });
-                }
-            }
-            updates.push(`email = $${++paramIdx}`);
-            params.push(email || null);
         }
 
         if (updates.length === 0) {
@@ -81,6 +76,69 @@ router.put('/profile', authenticate, [
     } catch (err) {
         console.error('[User] Update profile error:', err.message);
         res.status(500).json({ error: '更新失败' });
+    }
+});
+
+/**
+ * PUT /api/user/email
+ */
+router.put('/email', authenticate, [
+    body('newEmail').isEmail().withMessage('请输入有效的新邮箱地址'),
+    body('emailCode').trim().matches(/^\d{6}$/).withMessage('请输入6位邮箱验证码'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    const currentEmail = String(req.user.email || '').trim().toLowerCase();
+    if (!currentEmail) {
+        return res.status(400).json({ error: '当前账号未绑定邮箱，暂不支持修改邮箱' });
+    }
+
+    const newEmail = req.body.newEmail.trim().toLowerCase();
+    if (newEmail === currentEmail) {
+        return res.status(400).json({ error: '新邮箱不能与当前邮箱相同' });
+    }
+
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const existing = await client.query(
+            'SELECT id FROM users WHERE LOWER(email) = LOWER($1) AND id != $2',
+            [newEmail, req.user.id]
+        );
+        if (existing.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: '邮箱已被使用' });
+        }
+
+        const verifyResult = await emailService.verifyCode(currentEmail, req.body.emailCode, {
+            purpose: 'change_email',
+            executor: client,
+        });
+        if (!verifyResult.ok) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: verifyResult.error });
+        }
+
+        const updateResult = await client.query(
+            `UPDATE users
+             SET email = $1, updated_at = NOW()
+             WHERE id = $2
+             RETURNING id, username, email, nickname, balance, role`,
+            [newEmail, req.user.id]
+        );
+
+        await client.query('COMMIT');
+        res.json({ user: updateResult.rows[0] });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[User] Change email error:', err.message);
+        res.status(500).json({ error: '修改邮箱失败' });
+    } finally {
+        client.release();
     }
 });
 
@@ -109,7 +167,7 @@ router.get('/rooms', authenticate, async (req, res) => {
              FROM user_room ur
              LEFT JOIN room r ON ur.room_id = r.room_id
              LEFT JOIN room_stats rs ON ur.room_id = rs.room_id
-             WHERE ur.user_id = ?
+             WHERE ur.user_id = ? AND ur.deleted_at IS NULL
              ORDER BY ur.created_at DESC`,
             [req.user.id]
         );
@@ -139,7 +197,9 @@ router.get('/orders', authenticate, async (req, res) => {
         }
 
         const orders = await db.all(
-            `SELECT * FROM payment_records ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+            `SELECT id, order_no, type, item_name, amount, currency, status, created_at, paid_at, metadata
+             FROM payment_records ${whereClause}
+             ORDER BY created_at DESC LIMIT ? OFFSET ?`,
             [...params, limit, offset]
         );
 
@@ -149,7 +209,7 @@ router.get('/orders', authenticate, async (req, res) => {
         );
 
         res.json({
-            orders,
+            orders: orders.map(order => paymentService.serializeUserOrderListItem(order)),
             pagination: { page, limit, total: Number(countResult?.total || 0) }
         });
     } catch (err) {
@@ -168,7 +228,11 @@ router.get('/balance-logs', authenticate, async (req, res) => {
         const offset = (page - 1) * limit;
 
         const logs = await db.all(
-            `SELECT * FROM balance_log WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+            `SELECT type, amount, balance_before, balance_after, created_at
+             FROM balance_log
+             WHERE user_id = ?
+             ORDER BY created_at DESC
+             LIMIT ? OFFSET ?`,
             [req.user.id, limit, offset]
         );
 
@@ -178,12 +242,67 @@ router.get('/balance-logs', authenticate, async (req, res) => {
         );
 
         res.json({
-            logs,
+            logs: logs.map(log => ({
+                type: log.type,
+                amount: Number(log.amount || 0),
+                balanceBefore: Number(log.balanceBefore || 0),
+                balanceAfter: Number(log.balanceAfter || 0),
+                createdAt: log.createdAt,
+            })),
             pagination: { page, limit, total: Number(countResult?.total || 0) }
         });
     } catch (err) {
         console.error('[User] Balance logs error:', err.message);
         res.status(500).json({ error: '获取余额记录失败' });
+    }
+});
+
+/**
+ * GET /api/user/notifications
+ */
+router.get('/notifications', authenticate, async (req, res) => {
+    try {
+        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
+        const result = await notificationService.listUserNotifications(req.user.id, { page, limit });
+        res.json(result);
+    } catch (err) {
+        console.error('[User] Notifications error:', err.message);
+        res.status(500).json({ error: '获取通知失败' });
+    }
+});
+
+/**
+ * POST /api/user/notifications/read-all
+ */
+router.post('/notifications/read-all', authenticate, async (req, res) => {
+    try {
+        const result = await notificationService.markAllUserNotificationsRead(req.user.id);
+        res.json({ message: '已全部标记为已读', updated: result.updated, unreadCount: 0 });
+    } catch (err) {
+        console.error('[User] Mark all notifications read error:', err.message);
+        res.status(500).json({ error: '操作失败' });
+    }
+});
+
+/**
+ * POST /api/user/notifications/:id/read
+ */
+router.post('/notifications/:id/read', authenticate, [
+    param('id').isInt({ min: 1 }).withMessage('通知ID无效')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    try {
+        const notification = await notificationService.markUserNotificationRead(req.user.id, Number(req.params.id));
+        if (!notification) return res.status(404).json({ error: '通知不存在' });
+        res.json({ message: '已标记为已读', notification });
+    } catch (err) {
+        console.error('[User] Mark notification read error:', err.message);
+        res.status(500).json({ error: '操作失败' });
     }
 });
 

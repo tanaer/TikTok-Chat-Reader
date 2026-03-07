@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <meta name="robots" content="noindex,nofollow">
+    <title>订单确认</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root { color-scheme: dark; }
+        body {
+            min-height: 100vh;
+            background:
+                radial-gradient(circle at top, rgba(59, 130, 246, 0.18), transparent 30%),
+                linear-gradient(180deg, #111827 0%, #0b1220 100%);
+            color: #e5edf8;
+            font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+        }
+        .review-shell {
+            width: min(100%, 30rem);
+            margin: 0 auto;
+            padding: 1rem;
+        }
+        .review-card {
+            border-radius: 24px;
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            background: rgba(15, 23, 42, 0.96);
+            box-shadow: 0 24px 60px rgba(0, 0, 0, 0.32);
+        }
+        .review-item {
+            border-radius: 16px;
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            background: rgba(8, 15, 30, 0.85);
+            padding: 0.9rem 1rem;
+        }
+        .review-item span {
+            display: block;
+            color: rgba(226, 232, 240, 0.58);
+            font-size: 0.76rem;
+            margin-bottom: 0.35rem;
+        }
+        .review-item strong {
+            display: block;
+            color: #f8fafc;
+            font-size: 0.96rem;
+            font-weight: 700;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center py-8 px-4">
+    <div class="review-shell">
+        <div class="review-card p-5 sm:p-6">
+            <div class="flex items-start justify-between gap-4 mb-5">
+                <div>
+                    <div class="text-xs uppercase tracking-[0.24em] text-slate-400 mb-2">Mobile Review</div>
+                    <h1 class="text-2xl font-bold text-white">订单确认</h1>
+                </div>
+                <span id="order-status-badge" class="badge badge-ghost">待加载</span>
+            </div>
+
+            <div id="review-loading" class="py-12 text-center">
+                <span class="loading loading-spinner loading-lg"></span>
+                <p class="mt-4 text-sm text-slate-400">正在读取订单信息...</p>
+            </div>
+
+            <div id="review-error" class="alert alert-error hidden text-sm"></div>
+
+            <div id="review-content" class="hidden space-y-4">
+                <div class="grid grid-cols-1 gap-3">
+                    <div class="review-item">
+                        <span>订单号</span>
+                        <strong id="review-order-no">-</strong>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="review-item">
+                            <span>用户</span>
+                            <strong id="review-username">-</strong>
+                        </div>
+                        <div class="review-item">
+                            <span>充值通道</span>
+                            <strong id="review-label">-</strong>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="review-item">
+                            <span>金额</span>
+                            <strong id="review-amount">-</strong>
+                        </div>
+                        <div class="review-item">
+                            <span>状态</span>
+                            <strong id="review-status">-</strong>
+                        </div>
+                    </div>
+                    <div class="review-item">
+                        <span>创建时间</span>
+                        <strong id="review-created-at">-</strong>
+                    </div>
+                    <div class="review-item">
+                        <span>说明</span>
+                        <strong id="review-instruction">-</strong>
+                    </div>
+                </div>
+
+                <button id="review-confirm-btn" class="btn btn-success btn-block btn-lg" onclick="markPaid()">标记已支付</button>
+                <button id="review-refresh-btn" class="btn btn-ghost btn-block" onclick="loadOrder()">刷新状态</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const statusMap = {
+            pending: { text: '待支付', badge: 'badge-warning', color: 'text-warning' },
+            paid: { text: '已支付', badge: 'badge-success', color: 'text-success' },
+            cancelled: { text: '已取消', badge: 'badge-ghost', color: 'text-base-content/60' },
+            failed: { text: '失败', badge: 'badge-error', color: 'text-error' }
+        };
+
+        const token = new URLSearchParams(window.location.search).get('token') || '';
+        let currentOrder = null;
+
+        function setLoading(loading) {
+            document.getElementById('review-loading').classList.toggle('hidden', !loading);
+            if (loading) {
+                document.getElementById('review-error').classList.add('hidden');
+                document.getElementById('review-content').classList.add('hidden');
+            }
+        }
+
+        function showError(message) {
+            setLoading(false);
+            const errorEl = document.getElementById('review-error');
+            errorEl.textContent = message || '读取失败';
+            errorEl.classList.remove('hidden');
+            document.getElementById('review-content').classList.add('hidden');
+        }
+
+        function renderOrder(order) {
+            currentOrder = order;
+            setLoading(false);
+            document.getElementById('review-error').classList.add('hidden');
+            document.getElementById('review-content').classList.remove('hidden');
+
+            const statusMeta = statusMap[order.status] || { text: order.status || '-', badge: 'badge-ghost', color: '' };
+            const badge = document.getElementById('order-status-badge');
+            badge.className = `badge ${statusMeta.badge}`;
+            badge.textContent = statusMeta.text;
+
+            document.getElementById('review-order-no').textContent = order.orderNo || '-';
+            document.getElementById('review-username').textContent = order.username || '-';
+            document.getElementById('review-label').textContent = order.label || '-';
+            document.getElementById('review-amount').textContent = `¥${Number(order.amount || 0).toFixed(2)}`;
+            document.getElementById('review-status').textContent = statusMeta.text;
+            document.getElementById('review-status').className = `block font-bold ${statusMeta.color}`;
+            document.getElementById('review-created-at').textContent = order.createdAt ? new Date(order.createdAt).toLocaleString('zh-CN') : '-';
+            document.getElementById('review-instruction').textContent = order.instructions || '请确认到账后再处理。';
+
+            const confirmBtn = document.getElementById('review-confirm-btn');
+            const paid = order.status === 'paid';
+            confirmBtn.disabled = paid;
+            confirmBtn.textContent = paid ? '已处理完成' : '标记已支付';
+        }
+
+        async function loadOrder() {
+            if (!token) {
+                showError('缺少确认令牌');
+                return;
+            }
+            setLoading(true);
+            try {
+                const res = await fetch(`/api/payment/manual-review?token=${encodeURIComponent(token)}`, {
+                    cache: 'no-store'
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '读取订单失败');
+                renderOrder(data.order);
+            } catch (err) {
+                showError(err.message || '读取订单失败');
+            }
+        }
+
+        async function markPaid() {
+            if (!token) {
+                showError('缺少确认令牌');
+                return;
+            }
+            const btn = document.getElementById('review-confirm-btn');
+            btn.disabled = true;
+            btn.classList.add('loading');
+            try {
+                const res = await fetch('/api/payment/manual-review/mark-paid', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token })
+                });
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '处理失败');
+                renderOrder(data.order);
+                alert(data.message || '订单已标记为支付成功');
+            } catch (err) {
+                alert(err.message || '处理失败');
+                await loadOrder();
+            } finally {
+                btn.classList.remove('loading');
+            }
+        }
+
+        loadOrder();
+    </script>
+</body>
+</html>

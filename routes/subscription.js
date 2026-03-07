@@ -108,7 +108,7 @@ router.get('/ai-credit-packages', async (req, res) => {
  * POST /api/subscription/purchase-ai-credits - buy AI credit package
  */
 router.post('/purchase-ai-credits', authenticate, [
-    body('packageId').isInt({ min: 1 }).withMessage('请选择额度包'),
+    body('packageId').isInt({ min: 1 }).withMessage('请选择点数包'),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
@@ -116,13 +116,13 @@ router.post('/purchase-ai-credits', authenticate, [
     try {
         const { packageId } = req.body;
         const pkg = await db.get('SELECT * FROM ai_credit_packages WHERE id = ? AND is_active = true', [packageId]);
-        if (!pkg) return res.status(404).json({ error: '额度包不存在或已下架' });
+        if (!pkg) return res.status(404).json({ error: '点数包不存在或已下架' });
 
         const price = Number(pkg.priceCents);
         const balanceService = require('../services/balanceService');
         const purchase = await balanceService.purchaseWithBalance(
             req.user.id, price, 'ai_credits', pkg.name,
-            `AI分析额度: ${pkg.name}, ${pkg.credits}次`
+            `AI点数: ${pkg.name}, ${pkg.credits}点`
         );
         if (!purchase.success) return res.status(400).json(purchase);
 

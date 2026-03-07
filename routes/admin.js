@@ -1,16 +1,80 @@
 const express = require('express');
+const fs = require('fs/promises');
+const path = require('path');
 const { body, query: queryValidator, validationResult } = require('express-validator');
 const db = require('../db');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const authService = require('../services/authService');
 const balanceService = require('../services/balanceService');
 const emailService = require('../services/emailService');
+const quotaService = require('../services/quotaService');
 const keyManager = require('../utils/keyManager');
 
 const router = express.Router();
 
 // All admin routes require authentication + admin role
 router.use(authenticate, requireAdmin);
+
+const DOCS_ROOT = path.resolve(__dirname, '..', 'docs');
+
+function normalizeDocRelativePath(input) {
+    return String(input || '')
+        .replace(/\\/g, '/')
+        .replace(/^\/+/, '')
+        .trim();
+}
+
+function resolveDocPath(relativePath) {
+    const normalized = normalizeDocRelativePath(relativePath);
+    if (!normalized) return null;
+    const fullPath = path.resolve(DOCS_ROOT, normalized);
+    const docsPrefix = `${DOCS_ROOT}${path.sep}`;
+    if (fullPath !== DOCS_ROOT && !fullPath.startsWith(docsPrefix)) {
+        return null;
+    }
+    return { normalized, fullPath };
+}
+
+function extractDocTitle(markdown, fallbackName) {
+    const match = String(markdown || '').match(/^#\s+(.+)$/m);
+    if (match && match[1]) return match[1].trim();
+    return fallbackName;
+}
+
+async function collectMarkdownFiles(dirPath, prefix = '') {
+    let entries = [];
+    try {
+        entries = await fs.readdir(dirPath, { withFileTypes: true });
+    } catch (err) {
+        if (err.code === 'ENOENT') return [];
+        throw err;
+    }
+
+    const files = [];
+    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'))) {
+        if (entry.name.startsWith('.')) continue;
+        const relativePath = prefix ? `${prefix}/${entry.name}` : entry.name;
+        const fullPath = path.join(dirPath, entry.name);
+        if (entry.isDirectory()) {
+            files.push(...await collectMarkdownFiles(fullPath, relativePath));
+            continue;
+        }
+        if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.md')) continue;
+
+        const [content, stat] = await Promise.all([
+            fs.readFile(fullPath, 'utf8'),
+            fs.stat(fullPath),
+        ]);
+        files.push({
+            path: relativePath.replace(/\\/g, '/'),
+            title: extractDocTitle(content, path.basename(entry.name, path.extname(entry.name))),
+            updatedAt: stat.mtime.toISOString(),
+            size: stat.size,
+        });
+    }
+
+    return files;
+}
 
 // ==================== Dashboard Stats ====================
 
@@ -41,6 +105,45 @@ router.get('/stats', async (req, res) => {
     } catch (err) {
         console.error('[Admin] Stats error:', err.message);
         res.status(500).json({ error: '获取统计失败' });
+    }
+});
+
+router.get('/docs', async (req, res) => {
+    try {
+        const docs = await collectMarkdownFiles(DOCS_ROOT);
+        res.json({ docs });
+    } catch (err) {
+        console.error('[Admin] Docs list error:', err.message);
+        res.status(500).json({ error: '获取文档列表失败' });
+    }
+});
+
+router.get('/docs/content', async (req, res) => {
+    try {
+        const resolved = resolveDocPath(req.query.path);
+        if (!resolved) {
+            return res.status(400).json({ error: '文档路径无效' });
+        }
+
+        const stat = await fs.stat(resolved.fullPath).catch(() => null);
+        if (!stat || !stat.isFile()) {
+            return res.status(404).json({ error: '文档不存在' });
+        }
+        if (!resolved.fullPath.toLowerCase().endsWith('.md')) {
+            return res.status(400).json({ error: '仅支持 Markdown 文档' });
+        }
+
+        const content = await fs.readFile(resolved.fullPath, 'utf8');
+        res.json({
+            path: resolved.normalized,
+            title: extractDocTitle(content, path.basename(resolved.normalized, path.extname(resolved.normalized))),
+            updatedAt: stat.mtime.toISOString(),
+            size: stat.size,
+            content,
+        });
+    } catch (err) {
+        console.error('[Admin] Docs content error:', err.message);
+        res.status(500).json({ error: '获取文档内容失败' });
     }
 });
 
@@ -88,7 +191,7 @@ router.get('/users', async (req, res) => {
         // Get room counts and subscription info for each user
         const users = [];
         for (const u of usersResult.rows) {
-            const roomCount = await db.get('SELECT COUNT(*) AS count FROM user_room WHERE user_id = ?', [u.id]);
+            const roomCount = await db.get('SELECT COUNT(*) AS count FROM user_room WHERE user_id = ? AND deleted_at IS NULL', [u.id]);
             const sub = await db.get(
                 `SELECT p.name AS plan_name, us.end_date FROM user_subscriptions us
                  JOIN subscription_plans p ON us.plan_id = p.id
@@ -125,14 +228,18 @@ router.get('/users/:id', async (req, res) => {
         );
         if (!user) return res.status(404).json({ error: '用户不存在' });
 
-        const [subscriptions, rooms, recentOrders, recentBalance] = await Promise.all([
+        const [subscriptions, rooms, recentBalance, quota] = await Promise.all([
             db.all(`SELECT us.*, p.name AS plan_name FROM user_subscriptions us JOIN subscription_plans p ON us.plan_id = p.id WHERE us.user_id = ? ORDER BY us.created_at DESC LIMIT 10`, [user.id]),
-            db.all(`SELECT ur.*, r.name AS room_name FROM user_room ur LEFT JOIN room r ON ur.room_id = r.room_id WHERE ur.user_id = ? ORDER BY ur.created_at DESC`, [user.id]),
-            db.all(`SELECT * FROM payment_records WHERE user_id = ? ORDER BY created_at DESC LIMIT 10`, [user.id]),
+            db.all(`SELECT ur.*, r.name AS room_name
+                    FROM user_room ur
+                    LEFT JOIN room r ON ur.room_id = r.room_id
+                    WHERE ur.user_id = ? AND ur.deleted_at IS NULL
+                    ORDER BY ur.created_at DESC`, [user.id]),
             db.all(`SELECT * FROM balance_log WHERE user_id = ? ORDER BY created_at DESC LIMIT 10`, [user.id]),
+            quotaService.getUserQuota(user.id),
         ]);
 
-        res.json({ user, subscriptions, rooms, recentOrders, recentBalance });
+        res.json({ user, subscriptions, rooms, recentBalance, quota });
     } catch (err) {
         console.error('[Admin] User detail error:', err.message);
         res.status(500).json({ error: '获取用户详情失败' });
@@ -172,6 +279,97 @@ router.put('/users/:id', async (req, res) => {
     } catch (err) {
         console.error('[Admin] Update user error:', err.message);
         res.status(500).json({ error: '更新失败' });
+    }
+});
+
+/**
+ * PUT /api/admin/users/:id/quota-overrides
+ */
+router.put('/users/:id/quota-overrides', async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ error: '用户ID无效' });
+        }
+
+        const user = await db.get('SELECT id FROM users WHERE id = ?', [userId]);
+        if (!user) {
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        const hasOwn = (key) => Object.prototype.hasOwnProperty.call(req.body || {}, key);
+        const supportedKeys = [
+            'roomLimitPermanent',
+            'roomLimitTemporary',
+            'roomLimitTemporaryExpiresAt',
+            'openRoomLimitPermanent',
+            'openRoomLimitTemporary',
+            'openRoomLimitTemporaryExpiresAt',
+            'dailyRoomCreateLimitPermanent',
+            'dailyRoomCreateLimitTemporary',
+            'dailyRoomCreateLimitTemporaryExpiresAt'
+        ];
+        if (!supportedKeys.some(hasOwn)) {
+            return res.status(400).json({ error: '没有可保存的配额字段' });
+        }
+
+        const parseLimit = (value, fieldLabel) => {
+            if (value === '' || value === null || value === undefined) return null;
+            const parsed = Number(value);
+            if (!Number.isInteger(parsed) || parsed < -1) {
+                throw new Error(`${fieldLabel}必须是大于等于 -1 的整数`);
+            }
+            return parsed;
+        };
+        const parseDate = (value, fieldLabel) => {
+            if (value === '' || value === null || value === undefined) return null;
+            const dt = new Date(value);
+            if (Number.isNaN(dt.getTime())) {
+                throw new Error(`${fieldLabel}无效`);
+            }
+            return dt.toISOString();
+        };
+
+        let payload;
+        try {
+            payload = {};
+            if (hasOwn('roomLimitPermanent')) payload.room_limit_permanent = parseLimit(req.body.roomLimitPermanent, '永久可建房间数');
+            if (hasOwn('roomLimitTemporary')) payload.room_limit_temporary = parseLimit(req.body.roomLimitTemporary, '临时可建房间数');
+            if (hasOwn('roomLimitTemporaryExpiresAt')) payload.room_limit_temporary_expires_at = parseDate(req.body.roomLimitTemporaryExpiresAt, '可建房间数临时到期时间');
+            if (hasOwn('openRoomLimitPermanent')) payload.open_room_limit_permanent = parseLimit(req.body.openRoomLimitPermanent, '永久可打开房间数');
+            if (hasOwn('openRoomLimitTemporary')) payload.open_room_limit_temporary = parseLimit(req.body.openRoomLimitTemporary, '临时可打开房间数');
+            if (hasOwn('openRoomLimitTemporaryExpiresAt')) payload.open_room_limit_temporary_expires_at = parseDate(req.body.openRoomLimitTemporaryExpiresAt, '可打开房间数临时到期时间');
+            if (hasOwn('dailyRoomCreateLimitPermanent')) payload.daily_room_create_limit_permanent = parseLimit(req.body.dailyRoomCreateLimitPermanent, '永久每日可添加次数');
+            if (hasOwn('dailyRoomCreateLimitTemporary')) payload.daily_room_create_limit_temporary = parseLimit(req.body.dailyRoomCreateLimitTemporary, '临时每日可添加次数');
+            if (hasOwn('dailyRoomCreateLimitTemporaryExpiresAt')) payload.daily_room_create_limit_temporary_expires_at = parseDate(req.body.dailyRoomCreateLimitTemporaryExpiresAt, '每日可添加次数临时到期时间');
+        } catch (parseErr) {
+            return res.status(400).json({ error: parseErr.message });
+        }
+
+        const insertCols = ['user_id', ...Object.keys(payload), 'updated_at'];
+        const insertParams = [userId, ...Object.values(payload)];
+        const insertVals = ['$1'];
+        for (let i = 0; i < Object.keys(payload).length; i += 1) {
+            insertVals.push(`$${i + 2}`);
+        }
+        insertVals.push('NOW()');
+
+        const updateCols = Object.keys(payload).map(column => `${column} = EXCLUDED.${column}`);
+        updateCols.push('updated_at = NOW()');
+
+        await db.pool.query(
+            `INSERT INTO user_quota_overrides (${insertCols.join(', ')})
+             VALUES (${insertVals.join(', ')})
+             ON CONFLICT (user_id) DO UPDATE
+             SET ${updateCols.join(', ')}`,
+            insertParams
+        );
+
+        const quota = await quotaService.getUserQuota(userId);
+        return res.json({ message: '配额调整已保存', quota });
+    } catch (err) {
+        console.error('[Admin] Update quota overrides error:', err.message);
+        return res.status(500).json({ error: '保存配额调整失败' });
     }
 });
 

@@ -787,7 +787,7 @@ async function startBatchAI(forceReanalyze) {
                                 // Stop entire batch - no credits left
                                 queue.length = 0;
                                 errors++;
-                                $('#batchAIErrors').show().text('AI 分析次数已用完，批量分析中止');
+                                $('#batchAIErrors').show().text('AI 点数不足，批量分析中止');
                                 break;
                             }
                             errors++;

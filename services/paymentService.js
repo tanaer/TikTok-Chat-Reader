@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const db = require('../db');
+const { JWT_SECRET } = require('../middleware/auth');
 const { generateOrderNo } = require('./balanceService');
+const notificationService = require('./notificationService');
 
 const GENERIC_CHANNEL_LABELS = {
     fixed_qr: '固定码',
@@ -13,6 +15,45 @@ const GENERIC_METHOD_LABELS = {
     wxpay: '微信',
     usdt: 'USDT'
 };
+
+const BEPUSDT_TRADE_TYPE_OPTIONS = [
+    'usdt.trc20',
+    'usdt.bep20',
+    'usdt.solana'
+];
+
+const BEPUSDT_TRADE_TYPE_ALIAS_MAP = {
+    'usdt.trc20': 'usdt.trc20',
+    'usdt-trc20': 'usdt.trc20',
+    'usdt_trc20': 'usdt.trc20',
+    usdttrc20: 'usdt.trc20',
+    trc20: 'usdt.trc20',
+    trc: 'usdt.trc20',
+    'usdt.bep20': 'usdt.bep20',
+    'usdt-bep20': 'usdt.bep20',
+    'usdt_bep20': 'usdt.bep20',
+    usdtbep20: 'usdt.bep20',
+    bep20: 'usdt.bep20',
+    bsc: 'usdt.bep20',
+    'usdt.solana': 'usdt.solana',
+    'usdt-solana': 'usdt.solana',
+    'usdt_solana': 'usdt.solana',
+    usdtsolana: 'usdt.solana',
+    solana: 'usdt.solana',
+    sol: 'usdt.solana'
+};
+
+
+const DEFAULT_RECHARGE_QUICK_AMOUNTS = [50, 100, 200, 500, 1000];
+const PUSHPLUS_DEFAULT_API_URL = 'https://www.pushplus.plus/batchSend';
+const PUSHPLUS_DEFAULT_CHANNEL = 'app';
+const MOBILE_REVIEW_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
+const MOBILE_REVIEW_TOKEN_PURPOSE = 'payment_manual_review';
+const MOBILE_REVIEW_PAGE_PATH = 'payment-manual-review.html';
+const MOBILE_REVIEW_SIGN_SECRET = crypto
+    .createHash('sha256')
+    .update(`${JWT_SECRET}:payment-manual-review:v1`)
+    .digest();
 
 function md5Lowercase(input) {
     return crypto.createHash('md5').update(String(input), 'utf8').digest('hex');
@@ -27,6 +68,18 @@ function normalizeString(value) {
     return String(value).trim();
 }
 
+function normalizeExternalUrl(value) {
+    const raw = normalizeString(value);
+    if (!raw || !/^https?:\/\//i.test(raw)) return raw;
+    try {
+        const parsed = new URL(raw);
+        parsed.pathname = parsed.pathname.replace(/\/{2,}/g, '/');
+        return parsed.toString();
+    } catch {
+        return raw.replace(/(^https?:\/\/[^/]+)\/{2,}/i, '$1/');
+    }
+}
+
 function toSafeAmount(value) {
     const amount = Number(value);
     if (!Number.isFinite(amount)) return NaN;
@@ -39,6 +92,21 @@ function normalizePositiveAmount(value, fallback = null) {
     return amount;
 }
 
+function normalizeRechargeQuickAmounts(value, fallback = DEFAULT_RECHARGE_QUICK_AMOUNTS) {
+    const rawList = Array.isArray(value)
+        ? value
+        : normalizeString(value).split(/[，,\s|/]+/).filter(Boolean);
+
+    const uniqueAmounts = [];
+    for (const item of rawList) {
+        const amount = normalizePositiveAmount(item, null);
+        if (!amount || uniqueAmounts.includes(amount)) continue;
+        uniqueAmounts.push(amount);
+    }
+
+    return uniqueAmounts.length > 0 ? uniqueAmounts : [...fallback];
+}
+
 function normalizeAmountRange(minValue, maxValue, fallbackMin = 1) {
     const minAmount = Math.max(1, normalizePositiveAmount(minValue, fallbackMin) || fallbackMin);
     let maxAmount = normalizePositiveAmount(maxValue, null);
@@ -46,6 +114,52 @@ function normalizeAmountRange(minValue, maxValue, fallbackMin = 1) {
         maxAmount = minAmount;
     }
     return { minAmount, maxAmount };
+}
+
+function getDefaultPaymentOpenMode(channel = '') {
+    return channel === 'bepusdt' ? 'redirect' : 'qrcode';
+}
+
+function normalizePaymentOpenMode(value, fallback = 'qrcode') {
+    const safeFallback = normalizeString(fallback).toLowerCase() === 'redirect' ? 'redirect' : 'qrcode';
+    const raw = normalizeString(value).toLowerCase();
+    if (raw === 'redirect') return 'redirect';
+    if (raw === 'qrcode') return 'qrcode';
+    return safeFallback;
+}
+
+function getChannelPaymentOpenMode(config, channel) {
+    if (channel === 'futong') {
+        return normalizePaymentOpenMode(config?.futong?.openMode, getDefaultPaymentOpenMode(channel));
+    }
+    if (channel === 'bepusdt') {
+        return normalizePaymentOpenMode(config?.bepusdt?.openMode, getDefaultPaymentOpenMode(channel));
+    }
+    return 'qrcode';
+}
+
+function normalizeBepusdtTradeType(value, fallback = 'usdt.bep20') {
+    const fallbackValue = BEPUSDT_TRADE_TYPE_OPTIONS.includes(fallback) ? fallback : 'usdt.bep20';
+    const raw = normalizeString(value).toLowerCase();
+    if (!raw) return fallbackValue;
+
+    const candidates = raw
+        .split(/[\n,，|/]+/)
+        .map(item => item.trim())
+        .filter(Boolean);
+
+    for (const candidate of candidates) {
+        const compact = candidate.replace(/\s+/g, '');
+        const mapped = BEPUSDT_TRADE_TYPE_ALIAS_MAP[compact] || BEPUSDT_TRADE_TYPE_ALIAS_MAP[compact.replace(/[-_]/g, '.')] || '';
+        if (mapped && BEPUSDT_TRADE_TYPE_OPTIONS.includes(mapped)) {
+            return mapped;
+        }
+        if (BEPUSDT_TRADE_TYPE_OPTIONS.includes(compact)) {
+            return compact;
+        }
+    }
+
+    return fallbackValue;
 }
 
 function serializeAmountSetting(value, { allowEmpty = false, fallback = '' } = {}) {
@@ -82,9 +196,10 @@ function signFutong(params, secretKey) {
 }
 
 function signBepusdt(params, signSecret) {
-    const plain = buildQueryStringForSign(params, ['signature']);
+    const plain = buildQueryStringForSign(params, ['signature', 'sign']);
     return md5Lowercase(`${plain}${signSecret}`);
 }
+
 
 function parseJsonSafe(text) {
     try {
@@ -92,6 +207,233 @@ function parseJsonSafe(text) {
     } catch {
         return null;
     }
+}
+
+function escapePushplusHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function normalizePushplusChannel(value) {
+    return normalizeString(value) || PUSHPLUS_DEFAULT_CHANNEL;
+}
+
+function base64UrlEncodeJson(value) {
+    return Buffer.from(JSON.stringify(value), 'utf8').toString('base64url');
+}
+
+function parseBase64UrlJson(value) {
+    try {
+        return JSON.parse(Buffer.from(String(value || ''), 'base64url').toString('utf8'));
+    } catch {
+        return null;
+    }
+}
+
+function signMobileReviewTokenBody(body) {
+    return crypto.createHmac('sha256', MOBILE_REVIEW_SIGN_SECRET).update(String(body || ''), 'utf8').digest('base64url');
+}
+
+function createMobileReviewToken(orderNo, expiresAt = Date.now() + MOBILE_REVIEW_TOKEN_TTL_MS) {
+    const body = base64UrlEncodeJson({
+        purpose: MOBILE_REVIEW_TOKEN_PURPOSE,
+        orderNo: normalizeString(orderNo),
+        exp: Number(expiresAt) || (Date.now() + MOBILE_REVIEW_TOKEN_TTL_MS)
+    });
+    return `${body}.${signMobileReviewTokenBody(body)}`;
+}
+
+function verifyMobileReviewToken(token) {
+    const raw = normalizeString(token);
+    if (!raw || !raw.includes('.')) return null;
+    const [body, signature] = raw.split('.');
+    if (!body || !signature) return null;
+    const expected = signMobileReviewTokenBody(body);
+    const actualBuffer = Buffer.from(signature, 'utf8');
+    const expectedBuffer = Buffer.from(expected, 'utf8');
+    if (actualBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(actualBuffer, expectedBuffer)) {
+        return null;
+    }
+    const payload = parseBase64UrlJson(body);
+    if (!payload || payload.purpose !== MOBILE_REVIEW_TOKEN_PURPOSE) return null;
+    const exp = Number(payload.exp || 0);
+    if (!Number.isFinite(exp) || exp <= Date.now()) return null;
+    const orderNo = normalizeString(payload.orderNo);
+    if (!orderNo) return null;
+    return { orderNo, exp };
+}
+
+function buildMobileReviewLink(baseUrl, token) {
+    return `${joinUrl(baseUrl, MOBILE_REVIEW_PAGE_PATH)}?token=${encodeURIComponent(token)}`;
+}
+
+function isManualReviewOrder(order, metadata) {
+    return order?.type === 'recharge' && metadata?.manualReview === true && metadata?.channel === 'fixed_qr';
+}
+
+function serializeManualReviewOrder(row) {
+    const { order, metadata, label } = buildSerializedOrderState(row);
+    return {
+        id: order.id,
+        orderNo: order.orderNo,
+        username: order.username || order.userNickname || '-',
+        amount: Number(order.amount || 0),
+        status: order.status,
+        createdAt: order.createdAt,
+        paidAt: order.paidAt,
+        itemName: order.itemName,
+        label,
+        instructions: metadata.instructions || '',
+        manualReview: metadata.manualReview === true,
+        manualReviewRequestedAt: metadata.manualReviewRequestedAt || '',
+        manualReviewNotifiedAt: metadata.manualReviewNotifiedAt || '',
+        manualReviewLinkExpiresAt: metadata.manualReviewLinkExpiresAt || ''
+    };
+}
+
+async function getOrderRowByOrderNo(orderNo) {
+    const result = await db.pool.query(
+        `SELECT o.*, u.username, u.nickname AS user_nickname
+         FROM payment_records o
+         LEFT JOIN users u ON o.user_id = u.id
+         WHERE o.order_no = $1
+         LIMIT 1`,
+        [orderNo]
+    );
+    return result.rows[0] || null;
+}
+
+async function getUserOrderRow(userId, orderNo) {
+    const result = await db.pool.query(
+        `SELECT o.*, u.username, u.nickname AS user_nickname
+         FROM payment_records o
+         LEFT JOIN users u ON o.user_id = u.id
+         WHERE o.order_no = $1 AND o.user_id = $2
+         LIMIT 1`,
+        [orderNo, userId]
+    );
+    return result.rows[0] || null;
+}
+
+function buildPushplusContent(order, link) {
+    const safeLink = normalizeExternalUrl(link) || link;
+    const displayLink = escapePushplusHtml(safeLink || '');
+    const createdAt = order.createdAt ? new Date(order.createdAt).toLocaleString('zh-CN') : '-';
+
+    return {
+        title: '固定码订单待确认',
+        template: 'html',
+        content: `
+<div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;color:#0f172a;padding:0;margin:0;">
+  <div style="max-width:560px;margin:0 auto;border:1px solid #dbeafe;border-radius:18px;overflow:hidden;background:#f8fbff;">
+    <div style="padding:18px 20px;background:linear-gradient(135deg,#eff6ff,#dbeafe);border-bottom:1px solid #dbeafe;">
+      <div style="display:inline-block;padding:4px 10px;border-radius:999px;background:#2563eb;color:#ffffff;font-size:12px;font-weight:700;letter-spacing:.02em;">待确认</div>
+      <div style="font-size:20px;font-weight:800;color:#0f172a;margin-top:12px;">固定码订单待处理</div>
+      <div style="font-size:13px;color:#475569;margin-top:6px;">请点击下方按钮进入移动处理页。</div>
+    </div>
+    <div style="padding:18px 20px;line-height:1.75;">
+      <div style="margin-bottom:8px;"><strong>订单号：</strong>${escapePushplusHtml(order.orderNo || '-')}</div>
+      <div style="margin-bottom:8px;"><strong>用户：</strong>${escapePushplusHtml(order.username || '-')}</div>
+      <div style="margin-bottom:8px;"><strong>金额：</strong>¥${Number(order.amount || 0).toFixed(2)}</div>
+      <div style="margin-bottom:8px;"><strong>通道：</strong>${escapePushplusHtml(order.label || '-')}</div>
+      <div style="margin-bottom:16px;"><strong>时间：</strong>${escapePushplusHtml(createdAt)}</div>
+      <div style="margin-bottom:16px;">
+        <a href="${safeLink}" style="display:block;width:100%;box-sizing:border-box;text-align:center;padding:13px 16px;background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#ffffff;text-decoration:none;border-radius:12px;font-weight:800;font-size:15px;">打开处理链接</a>
+      </div>
+      <div style="padding:12px 14px;border-radius:12px;background:#ffffff;border:1px dashed #93c5fd;">
+        <div style="font-size:12px;font-weight:700;color:#64748b;margin-bottom:6px;">备用链接</div>
+        <div style="font-size:12px;color:#334155;word-break:break-all;">${displayLink}</div>
+      </div>
+    </div>
+  </div>
+</div>`.trim()
+    };
+}
+
+async function sendPushplusMessage(config, messageInput) {
+    const endpoint = normalizeString(config?.pushplus?.apiUrl) || PUSHPLUS_DEFAULT_API_URL;
+    const token = normalizeString(config?.pushplus?.token);
+    if (!token) {
+        throw createGatewayError('PushPlus Token 未配置', { publicMessage: '支付确认提交失败，请联系管理员处理' });
+    }
+
+    const message = typeof messageInput === 'object' && messageInput
+        ? messageInput
+        : { title: '消息通知', template: 'html', content: normalizeString(messageInput) };
+
+    const payload = new URLSearchParams({
+        channel: normalizePushplusChannel(config?.pushplus?.channel),
+        token,
+        title: normalizeString(message.title) || '消息通知',
+        template: normalizeString(message.template) || 'html',
+        content: normalizeString(message.content)
+    });
+
+    const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
+        body: payload.toString()
+    });
+
+    const text = await response.text();
+    const parsed = parseJsonSafe(text) || { raw: text };
+    const code = Number(parsed.code);
+    const responseMessage = normalizeString(parsed.msg || parsed.message || parsed.data || '');
+    const success = response.ok && (
+        !Number.isFinite(code)
+        || code === 200
+        || code === 0
+        || code === 1
+        || /成功|success/i.test(responseMessage)
+    );
+
+    if (!success) {
+        throw createGatewayError(
+            responseMessage || `PushPlus 发送失败: HTTP ${response.status}`,
+            { responseStatus: response.status, upstreamResponse: parsed, publicMessage: '支付确认提交失败，请联系管理员处理' }
+        );
+    }
+
+    return {
+        responseStatus: response.status,
+        raw: parsed
+    };
+}
+
+
+function normalizeBepusdtNotifyPayload(payload) {
+    const base = payload && typeof payload === 'object' ? { ...payload } : {};
+    const nested = typeof base.data === 'string'
+        ? parseJsonSafe(base.data)
+        : (base.data && typeof base.data === 'object' ? base.data : null);
+    const normalized = nested && typeof nested === 'object' && !Array.isArray(nested)
+        ? { ...nested, ...base, data: nested }
+        : base;
+
+    if (!normalized.signature) {
+        normalized.signature = normalizeString(base.signature || base.sign || nested?.signature || nested?.sign);
+    }
+    if (!normalized.order_id) {
+        normalized.order_id = normalizeString(
+            base.order_id || base.orderId || base.order_no || base.orderNo || base.out_trade_no || base.outTradeNo ||
+            nested?.order_id || nested?.orderId || nested?.order_no || nested?.orderNo || nested?.out_trade_no || nested?.outTradeNo ||
+            base.merchant_order_id || base.merchantOrderId || nested?.merchant_order_id || nested?.merchantOrderId
+        );
+    }
+    if (!normalized.transaction_hash) {
+        normalized.transaction_hash = normalizeString(
+            base.transaction_hash || base.transactionHash || base.txid || base.tx_id ||
+            nested?.transaction_hash || nested?.transactionHash || nested?.txid || nested?.tx_id ||
+            base.trade_id || base.tradeId || nested?.trade_id || nested?.tradeId ||
+            base.block_transaction_id || base.blockTransactionId || nested?.block_transaction_id || nested?.blockTransactionId
+        );
+    }
+
+    return normalized;
 }
 
 function createDisplayLabel(channel, method) {
@@ -116,12 +458,20 @@ function getPublicBaseUrl(req) {
     return `${proto}://${host}`;
 }
 
+function normalizeClientIp(value) {
+    const raw = normalizeString(value);
+    if (!raw) return '127.0.0.1';
+    if (raw === '::1') return '127.0.0.1';
+    if (raw.startsWith('::ffff:')) return raw.slice(7);
+    return raw;
+}
+
 function getClientIp(req) {
     const xForwardedFor = normalizeString(req.headers['x-forwarded-for']);
     if (xForwardedFor) {
-        return xForwardedFor.split(',')[0].trim();
+        return normalizeClientIp(xForwardedFor.split(',')[0].trim());
     }
-    return normalizeString(req.ip || req.socket?.remoteAddress || '127.0.0.1') || '127.0.0.1';
+    return normalizeClientIp(req.ip || req.socket?.remoteAddress || '127.0.0.1');
 }
 
 function joinUrl(baseUrl, pathname) {
@@ -137,28 +487,35 @@ function maskSecret(secret, keepStart = 4, keepEnd = 4) {
 
 function normalizePaymentConfig(settings = {}, baseUrl = '') {
     const minRechargeAmount = Math.max(1, normalizePositiveAmount(settings.min_recharge_amount || settings.minRechargeAmount, 1) || 1);
+    const quickAmounts = normalizeRechargeQuickAmounts(settings.payment_quick_amounts || settings.paymentQuickAmounts);
     const fixedWechatEnabled = normalizeBoolean(settings.payment_fixed_wechat_enabled);
     const fixedAlipayEnabled = normalizeBoolean(settings.payment_fixed_alipay_enabled);
     const futongEnabled = normalizeBoolean(settings.payment_futong_enabled);
     const futongAlipayEnabled = normalizeBoolean(settings.payment_futong_alipay_enabled);
     const futongWxpayEnabled = normalizeBoolean(settings.payment_futong_wxpay_enabled);
     const bepusdtEnabled = normalizeBoolean(settings.payment_bepusdt_enabled);
+    const pushplusEnabled = normalizeBoolean(settings.payment_pushplus_enabled);
 
     const fixedWechatRange = normalizeAmountRange(settings.payment_fixed_wechat_min_amount, settings.payment_fixed_wechat_max_amount, minRechargeAmount);
     const fixedAlipayRange = normalizeAmountRange(settings.payment_fixed_alipay_min_amount, settings.payment_fixed_alipay_max_amount, minRechargeAmount);
     const futongAlipayRange = normalizeAmountRange(settings.payment_futong_alipay_min_amount, settings.payment_futong_alipay_max_amount, minRechargeAmount);
     const futongWxpayRange = normalizeAmountRange(settings.payment_futong_wxpay_min_amount, settings.payment_futong_wxpay_max_amount, minRechargeAmount);
     const bepusdtRange = normalizeAmountRange(settings.payment_bepusdt_min_amount, settings.payment_bepusdt_max_amount, minRechargeAmount);
+    const futongOpenMode = normalizePaymentOpenMode(settings.payment_futong_open_mode, getDefaultPaymentOpenMode('futong'));
+    const bepusdtOpenMode = normalizePaymentOpenMode(settings.payment_bepusdt_open_mode, getDefaultPaymentOpenMode('bepusdt'));
 
     const computedNotifyUrls = baseUrl ? {
         futong: joinUrl(baseUrl, '/api/payment/notify/futong'),
         bepusdt: joinUrl(baseUrl, '/api/payment/notify/bepusdt')
     } : { futong: '', bepusdt: '' };
+    const computedReturnUrl = baseUrl ? joinUrl(baseUrl, '/user-center.html') : '';
     const customFutongNotifyUrl = normalizeString(settings.payment_futong_notify_url);
     const customBepusdtNotifyUrl = normalizeString(settings.payment_bepusdt_notify_url);
+    const customFutongReturnUrl = normalizeString(settings.payment_futong_return_url);
 
     const config = {
         minRechargeAmount,
+        quickAmounts,
         fixedQr: {
             wechat: {
                 enabled: fixedWechatEnabled,
@@ -178,6 +535,7 @@ function normalizePaymentConfig(settings = {}, baseUrl = '') {
             apiUrl: normalizeString(settings.payment_futong_api_url),
             pid: normalizeString(settings.payment_futong_pid),
             secretKey: normalizeString(settings.payment_futong_secret_key),
+            openMode: futongOpenMode,
             alipayEnabled: futongAlipayEnabled,
             wxpayEnabled: futongWxpayEnabled,
             alipayMinAmount: futongAlipayRange.minAmount,
@@ -190,21 +548,33 @@ function normalizePaymentConfig(settings = {}, baseUrl = '') {
             apiUrl: normalizeString(settings.payment_bepusdt_api_url),
             authToken: normalizeString(settings.payment_bepusdt_auth_token),
             signSecret: normalizeString(settings.payment_bepusdt_sign_secret),
-            tradeType: normalizeString(settings.payment_bepusdt_trade_type) || 'usdt.bep20',
+            openMode: bepusdtOpenMode,
+            tradeType: normalizeBepusdtTradeType(settings.payment_bepusdt_trade_type),
             minAmount: bepusdtRange.minAmount,
             maxAmount: bepusdtRange.maxAmount
+        },
+        pushplus: {
+            enabled: pushplusEnabled,
+            apiUrl: normalizeString(settings.payment_pushplus_api_url) || PUSHPLUS_DEFAULT_API_URL,
+            token: normalizeString(settings.payment_pushplus_token),
+            channel: normalizePushplusChannel(settings.payment_pushplus_channel)
         },
         notifyUrls: {
             futong: customFutongNotifyUrl || computedNotifyUrls.futong,
             bepusdt: customBepusdtNotifyUrl || computedNotifyUrls.bepusdt
         },
-        returnUrl: baseUrl ? joinUrl(baseUrl, '/user-center.html') : ''
+        returnUrls: {
+            futong: customFutongReturnUrl || computedReturnUrl,
+            bepusdt: computedReturnUrl
+        },
+        returnUrl: computedReturnUrl
     };
 
     config.fixedQr.wechat.enabled = config.fixedQr.wechat.enabled && !!config.fixedQr.wechat.imageData;
     config.fixedQr.alipay.enabled = config.fixedQr.alipay.enabled && !!config.fixedQr.alipay.imageData;
     config.futong.enabled = config.futong.enabled && !!config.futong.apiUrl && !!config.futong.pid && !!config.futong.secretKey && (config.futong.alipayEnabled || config.futong.wxpayEnabled);
     config.bepusdt.enabled = config.bepusdt.enabled && !!config.bepusdt.apiUrl && !!config.bepusdt.authToken;
+    config.pushplus.ready = config.pushplus.enabled && !!config.pushplus.apiUrl && !!config.pushplus.token;
 
     return config;
 }
@@ -219,6 +589,7 @@ async function getAdminPaymentConfig(baseUrl = '') {
     const config = normalizePaymentConfig(settings, baseUrl);
     return {
         minRechargeAmount: config.minRechargeAmount,
+        quickAmounts: config.quickAmounts,
         fixedQr: {
             wechat: {
                 enabled: normalizeBoolean(settings.payment_fixed_wechat_enabled),
@@ -239,6 +610,7 @@ async function getAdminPaymentConfig(baseUrl = '') {
             pid: normalizeString(settings.payment_futong_pid),
             secretKey: normalizeString(settings.payment_futong_secret_key),
             secretKeyMasked: maskSecret(settings.payment_futong_secret_key),
+            openMode: config.futong.openMode,
             alipayEnabled: normalizeBoolean(settings.payment_futong_alipay_enabled),
             wxpayEnabled: normalizeBoolean(settings.payment_futong_wxpay_enabled),
             alipayMinAmount: config.futong.alipayMinAmount,
@@ -246,7 +618,7 @@ async function getAdminPaymentConfig(baseUrl = '') {
             wxpayMinAmount: config.futong.wxpayMinAmount,
             wxpayMaxAmount: config.futong.wxpayMaxAmount,
             notifyUrl: config.notifyUrls.futong,
-            returnUrl: config.returnUrl,
+            returnUrl: config.returnUrls.futong,
             ready: config.futong.enabled
         },
         bepusdt: {
@@ -256,20 +628,31 @@ async function getAdminPaymentConfig(baseUrl = '') {
             authTokenMasked: maskSecret(settings.payment_bepusdt_auth_token),
             signSecret: normalizeString(settings.payment_bepusdt_sign_secret),
             signSecretMasked: maskSecret(settings.payment_bepusdt_sign_secret),
-            tradeType: normalizeString(settings.payment_bepusdt_trade_type) || 'usdt.bep20',
+            openMode: config.bepusdt.openMode,
+            tradeType: normalizeBepusdtTradeType(settings.payment_bepusdt_trade_type),
             minAmount: config.bepusdt.minAmount,
             maxAmount: config.bepusdt.maxAmount,
             notifyUrl: config.notifyUrls.bepusdt,
             redirectUrl: config.returnUrl,
             ready: config.bepusdt.enabled
+        },
+        pushplus: {
+            enabled: normalizeBoolean(settings.payment_pushplus_enabled),
+            apiUrl: config.pushplus.apiUrl,
+            token: normalizeString(settings.payment_pushplus_token),
+            tokenMasked: maskSecret(settings.payment_pushplus_token),
+            channel: normalizePushplusChannel(settings.payment_pushplus_channel),
+            ready: config.pushplus.ready
         }
     };
 }
 
 function sanitizePaymentConfigInput(input = {}) {
     const minRechargeAmount = Math.max(1, normalizePositiveAmount(input.minRechargeAmount, 1) || 1);
+    const quickAmounts = normalizeRechargeQuickAmounts(input.quickAmounts);
     return {
         min_recharge_amount: String(minRechargeAmount),
+        payment_quick_amounts: quickAmounts.join(','),
         payment_fixed_wechat_enabled: String(normalizeBoolean(input.fixedQr?.wechat?.enabled)),
         payment_fixed_wechat_image: normalizeString(input.fixedQr?.wechat?.imageData),
         payment_fixed_wechat_min_amount: serializeAmountSetting(input.fixedQr?.wechat?.minAmount, { fallback: minRechargeAmount }),
@@ -282,7 +665,9 @@ function sanitizePaymentConfigInput(input = {}) {
         payment_futong_api_url: normalizeString(input.futong?.apiUrl),
         payment_futong_pid: normalizeString(input.futong?.pid),
         payment_futong_secret_key: normalizeString(input.futong?.secretKey),
+        payment_futong_open_mode: normalizePaymentOpenMode(input.futong?.openMode, getDefaultPaymentOpenMode('futong')),
         payment_futong_notify_url: normalizeString(input.futong?.notifyUrl),
+        payment_futong_return_url: normalizeString(input.futong?.returnUrl),
         payment_futong_alipay_enabled: String(normalizeBoolean(input.futong?.alipayEnabled)),
         payment_futong_wxpay_enabled: String(normalizeBoolean(input.futong?.wxpayEnabled)),
         payment_futong_alipay_min_amount: serializeAmountSetting(input.futong?.alipayMinAmount, { fallback: minRechargeAmount }),
@@ -293,10 +678,15 @@ function sanitizePaymentConfigInput(input = {}) {
         payment_bepusdt_api_url: normalizeString(input.bepusdt?.apiUrl),
         payment_bepusdt_auth_token: normalizeString(input.bepusdt?.authToken),
         payment_bepusdt_sign_secret: normalizeString(input.bepusdt?.signSecret),
+        payment_bepusdt_open_mode: normalizePaymentOpenMode(input.bepusdt?.openMode, getDefaultPaymentOpenMode('bepusdt')),
         payment_bepusdt_notify_url: normalizeString(input.bepusdt?.notifyUrl),
-        payment_bepusdt_trade_type: normalizeString(input.bepusdt?.tradeType) || 'usdt.bep20',
+        payment_bepusdt_trade_type: normalizeBepusdtTradeType(input.bepusdt?.tradeType),
         payment_bepusdt_min_amount: serializeAmountSetting(input.bepusdt?.minAmount, { fallback: minRechargeAmount }),
-        payment_bepusdt_max_amount: serializeAmountSetting(input.bepusdt?.maxAmount, { allowEmpty: true })
+        payment_bepusdt_max_amount: serializeAmountSetting(input.bepusdt?.maxAmount, { allowEmpty: true }),
+        payment_pushplus_enabled: String(normalizeBoolean(input.pushplus?.enabled)),
+        payment_pushplus_api_url: normalizeString(input.pushplus?.apiUrl) || PUSHPLUS_DEFAULT_API_URL,
+        payment_pushplus_token: normalizeString(input.pushplus?.token),
+        payment_pushplus_channel: normalizePushplusChannel(input.pushplus?.channel)
     };
 }
 
@@ -365,6 +755,7 @@ function buildRechargeOptions(config) {
             key: `${channel}:${method}`,
             channel,
             method,
+            openMode: getChannelPaymentOpenMode(config, channel),
             ...getRechargeOptionTitle(channel, method),
             minAmount: range.minAmount,
             maxAmount: range.maxAmount,
@@ -391,20 +782,82 @@ function buildRechargeOptions(config) {
     return options;
 }
 
-function serializeOrder(row) {
+function normalizeOrderMetadata(value) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+        return { ...value };
+    }
+    if (typeof value === 'string') {
+        const parsed = parseJsonSafe(value);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return { ...parsed };
+        }
+    }
+    return {};
+}
+
+function buildSerializedOrderState(row) {
     const order = db.toCamelCase(row);
-    const metadata = order.metadata || {};
+    const metadata = normalizeOrderMetadata(order.metadata);
+    const channel = normalizeString(metadata.channel);
+    const method = normalizeString(metadata.method);
+    const openMode = normalizePaymentOpenMode(metadata.openMode, getDefaultPaymentOpenMode(channel));
+    const label = normalizeString(metadata.label) || createDisplayLabel(channel, method);
+    return { order, metadata, channel, method, openMode, label };
+}
+
+function buildUserOrderMetadata(metadata, { openMode, label }) {
+    return {
+        openMode,
+        label,
+        amount: metadata.amount ?? null,
+        minAmount: metadata.minAmount ?? null,
+        maxAmount: metadata.maxAmount ?? null,
+        amountRangeText: metadata.amountRangeText || '',
+        createdAt: metadata.createdAt || '',
+        actualAmount: metadata.actualAmount || null,
+        tradeType: metadata.tradeType || '',
+        instructions: metadata.instructions || '',
+        manualReview: metadata.manualReview === true,
+        manualReviewRequestedAt: metadata.manualReviewRequestedAt || '',
+        manualReviewNotifiedAt: metadata.manualReviewNotifiedAt || '',
+        manualReviewLinkExpiresAt: metadata.manualReviewLinkExpiresAt || ''
+    };
+}
+
+function serializeUserOrderListItem(row) {
+    const { order, label } = buildSerializedOrderState(row);
     return {
         id: order.id,
         orderNo: order.orderNo,
+        type: order.type,
+        itemName: order.itemName,
         amount: Number(order.amount || 0),
+        currency: order.currency,
+        status: order.status,
+        createdAt: order.createdAt,
+        paidAt: order.paidAt,
+        label,
+        metadata: { label }
+    };
+}
+
+function serializeOrder(row) {
+    const { order, metadata, channel, method, openMode, label } = buildSerializedOrderState(row);
+    return {
+        id: order.id,
+        orderNo: order.orderNo,
+        type: order.type,
+        itemName: order.itemName,
+        amount: Number(order.amount || 0),
+        currency: order.currency,
         status: order.status,
         paymentMethod: order.paymentMethod,
         createdAt: order.createdAt,
         paidAt: order.paidAt,
-        channel: metadata.channel || '',
-        method: metadata.method || '',
-        label: createDisplayLabel(metadata.channel || '', metadata.method || ''),
+        channel,
+        method,
+        openMode,
+        label,
         qrImageData: metadata.qrImageData || '',
         qrCodeUrl: metadata.qrCodeUrl || '',
         paymentUrl: metadata.paymentUrl || '',
@@ -412,7 +865,42 @@ function serializeOrder(row) {
         tradeType: metadata.tradeType || '',
         instructions: metadata.instructions || '',
         manualReview: metadata.manualReview === true,
-        metadata
+        manualReviewRequestedAt: metadata.manualReviewRequestedAt || '',
+        manualReviewNotifiedAt: metadata.manualReviewNotifiedAt || '',
+        manualReviewLinkExpiresAt: metadata.manualReviewLinkExpiresAt || '',
+        metadata: {
+            ...metadata,
+            openMode,
+            label
+        }
+    };
+}
+
+function serializeUserOrder(row) {
+    const { order, metadata, openMode, label } = buildSerializedOrderState(row);
+    return {
+        id: order.id,
+        orderNo: order.orderNo,
+        type: order.type,
+        itemName: order.itemName,
+        amount: Number(order.amount || 0),
+        currency: order.currency,
+        status: order.status,
+        createdAt: order.createdAt,
+        paidAt: order.paidAt,
+        openMode,
+        label,
+        qrImageData: metadata.qrImageData || '',
+        qrCodeUrl: metadata.qrCodeUrl || '',
+        paymentUrl: metadata.paymentUrl || '',
+        actualAmount: metadata.actualAmount || null,
+        tradeType: metadata.tradeType || '',
+        instructions: metadata.instructions || '',
+        manualReview: metadata.manualReview === true,
+        manualReviewRequestedAt: metadata.manualReviewRequestedAt || '',
+        manualReviewNotifiedAt: metadata.manualReviewNotifiedAt || '',
+        manualReviewLinkExpiresAt: metadata.manualReviewLinkExpiresAt || '',
+        metadata: buildUserOrderMetadata(metadata, { openMode, label })
     };
 }
 
@@ -441,8 +929,56 @@ async function updateOrderAfterCreation(orderId, { status = 'pending', transacti
     return result.rows[0] || null;
 }
 
+function buildGatewayRequestMeta({ url, method = 'POST', contentType = '', payload = null }) {
+    return {
+        url: normalizeExternalUrl(url),
+        method,
+        contentType,
+        payload: payload && typeof payload === 'object' ? { ...payload } : payload
+    };
+}
+
+function createGatewayError(message, context = {}) {
+    const error = new Error(message);
+    Object.assign(error, context);
+    return error;
+}
+
+function resolveFutongEndpoint(apiUrl, targetPath = '/mapi.php') {
+    const raw = normalizeString(apiUrl);
+    if (!raw) return targetPath;
+    try {
+        const parsed = new URL(raw);
+        if (/\/(submit|mapi|api)\.php$/i.test(parsed.pathname)) {
+            parsed.pathname = targetPath;
+            parsed.search = '';
+            parsed.hash = '';
+            return parsed.toString();
+        }
+        return joinUrl(`${parsed.protocol}//${parsed.host}${parsed.pathname}`.replace(/\/+$/, ''), targetPath);
+    } catch {
+        return joinUrl(raw, targetPath);
+    }
+}
+
+function buildGatewayFailureMessage(prefix, parsed, responseStatus) {
+    const direct = parsed?.msg || parsed?.message || parsed?.error;
+    if (direct) return direct;
+    const raw = normalizeString(parsed?.raw || '');
+    if (raw) return `${prefix}: ${raw.slice(0, 200)}`;
+    return `${prefix}: HTTP ${responseStatus}`;
+}
+
+function extractBepusdtSignature(payload) {
+    return normalizeString(payload?.signature || payload?.sign || payload?.data?.signature || payload?.data?.sign);
+}
+
+function hasBepusdtSignature(payload) {
+    return !!extractBepusdtSignature(payload);
+}
+
 async function requestFutongPayment({ config, orderNo, amount, method, notifyUrl, returnUrl, clientIp }) {
-    const endpoint = config.apiUrl.endsWith('/mapi.php') ? config.apiUrl : joinUrl(config.apiUrl, '/mapi.php');
+    const endpoint = resolveFutongEndpoint(config.apiUrl, '/mapi.php');
     const payload = {
         pid: config.pid,
         type: method,
@@ -451,15 +987,22 @@ async function requestFutongPayment({ config, orderNo, amount, method, notifyUrl
         return_url: returnUrl,
         name: '余额充值',
         money: Number(amount).toFixed(2),
-        clientip: clientIp || '127.0.0.1',
+        param: orderNo,
+        clientip: normalizeClientIp(clientIp || '127.0.0.1'),
         device: 'pc',
         sign_type: 'MD5'
     };
     payload.sign = signFutong(payload, config.secretKey);
+    const requestMeta = buildGatewayRequestMeta({
+        url: endpoint,
+        method: 'POST',
+        contentType: 'application/x-www-form-urlencoded',
+        payload
+    });
 
     const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8' },
         body: new URLSearchParams(payload)
     });
 
@@ -467,13 +1010,18 @@ async function requestFutongPayment({ config, orderNo, amount, method, notifyUrl
     const parsed = parseJsonSafe(text) || { raw: text };
     const success = response.ok && (Number(parsed.code) === 1 || Number(parsed.status) === 1 || parsed.success === true);
     if (!success) {
-        throw new Error(parsed.msg || parsed.message || parsed.error || `富通支付下单失败: HTTP ${response.status}`);
+        throw createGatewayError(
+            buildGatewayFailureMessage('富通支付下单失败', parsed, response.status),
+            { requestMeta, responseStatus: response.status, upstreamResponse: parsed }
+        );
     }
 
-    const paymentUrl = normalizeString(parsed.payurl || parsed.payment_url || parsed.url);
-    const qrCodeUrl = normalizeString(parsed.qrcode || parsed.qrCode || paymentUrl);
+    const paymentUrl = normalizeExternalUrl(parsed.payurl || parsed.payment_url || parsed.url || parsed.urlscheme);
+    const qrCodeUrl = normalizeExternalUrl(parsed.qrcode || parsed.qrCode || paymentUrl);
     return {
         raw: parsed,
+        requestMeta,
+        responseStatus: response.status,
         transactionId: normalizeString(parsed.trade_no || parsed.tradeNo),
         paymentUrl,
         qrCodeUrl
@@ -487,13 +1035,19 @@ async function requestBepusdtPayment({ config, orderNo, amount, notifyUrl, redir
     const signSecret = config.signSecret || config.authToken;
     const payload = {
         order_id: orderNo,
-        amount: Number(amount).toFixed(2),
+        amount: Number(Number(amount).toFixed(2)),
         trade_type: config.tradeType,
         notify_url: notifyUrl,
         redirect_url: redirectUrl,
         timeout: 1200
     };
     payload.signature = signBepusdt(payload, signSecret);
+    const requestMeta = buildGatewayRequestMeta({
+        url: endpoint,
+        method: 'POST',
+        contentType: 'application/json',
+        payload
+    });
 
     const response = await fetch(endpoint, {
         method: 'POST',
@@ -506,18 +1060,81 @@ async function requestBepusdtPayment({ config, orderNo, amount, notifyUrl, redir
 
     const text = await response.text();
     const parsed = parseJsonSafe(text) || { raw: text };
+    const payloadData = parsed && typeof parsed.data === 'object' && parsed.data ? parsed.data : {};
     const success = response.ok && (Number(parsed.status_code || parsed.statusCode || parsed.code) === 200 || parsed.success === true);
     if (!success) {
-        throw new Error(parsed.msg || parsed.message || parsed.error || `BEPUSDT 下单失败: HTTP ${response.status}`);
+        throw createGatewayError(
+            parsed.msg || parsed.message || parsed.error || `BEPUSDT 下单失败: HTTP ${response.status}`,
+            { requestMeta, responseStatus: response.status, upstreamResponse: parsed }
+        );
     }
 
+    const paymentUrl = normalizeExternalUrl(payloadData.payment_url || payloadData.paymentUrl || parsed.payment_url || parsed.pay_url || parsed.payurl);
     return {
         raw: parsed,
-        transactionId: normalizeString(parsed.trade_id || parsed.tradeId),
-        paymentUrl: normalizeString(parsed.payment_url || parsed.pay_url || parsed.payurl),
-        qrCodeUrl: normalizeString(parsed.qrcode || parsed.qrCode || parsed.payment_url || parsed.pay_url || parsed.payurl),
-        actualAmount: parsed.actual_amount || parsed.actualAmount || null,
-        tradeType: config.tradeType
+        requestMeta,
+        responseStatus: response.status,
+        transactionId: normalizeString(payloadData.trade_id || payloadData.tradeId || parsed.trade_id || parsed.tradeId),
+        paymentUrl,
+        qrCodeUrl: normalizeExternalUrl(payloadData.qrcode || payloadData.qrCode || paymentUrl),
+        actualAmount: payloadData.actual_amount || payloadData.actualAmount || parsed.actual_amount || parsed.actualAmount || null,
+        tradeType: normalizeString(payloadData.trade_type || payloadData.tradeType || config.tradeType) || config.tradeType
+    };
+}
+
+async function queryFutongOrderStatus({ config, orderNo }) {
+    const endpoint = resolveFutongEndpoint(config.apiUrl, '/api.php');
+    const url = new URL(endpoint);
+    url.searchParams.set('act', 'order');
+    url.searchParams.set('pid', config.pid);
+    url.searchParams.set('key', config.secretKey);
+    url.searchParams.set('out_trade_no', orderNo);
+    const response = await fetch(url.toString(), { method: 'GET' });
+    const text = await response.text();
+    const parsed = parseJsonSafe(text) || { raw: text };
+    const success = response.ok && Number(parsed.code || 0) === 1;
+    if (!success) {
+        throw createGatewayError(
+            buildGatewayFailureMessage('富通订单查询失败', parsed, response.status),
+            {
+                requestMeta: buildGatewayRequestMeta({ url: url.toString(), method: 'GET' }),
+                responseStatus: response.status,
+                upstreamResponse: parsed
+            }
+        );
+    }
+    return {
+        raw: parsed,
+        responseStatus: response.status,
+        data: parsed
+    };
+}
+
+async function queryBepusdtOrderStatus({ config, orderNo }) {
+    const endpoint = new URL(`/api/v1/order/order-status/${encodeURIComponent(orderNo)}`, config.apiUrl).toString();
+    const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+            'Authorization': `Bearer ${config.authToken}`
+        }
+    });
+    const text = await response.text();
+    const parsed = parseJsonSafe(text) || { raw: text };
+    const success = response.ok && Number(parsed.status_code || parsed.statusCode || parsed.code || 0) === 200;
+    if (!success) {
+        throw createGatewayError(
+            parsed.msg || parsed.message || parsed.error || `BEPUSDT 订单状态查询失败: HTTP ${response.status}`,
+            {
+                requestMeta: buildGatewayRequestMeta({ url: endpoint, method: 'GET' }),
+                responseStatus: response.status,
+                upstreamResponse: parsed
+            }
+        );
+    }
+    return {
+        raw: parsed,
+        responseStatus: response.status,
+        data: parsed && typeof parsed.data === 'object' && parsed.data ? parsed.data : {}
     };
 }
 
@@ -537,9 +1154,11 @@ async function createRechargeOrder({ userId, amount, optionKey, req }) {
 
     const optionRange = getOptionAmountRange(config, channel, method);
     const paymentMethod = `${channel}_${method}`;
+    const openMode = getChannelPaymentOpenMode(config, channel);
     const baseMetadata = {
         channel,
         method,
+        openMode,
         label: createDisplayLabel(channel, method),
         amount: safeAmount,
         minAmount: optionRange.minAmount,
@@ -560,9 +1179,9 @@ async function createRechargeOrder({ userId, amount, optionKey, req }) {
             ...baseMetadata,
             qrImageData: imageData,
             manualReview: true,
-            instructions: '请扫码支付并保存订单号，支付后等待管理员确认入账。'
+            instructions: '请扫码支付并保存订单号，支付完成后必须点击完成支付按钮，等待确认入账。'
         });
-        return serializeOrder(orderRow);
+        return serializeUserOrder(orderRow);
     }
 
     if (channel === 'futong') {
@@ -580,7 +1199,7 @@ async function createRechargeOrder({ userId, amount, optionKey, req }) {
                 amount: safeAmount,
                 method,
                 notifyUrl: config.notifyUrls.futong,
-                returnUrl: config.returnUrl,
+                returnUrl: config.returnUrls.futong,
                 clientIp: getClientIp(req)
             });
             const updated = await updateOrderAfterCreation(orderRow.id, {
@@ -590,15 +1209,25 @@ async function createRechargeOrder({ userId, amount, optionKey, req }) {
                     ...baseMetadata,
                     paymentUrl: upstream.paymentUrl,
                     qrCodeUrl: upstream.qrCodeUrl,
+                    channelRequest: upstream.requestMeta,
+                    channelResponseStatus: upstream.responseStatus,
                     upstream: upstream.raw,
-                    instructions: '请在支付完成后返回当前页面查看到账状态。'
+                    instructions: openMode === 'redirect'
+                        ? '支付页已生成，请在新窗口完成支付后返回当前页面查看到账状态。'
+                        : '请使用二维码完成支付，支付后返回当前页面查看到账状态。'
                 }
             });
-            return serializeOrder(updated || orderRow);
+            return serializeUserOrder(updated || orderRow);
         } catch (error) {
             await updateOrderAfterCreation(orderRow.id, {
                 status: 'failed',
-                metadata: { ...baseMetadata, error: error.message }
+                metadata: {
+                    ...baseMetadata,
+                    error: error.message,
+                    channelRequest: error.requestMeta || null,
+                    channelResponseStatus: error.responseStatus || null,
+                    upstream: error.upstreamResponse || null
+                }
             });
             throw error;
         }
@@ -616,7 +1245,7 @@ async function createRechargeOrder({ userId, amount, optionKey, req }) {
                 orderNo: orderRow.order_no,
                 amount: safeAmount,
                 notifyUrl: config.notifyUrls.bepusdt,
-                redirectUrl: config.returnUrl
+                redirectUrl: config.returnUrls.bepusdt
             });
             const updated = await updateOrderAfterCreation(orderRow.id, {
                 status: 'pending',
@@ -627,15 +1256,25 @@ async function createRechargeOrder({ userId, amount, optionKey, req }) {
                     qrCodeUrl: upstream.qrCodeUrl,
                     actualAmount: upstream.actualAmount,
                     tradeType: upstream.tradeType,
+                    channelRequest: upstream.requestMeta,
+                    channelResponseStatus: upstream.responseStatus,
                     upstream: upstream.raw,
-                    instructions: '请在支付完成后返回当前页面查看到账状态。'
+                    instructions: openMode === 'redirect'
+                        ? '已创建虚拟币支付订单，系统将为你打开支付链接；如未自动跳转，请点击“打开支付页”继续支付。'
+                        : '请使用二维码完成虚拟币支付，支付后返回当前页面查看到账状态。'
                 }
             });
-            return serializeOrder(updated || orderRow);
+            return serializeUserOrder(updated || orderRow);
         } catch (error) {
             await updateOrderAfterCreation(orderRow.id, {
                 status: 'failed',
-                metadata: { ...baseMetadata, error: error.message }
+                metadata: {
+                    ...baseMetadata,
+                    error: error.message,
+                    channelRequest: error.requestMeta || null,
+                    channelResponseStatus: error.responseStatus || null,
+                    upstream: error.upstreamResponse || null
+                }
             });
             throw error;
         }
@@ -648,6 +1287,7 @@ async function getRechargeOptions(baseUrl = '') {
     const config = await getPaymentConfig(baseUrl);
     return {
         minRechargeAmount: config.minRechargeAmount,
+        quickAmounts: config.quickAmounts,
         options: buildRechargeOptions(config)
     };
 }
@@ -657,7 +1297,118 @@ async function getOrderForUser(userId, orderNo) {
         `SELECT * FROM payment_records WHERE order_no = $1 AND user_id = $2 LIMIT 1`,
         [orderNo, userId]
     );
-    return result.rows[0] ? serializeOrder(result.rows[0]) : null;
+    return result.rows[0] ? serializeUserOrder(result.rows[0]) : null;
+}
+
+async function requestFixedQrManualReview({ userId, orderNo, baseUrl = '' }) {
+    const orderRow = await getUserOrderRow(userId, orderNo);
+    if (!orderRow) {
+        throw new Error('订单不存在');
+    }
+
+    const { order, metadata, label } = buildSerializedOrderState(orderRow);
+    if (!isManualReviewOrder(order, metadata)) {
+        throw new Error('仅固定码订单支持手动确认');
+    }
+    if (order.status === 'paid') {
+        return serializeUserOrder(orderRow);
+    }
+    if (order.status !== 'pending') {
+        throw new Error('当前订单状态不允许提交支付完成');
+    }
+    if (metadata.manualReviewRequestedAt) {
+        return serializeUserOrder(orderRow);
+    }
+
+    const config = await getPaymentConfig(baseUrl);
+    if (!config.pushplus?.ready) {
+        throw createGatewayError('管理员未配置 PushPlus 通知', { publicMessage: '支付确认提交失败，请联系管理员处理' });
+    }
+
+    const expiresAt = Date.now() + MOBILE_REVIEW_TOKEN_TTL_MS;
+    const token = createMobileReviewToken(order.orderNo, expiresAt);
+    const reviewLink = buildMobileReviewLink(baseUrl, token);
+    const message = buildPushplusContent({ ...order, label }, reviewLink);
+
+    try {
+        const pushResult = await sendPushplusMessage(config, message);
+        const updated = await updateOrderAfterCreation(order.id, {
+            status: order.status,
+            transactionId: order.transactionId || null,
+            metadata: mergeMetadata(metadata, {
+                instructions: '请等待确认入账，请勿重复提交。',
+                manualReviewRequestedAt: new Date().toISOString(),
+                manualReviewNotifiedAt: new Date().toISOString(),
+                manualReviewLinkExpiresAt: new Date(expiresAt).toISOString(),
+                manualReviewNotice: {
+                    channel: 'pushplus',
+                    sentAt: new Date().toISOString(),
+                    responseStatus: pushResult.responseStatus,
+                    response: pushResult.raw
+                }
+            })
+        });
+        return serializeUserOrder(updated || orderRow);
+    } catch (error) {
+        await updateOrderAfterCreation(order.id, {
+            status: order.status,
+            transactionId: order.transactionId || null,
+            metadata: mergeMetadata(metadata, {
+                manualReviewLastTriedAt: new Date().toISOString(),
+                manualReviewLastError: error.message
+            })
+        });
+        throw new Error(error.publicMessage || '支付确认提交失败，请联系管理员处理');
+    }
+}
+
+async function getManualReviewOrderByToken(token) {
+    const payload = verifyMobileReviewToken(token);
+    if (!payload) {
+        throw new Error('确认链接无效或已过期');
+    }
+
+    const orderRow = await getOrderRowByOrderNo(payload.orderNo);
+    if (!orderRow) {
+        throw new Error('订单不存在');
+    }
+
+    const { order, metadata } = buildSerializedOrderState(orderRow);
+    if (!isManualReviewOrder(order, metadata)) {
+        throw new Error('该订单不支持移动确认');
+    }
+
+    return serializeManualReviewOrder(orderRow);
+}
+
+async function markManualReviewOrderPaidByToken(token) {
+    const payload = verifyMobileReviewToken(token);
+    if (!payload) {
+        return { success: false, error: '确认链接无效或已过期' };
+    }
+
+    const orderRow = await getOrderRowByOrderNo(payload.orderNo);
+    if (!orderRow) {
+        return { success: false, error: '订单不存在' };
+    }
+
+    const { order, metadata } = buildSerializedOrderState(orderRow);
+    if (!isManualReviewOrder(order, metadata)) {
+        return { success: false, error: '该订单不支持移动确认' };
+    }
+
+    const result = await markRechargeOrderPaid({
+        orderId: order.id,
+        provider: 'pushplus_mobile',
+        verifyResult: 'pushplus_mobile_confirmed'
+    });
+    if (!result.success) return result;
+
+    return {
+        success: true,
+        alreadyPaid: result.alreadyPaid === true,
+        order: await getManualReviewOrderByToken(token)
+    };
 }
 
 function mergeMetadata(existing, patch) {
@@ -741,6 +1492,17 @@ async function markRechargeOrderPaid({ orderNo = null, orderId = null, transacti
             [order.userId, Number(order.amount || 0), balanceBefore, balanceAfter, order.orderNo, `在线充值 (${provider || order.paymentMethod})`, operatorId]
         );
 
+        await notificationService.createUserNotification({
+            executor: client,
+            userId: order.userId,
+            type: 'recharge_paid',
+            level: 'success',
+            title: '充值已到账',
+            content: `您的充值订单 ${order.orderNo} 已完成，余额已增加 ¥${Number(order.amount || 0).toFixed(2)}。`,
+            relatedOrderNo: order.orderNo,
+            actionTab: 'orders'
+        });
+
         await client.query('COMMIT');
         const updated = await db.pool.query('SELECT * FROM payment_records WHERE id = $1', [order.id]);
         return { success: true, order: serializeOrder(updated.rows[0]) };
@@ -788,9 +1550,14 @@ function verifyFutongNotify(payload, secretKey) {
 }
 
 function verifyBepusdtNotify(payload, signSecret) {
-    const signature = normalizeString(payload.signature).toLowerCase();
+    const normalized = normalizeBepusdtNotifyPayload(payload);
+    const signature = extractBepusdtSignature(normalized).toLowerCase();
     if (!signature) return false;
-    return signBepusdt(payload, signSecret) === signature;
+    if (signBepusdt(normalized, signSecret) === signature) return true;
+    if (normalized.data && typeof normalized.data === 'object' && signBepusdt(normalized.data, signSecret) === signature) {
+        return true;
+    }
+    return false;
 }
 
 function isFutongPaid(payload) {
@@ -799,53 +1566,113 @@ function isFutongPaid(payload) {
 }
 
 function isBepusdtPaid(payload) {
-    const status = normalizeString(payload.status || payload.trade_status || payload.tradeStatus).toLowerCase();
-    if (['paid', 'success', 'succeeded', 'completed', 'confirmed'].includes(status)) {
+    const normalized = normalizeBepusdtNotifyPayload(payload);
+    const status = normalizeString(
+        normalized.status || normalized.trade_status || normalized.tradeStatus ||
+        normalized.order_status || normalized.orderStatus || normalized.state
+    ).toLowerCase();
+    if (['paid', 'success', 'succeeded', 'completed', 'confirmed', '2'].includes(status)) {
         return true;
     }
-    return !status && Number(payload.status_code || payload.statusCode) === 200;
+    const code = Number(normalized.status_code || normalized.statusCode || normalized.code || normalized.errCode || 0);
+    if (code === 200 && status === '2') return true;
+    const hasSuccessMarkers = !!normalizeString(normalized.order_id || normalized.orderId)
+        && !!normalizeString(
+            normalized.transaction_hash || normalized.transactionHash || normalized.trade_id || normalized.tradeId ||
+            normalized.txid || normalized.block_transaction_id || normalized.blockTransactionId
+        );
+    if ((!status || status === '2') && hasSuccessMarkers) {
+        return true;
+    }
+    return false;
 }
 
 async function handleFutongNotify(payload) {
     const config = await getPaymentConfig();
+    const orderNo = normalizeString(payload.out_trade_no || payload.outTradeNo || payload.param);
     if (!config.futong.secretKey) {
         return { success: false, error: '富通支付未配置密钥' };
     }
-    if (!verifyFutongNotify(payload, config.futong.secretKey)) {
-        return { success: false, error: '签名验证失败' };
+    if (!orderNo) {
+        return { success: false, error: '缺少订单号' };
     }
-    if (!isFutongPaid(payload)) {
+
+    let verifiedPayload = payload;
+    let verifyResult = 'signature_verified';
+    if (!verifyFutongNotify(payload, config.futong.secretKey)) {
+        try {
+            const queried = await queryFutongOrderStatus({ config: config.futong, orderNo });
+            verifiedPayload = { ...payload, ...queried.data };
+            verifyResult = 'api_order_verified';
+        } catch {
+            return { success: false, error: '签名验证失败' };
+        }
+    }
+    if (!isFutongPaid(verifiedPayload)) {
         return { success: true, skipped: true, reason: '支付未完成' };
     }
     return markRechargeOrderPaid({
-        orderNo: payload.out_trade_no,
-        transactionId: normalizeString(payload.trade_no),
+        orderNo,
+        transactionId: normalizeString(verifiedPayload.trade_no || verifiedPayload.tradeNo),
         provider: 'futong',
-        notifyPayload: payload,
-        verifyResult: 'signature_verified',
-        expectedAmount: payload.money || payload.total_fee || payload.amount
+        notifyPayload: verifiedPayload,
+        verifyResult,
+        expectedAmount: verifiedPayload.money || verifiedPayload.total_fee || verifiedPayload.amount
     });
 }
 
 async function handleBepusdtNotify(payload) {
     const config = await getPaymentConfig();
+    const normalized = normalizeBepusdtNotifyPayload(payload);
+    const orderNo = normalized.order_id || normalized.orderId || normalized.order_no || normalized.orderNo || normalized.out_trade_no || normalized.outTradeNo || normalized.merchant_order_id || normalized.merchantOrderId;
+    if (!orderNo) {
+        return { success: false, error: '缺少订单号' };
+    }
+
     const signSecret = config.bepusdt.signSecret || config.bepusdt.authToken;
-    if (!signSecret) {
-        return { success: false, error: 'BEPUSDT 未配置签名密钥' };
+    const signed = hasBepusdtSignature(normalized);
+    const successMarkers = normalizeString(
+        normalized.transaction_hash || normalized.transactionHash || normalized.txid || normalized.tx_id ||
+        normalized.trade_id || normalized.tradeId || normalized.block_transaction_id || normalized.blockTransactionId
+    );
+    let verifyResult = 'signature_verified';
+    let verifiedPayload = normalized;
+
+    if (signed && signSecret && verifyBepusdtNotify(normalized, signSecret)) {
+        verifyResult = 'signature_verified';
+    } else if (!signed && isBepusdtPaid(normalized) && successMarkers) {
+        verifyResult = 'unsigned_notify_paid_markers';
+        verifiedPayload = normalized;
+    } else if (signed && isBepusdtPaid(normalized) && successMarkers) {
+        verifyResult = 'signature_mismatch_but_paid_markers';
+        verifiedPayload = normalized;
+    } else {
+        try {
+            const queried = await queryBepusdtOrderStatus({ config: config.bepusdt, orderNo });
+            verifiedPayload = normalizeBepusdtNotifyPayload({
+                ...normalized,
+                ...queried.raw,
+                data: queried.data
+            });
+            verifyResult = signed ? 'api_status_verified_after_signature_mismatch' : 'api_status_verified';
+        } catch (error) {
+            return { success: false, error: signed ? '签名验证失败，且订单状态复核失败' : '订单状态复核失败' };
+        }
     }
-    if (!verifyBepusdtNotify(payload, signSecret)) {
-        return { success: false, error: '签名验证失败' };
-    }
-    if (!isBepusdtPaid(payload)) {
+
+    if (!isBepusdtPaid(verifiedPayload)) {
         return { success: true, skipped: true, reason: '支付未完成' };
     }
     return markRechargeOrderPaid({
-        orderNo: payload.order_id || payload.orderId,
-        transactionId: normalizeString(payload.transaction_hash || payload.trade_id || payload.tradeId),
+        orderNo,
+        transactionId: normalizeString(
+            verifiedPayload.transaction_hash || verifiedPayload.transactionHash || verifiedPayload.txid || verifiedPayload.tx_id ||
+            verifiedPayload.trade_id || verifiedPayload.tradeId || verifiedPayload.block_transaction_id || verifiedPayload.blockTransactionId
+        ),
         provider: 'bepusdt',
-        notifyPayload: payload,
-        verifyResult: 'signature_verified',
-        expectedAmount: payload.money || payload.total_fee || payload.amount
+        notifyPayload: verifiedPayload,
+        verifyResult,
+        expectedAmount: verifiedPayload.order_amount || verifiedPayload.orderAmount || verifiedPayload.cny_amount || verifiedPayload.cnyAmount || null
     });
 }
 
@@ -856,6 +1683,11 @@ module.exports = {
     getRechargeOptions,
     createRechargeOrder,
     getOrderForUser,
+    requestFixedQrManualReview,
+    getManualReviewOrderByToken,
+    markManualReviewOrderPaidByToken,
+    serializeUserOrder,
+    serializeUserOrderListItem,
     markRechargeOrderPaid,
     cancelRechargeOrder,
     handleFutongNotify,

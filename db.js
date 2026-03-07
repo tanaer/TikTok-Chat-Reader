@@ -146,6 +146,8 @@ async function initDb() {
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS language TEXT DEFAULT '中文'`);
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS priority INTEGER DEFAULT 0`);
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS owner_user_id TEXT`);
+        await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS is_admin_room INTEGER DEFAULT 0`);
+        await pool.query(`UPDATE room SET is_admin_room = 1, updated_at = NOW() WHERE COALESCE(is_admin_room, 0) = 0 AND owner_user_id IS NULL`);
         await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS language_analyzed INTEGER DEFAULT 0`);
         await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis TEXT`);
         await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS region TEXT`);
@@ -320,6 +322,7 @@ async function initDb() {
         // Add recording fields to room table
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS is_recording_enabled INTEGER DEFAULT 0`);
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS recording_account_id INTEGER`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_updated_at ON room(updated_at DESC)`);
 
 
         // ========== SaaS Tables (use existing production tables: users, subscription_plans, etc.) ==========
@@ -332,6 +335,8 @@ async function initDb() {
         // Migration: user_room副本机制 - 软删除 + 数据起始时间
         await pool.query(`ALTER TABLE user_room ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
         await pool.query(`ALTER TABLE user_room ADD COLUMN IF NOT EXISTS first_added_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_room_user_active_room ON user_room(user_id, room_id) WHERE deleted_at IS NULL`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_room_user_active_first_added ON user_room(user_id, first_added_at) WHERE deleted_at IS NULL`);
 
         // Migration: 套餐每日新建房间次数限制
         await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS daily_room_create_limit INTEGER DEFAULT -1`);
@@ -339,16 +344,64 @@ async function initDb() {
         // Migration: 套餐打开房间数限制 (同时启用监控的房间数, -1=不限)
         await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS open_room_limit INTEGER DEFAULT -1`);
 
+        // Per-user quota overrides for admin adjustments
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_quota_overrides (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                room_limit_permanent INTEGER,
+                room_limit_temporary INTEGER,
+                room_limit_temporary_expires_at TIMESTAMP,
+                open_room_limit_permanent INTEGER,
+                open_room_limit_temporary INTEGER,
+                open_room_limit_temporary_expires_at TIMESTAMP,
+                daily_room_create_limit_permanent INTEGER,
+                daily_room_create_limit_temporary INTEGER,
+                daily_room_create_limit_temporary_expires_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE user_quota_overrides ADD COLUMN IF NOT EXISTS daily_room_create_limit_permanent INTEGER`);
+        await pool.query(`ALTER TABLE user_quota_overrides ADD COLUMN IF NOT EXISTS daily_room_create_limit_temporary INTEGER`);
+        await pool.query(`ALTER TABLE user_quota_overrides ADD COLUMN IF NOT EXISTS daily_room_create_limit_temporary_expires_at TIMESTAMP`);
+
+        // In-app user notifications
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_notifications (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                type TEXT NOT NULL DEFAULT 'system',
+                level TEXT NOT NULL DEFAULT 'info',
+                title TEXT NOT NULL,
+                content TEXT DEFAULT '',
+                related_order_no TEXT DEFAULT '',
+                action_tab TEXT DEFAULT 'notifications',
+                is_read BOOLEAN DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT NOW(),
+                read_at TIMESTAMP
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_notifications_user_created ON user_notifications(user_id, created_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread ON user_notifications(user_id, is_read, created_at DESC)`);
+
         // Email verification codes table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS email_verification (
-                email TEXT PRIMARY KEY,
+                email TEXT NOT NULL,
+                purpose TEXT NOT NULL DEFAULT 'register',
                 code TEXT NOT NULL,
                 expires_at TIMESTAMP NOT NULL,
                 attempts INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT NOW()
+                created_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (email, purpose)
             )
         `);
+        await pool.query(`ALTER TABLE email_verification ADD COLUMN IF NOT EXISTS purpose TEXT DEFAULT 'register'`);
+        await pool.query(`UPDATE email_verification SET purpose = 'register' WHERE purpose IS NULL`).catch(() => {});
+        await pool.query(`ALTER TABLE email_verification ALTER COLUMN purpose SET DEFAULT 'register'`).catch(() => {});
+        await pool.query(`ALTER TABLE email_verification ALTER COLUMN purpose SET NOT NULL`).catch(() => {});
+        await pool.query(`ALTER TABLE email_verification DROP CONSTRAINT IF EXISTS email_verification_pkey`).catch(() => {});
+        await pool.query(`ALTER TABLE email_verification ADD CONSTRAINT email_verification_pkey PRIMARY KEY (email, purpose)`).catch(() => {});
 
         // Euler API Keys management table
         await pool.query(`

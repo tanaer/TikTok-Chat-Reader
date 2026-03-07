@@ -1,5 +1,6 @@
 const db = require('../db');
 const balanceService = require('./balanceService');
+const quotaService = require('./quotaService');
 
 /**
  * Get user's active subscription with plan info
@@ -7,6 +8,7 @@ const balanceService = require('./balanceService');
 async function getActiveSubscription(userId) {
     return db.get(
         `SELECT us.*, p.name AS plan_name, p.code AS plan_code, p.room_limit AS plan_room_limit,
+                p.daily_room_create_limit AS plan_daily_room_create_limit,
                 p.feature_flags AS plan_feature_flags, p.sort_order AS plan_sort_order
          FROM user_subscriptions us
          JOIN subscription_plans p ON us.plan_id = p.id
@@ -21,45 +23,7 @@ async function getActiveSubscription(userId) {
  * room_limit = -1 means unlimited
  */
 async function getUserQuota(userId) {
-    const sub = await getActiveSubscription(userId);
-    // -1 means unlimited (data is converted to camelCase by db.get)
-    let subLimit = sub ? Number(sub.planRoomLimit) : 0;
-    const isUnlimited = subLimit === -1;
-
-    const addonResult = await db.get(
-        `SELECT COALESCE(SUM(rap.room_count), 0) AS total
-         FROM user_room_addons ura
-         JOIN room_addon_packages rap ON ura.package_id = rap.id
-         WHERE ura.user_id = ? AND ura.status = 'active' AND ura.end_date > NOW()`,
-        [userId]
-    );
-    const addonRooms = isUnlimited ? 0 : Number(addonResult?.total || 0);
-
-    const settings = await db.getSystemSettings();
-    // -1 means unlimited for default too
-    let defaultLimit = Number(settings.defaultRoomLimit || settings.default_room_limit || 0);
-    const isDefaultUnlimited = defaultLimit === -1;
-
-    // If any source is unlimited, total is unlimited
-    const isTotalUnlimited = isUnlimited || isDefaultUnlimited;
-    const totalLimit = isTotalUnlimited ? -1 : (subLimit + addonRooms + defaultLimit);
-
-    const countResult = await db.get(
-        `SELECT COUNT(*) AS count FROM user_room WHERE user_id = ? AND deleted_at IS NULL`,
-        [userId]
-    );
-    const used = Number(countResult?.count || 0);
-
-    return {
-        subscription: sub,
-        subRooms: subLimit,
-        addonRooms,
-        defaultRooms: defaultLimit,
-        totalLimit,
-        used,
-        remaining: isTotalUnlimited ? -1 : (totalLimit - used),
-        isUnlimited: isTotalUnlimited
-    };
+    return quotaService.getUserQuota(userId);
 }
 
 /**

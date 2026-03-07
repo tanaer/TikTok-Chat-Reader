@@ -7,7 +7,62 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/js/auth.js"></script>
+    <style>
+        .doc-markdown h1, .doc-markdown h2, .doc-markdown h3, .doc-markdown h4 {
+            font-weight: 700;
+            margin-top: 1.25rem;
+            margin-bottom: 0.75rem;
+            line-height: 1.35;
+        }
+        .doc-markdown h1 { font-size: 1.8rem; }
+        .doc-markdown h2 { font-size: 1.45rem; }
+        .doc-markdown h3 { font-size: 1.2rem; }
+        .doc-markdown h4 { font-size: 1.05rem; }
+        .doc-markdown p, .doc-markdown ul, .doc-markdown ol, .doc-markdown blockquote, .doc-markdown pre {
+            margin: 0.9rem 0;
+            line-height: 1.8;
+        }
+        .doc-markdown ul, .doc-markdown ol {
+            padding-left: 1.4rem;
+        }
+        .doc-markdown ul { list-style: disc; }
+        .doc-markdown ol { list-style: decimal; }
+        .doc-markdown li + li { margin-top: 0.35rem; }
+        .doc-markdown code {
+            background: rgba(255,255,255,0.08);
+            border-radius: 0.375rem;
+            padding: 0.12rem 0.38rem;
+            font-size: 0.92em;
+        }
+        .doc-markdown pre {
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 0.75rem;
+            padding: 1rem;
+            overflow-x: auto;
+        }
+        .doc-markdown pre code {
+            background: transparent;
+            padding: 0;
+        }
+        .doc-markdown blockquote {
+            border-left: 3px solid hsl(var(--p));
+            padding-left: 1rem;
+            color: hsl(var(--bc) / 0.75);
+        }
+        .doc-markdown a {
+            color: hsl(var(--p));
+            text-decoration: underline;
+            text-underline-offset: 0.18rem;
+        }
+        .doc-markdown hr {
+            border: 0;
+            border-top: 1px solid hsl(var(--bc) / 0.12);
+            margin: 1.2rem 0;
+        }
+    </style>
 </head>
+
 <body class="bg-base-300 min-h-screen flex">
     <!-- Sidebar -->
     <aside class="w-64 bg-base-100 min-h-screen shadow-lg flex-shrink-0">
@@ -25,6 +80,7 @@
             <li><a onclick="showSection('eulerKeys')">Euler API Keys</a></li>
             <li><a onclick="showSection('aiModels')">AI 通道配置</a></li>
             <li><a onclick="showSection('settings')">系统设置</a></li>
+            <li><a onclick="showSection('docs')">系统文档</a></li>
             <li class="mt-4"><a href="/" class="text-base-content/60">← 返回前台</a></li>
         </ul>
     </aside>
@@ -109,15 +165,20 @@
                             <div class="flex justify-between items-start gap-4 flex-wrap">
                                 <div>
                                     <h3 class="card-title">支付管理</h3>
-                                    <p class="text-sm text-base-content/60">配置固定码、三方支付和虚拟币支付。前台只显示通道类型，不显示后台备注名。</p>
+                                    <p class="text-sm text-base-content/60">配置固定码、三方支付和虚拟币支付。前台只显示通道类型，不显示后台备注名。固定码的“完成支付”通知在右侧“固定码通知（PushPlus）”卡片配置。</p>
                                 </div>
                                 <div class="form-control w-full sm:w-80">
                                     <label class="label"><span class="label-text">默认最低充值金额</span></label>
                                     <input type="number" id="pay-min-recharge" class="input input-bordered" min="1" step="1" value="1">
                                     <label class="label"><span class="label-text-alt text-base-content/50">未单独设置通道范围时，按此金额兜底；最高金额留空表示不限。</span></label>
                                 </div>
+                                <div class="form-control w-full sm:flex-1 sm:min-w-[320px]">
+                                    <label class="label"><span class="label-text">快捷支付金额</span></label>
+                                    <input type="text" id="pay-quick-amounts" class="input input-bordered" placeholder="50,100,200,500,1000">
+                                    <label class="label"><span class="label-text-alt text-base-content/50">用户中心充值弹层快捷金额，多个金额用英文逗号分隔，留空则使用默认值。</span></label>
+                                </div>
                             </div>
-                            <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-4">
+                            <div class="grid grid-cols-1 xl:grid-cols-4 gap-6 mt-4">
                                 <div class="card bg-base-200 border border-base-300">
                                     <div class="card-body p-4">
                                         <div class="flex items-center justify-between">
@@ -181,6 +242,14 @@
                                                 </div>
                                             </div>
                                             <div class="form-control"><label class="label"><span class="label-text">回调地址</span></label><input type="text" id="pay-futong-notify-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前站点域名"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">返回地址</span></label><input type="text" id="pay-futong-return-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前访问域名；白名单不一致时建议手动填写正式域名"></div>
+                                            <div class="form-control">
+                                                <label class="label"><span class="label-text">支付链接打开方式</span></label>
+                                                <select id="pay-futong-open-mode" class="select select-bordered select-sm">
+                                                    <option value="qrcode">二维码</option>
+                                                    <option value="redirect">跳转支付</option>
+                                                </select>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -194,12 +263,41 @@
                                             <div class="form-control"><label class="label"><span class="label-text">API 地址</span></label><input type="text" id="pay-bepusdt-api-url" class="input input-bordered input-sm" placeholder="https://xxx.com"></div>
                                             <div class="form-control"><label class="label"><span class="label-text">Auth Token</span></label><input type="text" id="pay-bepusdt-token" class="input input-bordered input-sm"></div>
                                             <div class="form-control"><label class="label"><span class="label-text">签名密钥（可空）</span></label><input type="text" id="pay-bepusdt-secret" class="input input-bordered input-sm" placeholder="留空则使用 Auth Token"></div>
-                                            <div class="form-control"><label class="label"><span class="label-text">Trade Type</span></label><input type="text" id="pay-bepusdt-trade-type" class="input input-bordered input-sm" placeholder="usdt.bep20"></div>
+                                            <div class="form-control">
+                                                <label class="label"><span class="label-text">结算网络</span></label>
+                                                <select id="pay-bepusdt-trade-type" class="select select-bordered select-sm">
+                                                    <option value="usdt.trc20">USDT - TRC20</option>
+                                                    <option value="usdt.bep20">USDT - BEP20</option>
+                                                    <option value="usdt.solana">USDT - Solana</option>
+                                                </select>
+                                                <label class="label"><span class="label-text-alt">这里只能选一个交易类型；旧的逗号分隔配置会自动取第一个有效值。</span></label>
+                                            </div>
                                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                 <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-bepusdt-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                 <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-bepusdt-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
                                             </div>
                                             <div class="form-control"><label class="label"><span class="label-text">回调地址</span></label><input type="text" id="pay-bepusdt-notify-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前站点域名"></div>
+                                            <div class="form-control">
+                                                <label class="label"><span class="label-text">支付链接打开方式</span></label>
+                                                <select id="pay-bepusdt-open-mode" class="select select-bordered select-sm">
+                                                    <option value="qrcode">二维码</option>
+                                                    <option value="redirect">跳转支付</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card bg-base-200 border border-base-300">
+                                    <div class="card-body p-4">
+                                        <div class="flex items-center justify-between">
+                                            <div class="flex items-center gap-2"><h4 class="font-bold">固定码通知（PushPlus）</h4><span class="badge badge-ghost badge-sm">完成支付按钮</span></div>
+                                            <label class="label cursor-pointer gap-3"><span class="label-text">启用</span><input type="checkbox" id="pay-pushplus-enabled" class="toggle toggle-primary toggle-sm"></label>
+                                        </div>
+                                        <div class="space-y-3 mt-2">
+                                            <div class="form-control"><label class="label"><span class="label-text">API 地址</span></label><input type="text" id="pay-pushplus-api-url" class="input input-bordered input-sm" placeholder="https://www.pushplus.plus/batchSend"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">Token</span></label><input type="text" id="pay-pushplus-token" class="input input-bordered input-sm"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">Channel</span></label><input type="text" id="pay-pushplus-channel" class="input input-bordered input-sm" placeholder="app"></div>
+                                            <div class="text-xs text-base-content/50 leading-6">用户点击固定码的“完成支付”后，会把移动确认链接推送到这里；消息发出成功后，前台按钮会自动锁定。</div>
                                         </div>
                                     </div>
                                 </div>
@@ -235,8 +333,8 @@
                         <!-- AI Credit Packages -->
                         <div>
                             <div class="flex justify-between items-center mb-4">
-                                <h3 class="text-lg font-bold">AI 分析额度包</h3>
-                                <button class="btn btn-primary btn-sm" onclick="showAiCreditForm()">新增额度包</button>
+                                <h3 class="text-lg font-bold">AI 点数包</h3>
+                                <button class="btn btn-primary btn-sm" onclick="showAiCreditForm()">新增点数包</button>
                             </div>
                             <div id="ai-credits-list" class="space-y-3"></div>
                         </div>
@@ -252,6 +350,40 @@
                         <div id="settings-form" class="space-y-4"></div>
                         <div class="mt-6">
                             <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Docs Section -->
+            <section id="sec-docs" class="hidden">
+                <div class="grid grid-cols-1 xl:grid-cols-[22rem_minmax(0,1fr)] gap-6 items-start">
+                    <div class="card bg-base-100 shadow">
+                        <div class="card-body">
+                            <div class="flex items-center justify-between gap-3 mb-2">
+                                <div>
+                                    <h3 class="card-title">系统文档</h3>
+                                    <p class="text-sm text-base-content/60">读取 `docs/` 目录下的 Markdown 文件</p>
+                                </div>
+                                <button class="btn btn-sm btn-primary" onclick="loadAdminDocs(true)">刷新</button>
+                            </div>
+                            <div id="admin-docs-list" class="space-y-2">
+                                <div class="rounded-box bg-base-200 px-4 py-6 text-sm text-base-content/60">正在加载文档列表...</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card bg-base-100 shadow min-h-[32rem]">
+                        <div class="card-body">
+                            <div class="flex flex-wrap items-start justify-between gap-3 border-b border-base-300 pb-4 mb-4">
+                                <div>
+                                    <h3 id="admin-doc-title" class="text-xl font-bold">请选择左侧文档</h3>
+                                    <p id="admin-doc-meta" class="text-sm text-base-content/60 mt-1">系统会使用文档第一个 `# 标题` 作为显示名称。</p>
+                                </div>
+                                <span id="admin-doc-path" class="badge badge-outline">docs/</span>
+                            </div>
+                            <div id="admin-doc-content" class="doc-markdown text-base-content/90 text-sm leading-7">
+                                <div class="rounded-box bg-base-200 px-5 py-8 text-base-content/60">选择一篇文档后，这里会显示 Markdown 内容。</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -324,6 +456,31 @@
         </div>
     </dialog>
 
+    <dialog id="orderRequestModal" class="modal">
+        <div class="modal-box max-w-5xl">
+            <h3 class="font-bold text-lg mb-4" id="order-detail-title">订单详情</h3>
+            <div class="space-y-4">
+                <div>
+                    <div class="text-sm font-semibold mb-2">充值通道</div>
+                    <div id="order-detail-channel" class="rounded-box bg-base-200 p-3 text-sm break-all">暂无</div>
+                </div>
+                <div>
+                    <div class="text-sm font-semibold mb-2">请求 URL</div>
+                    <div id="order-detail-url" class="rounded-box bg-base-200 p-3 text-sm break-all">暂无</div>
+                </div>
+                <div>
+                    <div class="text-sm font-semibold mb-2">请求参数</div>
+                    <pre id="order-detail-request" class="rounded-box bg-base-200 p-3 text-xs leading-6 whitespace-pre-wrap break-all overflow-x-auto">暂无</pre>
+                </div>
+                <div>
+                    <div class="text-sm font-semibold mb-2">上游接口回复</div>
+                    <pre id="order-detail-response" class="rounded-box bg-base-200 p-3 text-xs leading-6 whitespace-pre-wrap break-all overflow-x-auto">暂无</pre>
+                </div>
+            </div>
+            <div class="modal-action"><button class="btn" onclick="document.getElementById('orderRequestModal').close()">关闭</button></div>
+        </div>
+    </dialog>
+
     <!-- Balance adjust modal -->
     <dialog id="balanceModal" class="modal">
         <div class="modal-box">
@@ -355,7 +512,7 @@
             <div class="form-control mt-2"><label class="label"><span class="label-text">房间上限 (-1=无限)</span></label><input type="number" id="pf-room" class="input input-bordered" min="-1"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">可打开房间数 (-1=不限)</span></label><input type="number" id="pf-open-room" class="input input-bordered" min="-1" value="-1"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">每日新建房间上限 (-1=无限)</span></label><input type="number" id="pf-daily" class="input input-bordered" min="-1" value="-1"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">每月AI分析次数</span></label><input type="number" id="pf-ai" class="input input-bordered" min="0" value="0"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">每月 AI 点数</span></label><input type="number" id="pf-ai" class="input input-bordered" min="0" value="0"></div>
             <div class="grid grid-cols-3 gap-2 mt-2">
                 <div class="form-control"><label class="label"><span class="label-text">月价</span></label><input type="number" id="pf-pm" class="input input-bordered input-sm" step="0.01"></div>
                 <div class="form-control"><label class="label"><span class="label-text">季价</span></label><input type="number" id="pf-pq" class="input input-bordered input-sm" step="0.01"></div>
@@ -388,10 +545,10 @@
     <!-- AI Credit Package form modal -->
     <dialog id="aiCreditModal" class="modal">
         <div class="modal-box">
-            <h3 class="font-bold text-lg" id="aic-form-title">新增 AI 额度包</h3>
+            <h3 class="font-bold text-lg" id="aic-form-title">新增 AI 点数包</h3>
             <input type="hidden" id="aic-id">
             <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input type="text" id="aic-name" class="input input-bordered" placeholder="例：基础包"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">AI分析次数</span></label><input type="number" id="aic-credits" class="input input-bordered" min="1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">AI 点数</span></label><input type="number" id="aic-credits" class="input input-bordered" min="1"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">价格（余额扣除，分）</span></label><input type="number" id="aic-price" class="input input-bordered" min="0" step="1"><p class="text-xs text-base-content/50 mt-1">例：1000 = ¥10.00</p></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input type="text" id="aic-desc" class="input input-bordered" placeholder="可选"></div>
             <div class="modal-action">

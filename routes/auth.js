@@ -4,9 +4,56 @@ const db = require('../db');
 const authService = require('../services/authService');
 const emailService = require('../services/emailService');
 const captchaService = require('../services/captchaService');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
+
+const SUPPORTED_EMAIL_CODE_PURPOSES = ['register', 'reset_password', 'change_email'];
+
+function normalizeEmailInput(email) {
+    return String(email || '').trim().toLowerCase();
+}
+
+function resolveEmailCodeTarget(req, purpose) {
+    let normalizedEmail = req.body.email ? normalizeEmailInput(req.body.email) : '';
+
+    if (purpose === 'change_email') {
+        if (!req.user) {
+            return { ok: false, status: 401, error: '请先登录' };
+        }
+        if (!req.user.email) {
+            return { ok: false, status: 400, error: '当前账号未绑定邮箱，暂不支持修改邮箱' };
+        }
+        normalizedEmail = normalizeEmailInput(req.user.email);
+    }
+
+    if (!normalizedEmail) {
+        return { ok: false, status: 400, error: '请输入有效的邮箱地址' };
+    }
+
+    return { ok: true, email: normalizedEmail };
+}
+
+async function validateEmailCodeTarget({ purpose, email }) {
+    const normalizedEmail = normalizeEmailInput(email);
+
+    if (purpose === 'register') {
+        const existing = await db.get('SELECT id FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
+        if (existing) {
+            return { ok: false, status: 409, error: '该邮箱已被注册' };
+        }
+    } else if (purpose === 'reset_password') {
+        const user = await db.get('SELECT id, status FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
+        if (!user) {
+            return { ok: false, status: 404, error: '该邮箱未注册' };
+        }
+        if (user.status !== 'active') {
+            return { ok: false, status: 403, error: '账户已被禁用' };
+        }
+    }
+
+    return { ok: true, email: normalizedEmail };
+}
 
 /**
  * GET /api/auth/email-verification-status
@@ -46,11 +93,44 @@ router.get('/captcha', [
 });
 
 /**
+ * POST /api/auth/check-code-target
+ * Validate email eligibility before captcha / sending code
+ */
+router.post('/check-code-target', optionalAuth, [
+    body('purpose').optional().isIn(SUPPORTED_EMAIL_CODE_PURPOSES).withMessage('不支持的验证码用途'),
+    body('email').optional({ values: 'falsy' }).isEmail().withMessage('请输入有效的邮箱地址'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    try {
+        const purpose = req.body.purpose || 'register';
+        const target = resolveEmailCodeTarget(req, purpose);
+        if (!target.ok) {
+            return res.status(target.status).json({ error: target.error });
+        }
+
+        const validation = await validateEmailCodeTarget({ purpose, email: target.email });
+        if (!validation.ok) {
+            return res.status(validation.status).json({ error: validation.error });
+        }
+
+        return res.json({ ok: true, email: validation.email });
+    } catch (err) {
+        console.error('[Auth] Check code target error:', err.message);
+        return res.status(500).json({ error: '校验邮箱失败，请稍后重试' });
+    }
+});
+
+/**
  * POST /api/auth/send-code
  * Send email verification code
  */
-router.post('/send-code', [
-    body('email').isEmail().withMessage('请输入有效的邮箱地址'),
+router.post('/send-code', optionalAuth, [
+    body('purpose').optional().isIn(SUPPORTED_EMAIL_CODE_PURPOSES).withMessage('不支持的验证码用途'),
+    body('email').optional({ values: 'falsy' }).isEmail().withMessage('请输入有效的邮箱地址'),
     body('captchaToken').trim().notEmpty().withMessage('请先获取图形验证码'),
     body('captchaAnswer').trim().matches(/^\d{5}$/).withMessage('请输入5位图形验证码'),
 ], async (req, res) => {
@@ -60,34 +140,34 @@ router.post('/send-code', [
     }
 
     try {
-        const normalizedEmail = req.body.email.trim().toLowerCase();
+        const purpose = req.body.purpose || 'register';
+        const target = resolveEmailCodeTarget(req, purpose);
+        if (!target.ok) {
+            return res.status(target.status).json({ error: target.error });
+        }
+
+        const normalizedEmail = target.email;
+        const validation = await validateEmailCodeTarget({ purpose, email: normalizedEmail });
+        if (!validation.ok) {
+            return res.status(validation.status).json({ error: validation.error });
+        }
+
         const captchaResult = captchaService.verifyCaptcha({
             purpose: 'send-code',
             email: normalizedEmail,
             answer: req.body.captchaAnswer,
             captchaToken: req.body.captchaToken,
         });
-
         if (!captchaResult.ok) {
             return res.status(captchaResult.status).json({ error: captchaResult.error });
         }
 
-        // Check if email already registered
-        const existing = await db.get('SELECT id FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
-        if (existing) {
-            return res.status(409).json({ error: '该邮箱已被注册' });
-        }
-
-        // Rate limit: 1 code per 60 seconds per email
-        const recent = await db.get(
-            `SELECT created_at FROM email_verification WHERE email = ? AND created_at > NOW() - INTERVAL '60 seconds'`,
-            [normalizedEmail]
-        );
+        const recent = await emailService.hasRecentCodeRequest(normalizedEmail, { purpose, withinSeconds: 60 });
         if (recent) {
             return res.status(429).json({ error: '请60秒后再试' });
         }
 
-        await emailService.sendVerificationCode(normalizedEmail);
+        await emailService.sendVerificationCode(normalizedEmail, { purpose });
         res.json({ message: '验证码已发送' });
     } catch (err) {
         console.error('[Auth] Send code error:', err.message);
@@ -153,35 +233,13 @@ router.post('/register', [
             }
 
             if (emailRequired) {
-                const codeResult = await client.query(
-                    `SELECT code, expires_at, attempts
-                     FROM email_verification
-                     WHERE email = $1
-                     FOR UPDATE`,
-                    [normalizedEmail]
-                );
-
-                if (codeResult.rows.length === 0) {
+                const verifyResult = await emailService.verifyCode(normalizedEmail, emailCode, {
+                    purpose: 'register',
+                    executor: client,
+                });
+                if (!verifyResult.ok) {
                     await client.query('ROLLBACK');
-                    return res.status(400).json({ error: '验证码错误或已过期' });
-                }
-
-                const verification = codeResult.rows[0];
-                const expired = new Date(verification.expires_at).getTime() <= Date.now();
-                const attemptsExceeded = Number(verification.attempts) >= 5;
-
-                if (expired || attemptsExceeded) {
-                    await client.query('ROLLBACK');
-                    return res.status(400).json({ error: '验证码错误或已过期' });
-                }
-
-                if (verification.code !== emailCode) {
-                    await client.query(
-                        'UPDATE email_verification SET attempts = attempts + 1 WHERE email = $1',
-                        [normalizedEmail]
-                    );
-                    await client.query('COMMIT');
-                    return res.status(400).json({ error: '验证码错误或已过期' });
+                    return res.status(400).json({ error: verifyResult.error });
                 }
             }
 
@@ -225,10 +283,6 @@ router.post('/register', [
 
             const accessToken = authService.generateAccessToken(user);
             const refreshToken = await authService.generateRefreshToken(user.id, client);
-
-            if (emailRequired) {
-                await client.query('DELETE FROM email_verification WHERE email = $1', [normalizedEmail]);
-            }
 
             await client.query('COMMIT');
 
@@ -414,6 +468,64 @@ router.put('/change-password', authenticate, [
     } catch (err) {
         console.error('[Auth] Change password error:', err.message);
         res.status(500).json({ error: '密码修改失败' });
+    }
+});
+
+/**
+ * POST /api/auth/reset-password
+ */
+router.post('/reset-password', [
+    body('email').isEmail().withMessage('请输入有效的邮箱地址'),
+    body('emailCode').trim().matches(/^\d{6}$/).withMessage('请输入6位邮箱验证码'),
+    body('newPassword').isLength({ min: 6, max: 100 }).withMessage('新密码至少6个字符'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    const normalizedEmail = req.body.email.trim().toLowerCase();
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        const userResult = await client.query(
+            'SELECT id, status FROM users WHERE LOWER(email) = LOWER($1) FOR UPDATE',
+            [normalizedEmail]
+        );
+        if (userResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: '该邮箱未注册' });
+        }
+        if (userResult.rows[0].status !== 'active') {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: '账户已被禁用' });
+        }
+
+        const verifyResult = await emailService.verifyCode(normalizedEmail, req.body.emailCode, {
+            purpose: 'reset_password',
+            executor: client,
+        });
+        if (!verifyResult.ok) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: verifyResult.error });
+        }
+
+        const newHash = await authService.hashPassword(req.body.newPassword);
+        await client.query(
+            'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+            [newHash, userResult.rows[0].id]
+        );
+        await client.query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [userResult.rows[0].id]);
+
+        await client.query('COMMIT');
+        res.json({ message: '密码已重置，请使用新密码登录' });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[Auth] Reset password error:', err.message);
+        res.status(500).json({ error: '重置密码失败' });
+    } finally {
+        client.release();
     }
 });
 

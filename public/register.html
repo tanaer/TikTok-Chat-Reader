@@ -7,6 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/js/auth.js"></script>
+    <script src="/js/email-verification-flow.js"></script>
 </head>
 <body class="bg-base-300 min-h-screen flex items-center justify-center">
     <div class="card w-full max-w-md bg-base-100 shadow-xl">
@@ -31,12 +32,11 @@
                     <label class="label"><span class="label-text" id="email-label">邮箱</span></label>
                     <input type="email" id="email" class="input input-bordered w-full" placeholder="可选">
                 </div>
-                <!-- Email verification code (hidden by default, shown when verification is required) -->
                 <div class="form-control mb-4 hidden" id="code-group">
                     <label class="label"><span class="label-text">邮箱验证码 *</span></label>
                     <div class="join w-full">
                         <input type="text" id="emailCode" class="input input-bordered join-item flex-1" placeholder="6位数字" maxlength="6">
-                        <button type="button" id="sendCodeBtn" class="btn btn-primary join-item" onclick="sendVerificationCode()">发送验证码</button>
+                        <button type="button" id="sendCodeBtn" class="btn btn-primary join-item">发送验证码</button>
                     </div>
                 </div>
                 <div class="form-control mb-4">
@@ -62,256 +62,13 @@
         </div>
     </div>
 
-    <dialog id="captchaModal" class="modal">
-        <div class="modal-box max-w-md">
-            <h3 class="font-bold text-lg">图形验证码</h3>
-            <p class="text-sm text-base-content/70 mt-1">请输入图中的 5 位数字后发送邮箱验证码</p>
-
-            <div id="captchaModalError" class="alert alert-error hidden mt-4 mb-2">
-                <span id="captchaModalErrorText"></span>
-            </div>
-
-            <div class="mt-4">
-                <div class="flex gap-2 items-stretch">
-                    <div id="captchaImage" class="h-14 flex-1 rounded-lg border border-base-300 bg-base-200 overflow-hidden flex items-center justify-center text-sm text-base-content/50">
-                        加载中...
-                    </div>
-                    <button type="button" id="refreshCaptchaBtn" class="btn btn-outline" onclick="refreshCaptcha(true)">换一张</button>
-                </div>
-                <input type="text" id="captchaAnswer" class="input input-bordered w-full mt-3" placeholder="请输入5位图形验证码" maxlength="5" inputmode="numeric">
-            </div>
-
-            <div class="modal-action">
-                <button type="button" class="btn btn-ghost" onclick="closeCaptchaModal()">取消</button>
-                <button type="button" id="captchaSubmitBtn" class="btn btn-primary" onclick="submitCaptchaAndSend()">确认发送</button>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop">
-            <button onclick="closeCaptchaModal()">close</button>
-        </form>
-    </dialog>
-
     <script>
         if (Auth.isLoggedIn()) {
             window.location.href = '/';
         }
 
         let emailVerificationRequired = false;
-        let codeCooldown = 0;
-        let captchaToken = '';
-        let captchaEmail = '';
-        let captchaSubmitting = false;
-
-        function renderCaptchaPlaceholder(msg) {
-            const box = document.getElementById('captchaImage');
-            box.textContent = msg;
-        }
-
-        function clearCaptchaState(message = '请输入邮箱后加载验证码') {
-            captchaToken = '';
-            captchaEmail = '';
-            document.getElementById('captchaAnswer').value = '';
-            renderCaptchaPlaceholder(message);
-            hideCaptchaModalError();
-        }
-
-        function showCaptchaModalError(msg) {
-            const errorBox = document.getElementById('captchaModalError');
-            const errorText = document.getElementById('captchaModalErrorText');
-            errorText.textContent = msg;
-            errorBox.classList.remove('hidden');
-        }
-
-        function hideCaptchaModalError() {
-            document.getElementById('captchaModalError').classList.add('hidden');
-        }
-
-        function getCaptchaModal() {
-            return document.getElementById('captchaModal');
-        }
-
-        function isCaptchaModalOpen() {
-            return getCaptchaModal().open;
-        }
-
-        function openCaptchaModal() {
-            const modal = getCaptchaModal();
-            hideCaptchaModalError();
-            if (!modal.open) {
-                modal.showModal();
-            }
-        }
-
-        function closeCaptchaModal() {
-            const modal = getCaptchaModal();
-            hideCaptchaModalError();
-            if (modal.open) {
-                modal.close();
-            }
-        }
-
-        function setCaptchaSubmittingState(loading) {
-            captchaSubmitting = loading;
-            document.getElementById('refreshCaptchaBtn').disabled = loading;
-            document.getElementById('captchaSubmitBtn').disabled = loading;
-            document.getElementById('captchaSubmitBtn').textContent = loading ? '发送中...' : '确认发送';
-        }
-
-        function startCodeCooldown() {
-            const btn = document.getElementById('sendCodeBtn');
-            codeCooldown = 60;
-            btn.disabled = true;
-            btn.textContent = '60s';
-
-            const timer = setInterval(() => {
-                codeCooldown--;
-                if (codeCooldown <= 0) {
-                    clearInterval(timer);
-                    btn.disabled = false;
-                    btn.textContent = '发送验证码';
-                } else {
-                    btn.textContent = `${codeCooldown}s`;
-                }
-            }, 1000);
-        }
-
-        async function refreshCaptcha(force = false) {
-            if (!emailVerificationRequired) return;
-
-            const email = document.getElementById('email').value.trim();
-            const normalizedEmail = email.toLowerCase();
-            if (!email) {
-                clearCaptchaState('请输入邮箱后加载验证码');
-                return;
-            }
-
-            if (!force && captchaToken && captchaEmail === normalizedEmail) {
-                return;
-            }
-
-            const box = document.getElementById('captchaImage');
-            const refreshBtn = document.getElementById('refreshCaptchaBtn');
-            refreshBtn.disabled = true;
-            box.textContent = '加载中...';
-            hideCaptchaModalError();
-
-            try {
-                const res = await fetch(`/api/auth/captcha?purpose=send-code&email=${encodeURIComponent(email)}`, {
-                    cache: 'no-store'
-                });
-                const data = await res.json();
-
-                if (!res.ok) {
-                    clearCaptchaState(data.error || '验证码加载失败');
-                    return;
-                }
-
-                captchaToken = data.captchaToken;
-                captchaEmail = normalizedEmail;
-                box.innerHTML = data.svg;
-            } catch (err) {
-                clearCaptchaState('验证码加载失败，请重试');
-            } finally {
-                refreshBtn.disabled = captchaSubmitting;
-            }
-        }
-
-        // Check if email verification is enabled
-        (async function() {
-            try {
-                const res = await fetch('/api/auth/email-verification-status');
-                const data = await res.json();
-                if (data.required) {
-                    emailVerificationRequired = true;
-                    document.getElementById('email-label').textContent = '邮箱 *';
-                    document.getElementById('email').placeholder = '必填';
-                    document.getElementById('email').required = true;
-                    document.getElementById('code-group').classList.remove('hidden');
-                    document.getElementById('email').addEventListener('input', () => {
-                        const normalized = document.getElementById('email').value.trim().toLowerCase();
-                        if (normalized !== captchaEmail) {
-                            clearCaptchaState('邮箱变更后请重新获取验证码');
-                            closeCaptchaModal();
-                        }
-                    });
-                }
-            } catch (e) {}
-        })();
-
-        async function sendVerificationCode() {
-            const email = document.getElementById('email').value.trim();
-            if (!email) {
-                showError('请先输入邮箱地址');
-                return;
-            }
-
-            openCaptchaModal();
-
-            if (!captchaToken || captchaEmail !== email.toLowerCase()) {
-                await refreshCaptcha(true);
-            }
-
-            if (!captchaToken) {
-                showCaptchaModalError('图形验证码加载失败，请刷新后重试');
-                return;
-            }
-
-            document.getElementById('captchaAnswer').focus();
-        }
-
-        async function submitCaptchaAndSend() {
-            const email = document.getElementById('email').value.trim();
-            const captchaAnswer = document.getElementById('captchaAnswer').value.trim();
-            const sendBtn = document.getElementById('sendCodeBtn');
-
-            if (!email) {
-                closeCaptchaModal();
-                showError('请先输入邮箱地址');
-                return;
-            }
-
-            if (!captchaToken || captchaEmail !== email.toLowerCase()) {
-                await refreshCaptcha(true);
-                if (!captchaToken) {
-                    showCaptchaModalError('图形验证码加载失败，请刷新后重试');
-                    return;
-                }
-            }
-
-            if (!/^\d{5}$/.test(captchaAnswer)) {
-                showCaptchaModalError('请输入5位图形验证码');
-                return;
-            }
-
-            setCaptchaSubmittingState(true);
-            sendBtn.disabled = true;
-            hideCaptchaModalError();
-
-            try {
-                const res = await fetch('/api/auth/send-code', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ email, captchaToken, captchaAnswer })
-                });
-                const data = await res.json();
-
-                if (res.ok) {
-                    closeCaptchaModal();
-                    clearCaptchaState();
-                    startCodeCooldown();
-                } else {
-                    sendBtn.disabled = false;
-                    showCaptchaModalError(data.error || '发送失败');
-                    await refreshCaptcha(true);
-                }
-            } catch (err) {
-                sendBtn.disabled = false;
-                showCaptchaModalError('网络错误');
-                await refreshCaptcha(true);
-            } finally {
-                setCaptchaSubmittingState(false);
-            }
-        }
+        let registerEmailCodeFlow = null;
 
         function showError(msg) {
             const errorMsg = document.getElementById('errorMsg');
@@ -320,13 +77,38 @@
             errorMsg.classList.remove('hidden');
         }
 
-        async function handleRegister(e) {
-            e.preventDefault();
+        function hideError() {
+            document.getElementById('errorMsg').classList.add('hidden');
+        }
+
+        async function initRegisterPage() {
+            try {
+                const res = await fetch('/api/auth/email-verification-status');
+                const data = await res.json();
+                emailVerificationRequired = !!data.required;
+                if (!emailVerificationRequired) return;
+
+                document.getElementById('email-label').textContent = '邮箱 *';
+                document.getElementById('email').required = true;
+                document.getElementById('code-group').classList.remove('hidden');
+
+                registerEmailCodeFlow = EmailVerificationFlow.create({
+                    emailInput: '#email',
+                    sendButton: '#sendCodeBtn',
+                    purpose: 'register',
+                    onError: showError,
+                });
+            } catch (err) {
+                console.warn('Init register email verification failed:', err);
+            }
+        }
+
+        async function handleRegister(event) {
+            event.preventDefault();
+            hideError();
+
             const btn = document.getElementById('registerBtn');
             const btnText = document.getElementById('registerBtnText');
-            const errorMsg = document.getElementById('errorMsg');
-            errorMsg.classList.add('hidden');
-
             const username = document.getElementById('username').value.trim();
             const nickname = document.getElementById('nickname').value.trim();
             const email = document.getElementById('email').value.trim();
@@ -338,12 +120,10 @@
                 showError('两次输入的密码不一致');
                 return;
             }
-
             if (emailVerificationRequired && !email) {
                 showError('请输入邮箱地址');
                 return;
             }
-
             if (emailVerificationRequired && !emailCode) {
                 showError('请输入邮箱验证码');
                 return;
@@ -351,7 +131,6 @@
 
             btn.disabled = true;
             btnText.textContent = '注册中...';
-
             try {
                 const body = { username, password, nickname, email: email || undefined };
                 if (emailCode) body.emailCode = emailCode;
@@ -362,22 +141,24 @@
                     body: JSON.stringify(body)
                 });
                 const data = await res.json();
-
-                if (res.ok) {
-                    Auth.setTokens(data.accessToken, data.refreshToken, data.user);
-                    btnText.textContent = '注册成功';
-                    window.location.href = '/';
-                } else {
+                if (!res.ok) {
                     btn.disabled = false;
                     btnText.textContent = '注册';
                     showError(data.error || '注册失败');
+                    return;
                 }
+
+                Auth.setTokens(data.accessToken, data.refreshToken, data.user);
+                btnText.textContent = '注册成功';
+                window.location.href = '/';
             } catch (err) {
                 btn.disabled = false;
                 btnText.textContent = '注册';
                 showError('网络错误，请重试');
             }
         }
+
+        initRegisterPage();
     </script>
 </body>
 </html>
