@@ -20,7 +20,7 @@ function showSection(name) {
     if (event && event.target) event.target.classList.add('active');
 
     const titles = {
-        overview: '系统概览', users: '用户管理', orders: '订单管理', payment: '支付管理', plans: '套餐设置',
+        overview: '系统概览', users: '用户管理', orders: '订单管理', payment: '支付管理', notifications: '通知系统', plans: '套餐设置',
         gifts: '礼物配置', settings: '系统设置', docs: '系统文档', eulerKeys: 'Euler API Keys', aiModels: 'AI 通道配置'
     };
     document.getElementById('section-title').textContent = titles[name] || name;
@@ -29,6 +29,7 @@ function showSection(name) {
     else if (name === 'users') loadUsers(1);
     else if (name === 'orders') loadAdminOrders(1);
     else if (name === 'payment') loadPaymentConfig();
+    else if (name === 'notifications') loadNotificationConfig();
     else if (name === 'plans') { loadPlans(); loadAddons(); loadAiCreditPackages(); }
     else if (name === 'gifts') loadAdminGiftConfig();
     else if (name === 'settings') loadSettingsForm();
@@ -1123,6 +1124,31 @@ function getPositiveIntegerInputValue(id, fallback = '') {
     return value;
 }
 
+function getNonNegativeDecimalInputValue(id, fallback = '') {
+    const raw = document.getElementById(id)?.value?.trim() || '';
+    if (!raw) return fallback;
+    const value = Number(raw);
+    if (!Number.isFinite(value) || value < 0) return fallback;
+    return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function setPaymentFeeFields(modeId, valueId, data = {}) {
+    const modeInput = document.getElementById(modeId);
+    const valueInput = document.getElementById(valueId);
+    if (modeInput) modeInput.value = data?.feeMode || 'fixed';
+    if (valueInput) valueInput.value = data?.feeValue ?? data?.feeAmount ?? 0;
+}
+
+function readPaymentFeeFields(modeId, valueId) {
+    const feeMode = document.getElementById(modeId)?.value || 'fixed';
+    const feeValue = getNonNegativeDecimalInputValue(valueId, 0) || 0;
+    return {
+        feeMode,
+        feeValue,
+        feeAmount: feeValue
+    };
+}
+
 function parseQuickAmountList(value) {
     const uniqueAmounts = [];
     String(value || '')
@@ -1146,6 +1172,48 @@ function readPaymentRange(minId, maxId, fallbackMin) {
     };
 }
 
+function setNotificationPushplusFields(config = {}) {
+    document.getElementById('notice-pushplus-enabled').checked = !!config.enabled;
+    document.getElementById('notice-pushplus-api-url').value = config.apiUrl || 'https://www.pushplus.plus/batchSend';
+    document.getElementById('notice-pushplus-token').value = config.token || '';
+    document.getElementById('notice-pushplus-channel').value = config.channel || 'app';
+}
+
+function readNotificationPushplusFields() {
+    return {
+        enabled: document.getElementById('notice-pushplus-enabled').checked,
+        apiUrl: document.getElementById('notice-pushplus-api-url').value.trim(),
+        token: document.getElementById('notice-pushplus-token').value.trim(),
+        channel: document.getElementById('notice-pushplus-channel').value.trim() || 'app'
+    };
+}
+
+async function loadNotificationConfig() {
+    try {
+        const res = await Auth.apiFetch(`/api/admin/payment/pushplus-config?_=${Date.now()}`, { cache: 'no-store' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '加载失败');
+        setNotificationPushplusFields(data.config || {});
+    } catch (err) {
+        console.error('Load notification config error:', err);
+        alert('加载通知配置失败');
+    }
+}
+
+async function saveNotificationConfig() {
+    const res = await Auth.apiFetch('/api/admin/payment/pushplus-config', {
+        method: 'PUT',
+        body: JSON.stringify({ config: readNotificationPushplusFields() })
+    });
+    const data = await res.json();
+    if (res.ok) {
+        alert(data.message || '通知配置保存成功');
+        loadNotificationConfig();
+    } else {
+        alert(data.error || '通知配置保存失败');
+    }
+}
+
 async function loadPaymentConfig() {
     try {
         const res = await Auth.apiFetch(`/api/admin/payment/config?_=${Date.now()}`, { cache: 'no-store' });
@@ -1157,14 +1225,14 @@ async function loadPaymentConfig() {
         document.getElementById('pay-fixed-wechat-enabled').checked = !!config.fixedQr?.wechat?.enabled;
         document.getElementById('pay-fixed-wechat-data').value = config.fixedQr?.wechat?.imageData || '';
         setPaymentRangeFields('pay-fixed-wechat-min', 'pay-fixed-wechat-max', config.fixedQr?.wechat);
-        document.getElementById('pay-fixed-wechat-fee').value = config.fixedQr?.wechat?.feeAmount ?? 0;
+        setPaymentFeeFields('pay-fixed-wechat-fee-mode', 'pay-fixed-wechat-fee', config.fixedQr?.wechat);
         document.getElementById('pay-fixed-wechat-recommended').checked = !!config.fixedQr?.wechat?.recommended;
         updatePaymentImagePreview('pay-fixed-wechat-preview', 'pay-fixed-wechat-empty', config.fixedQr?.wechat?.imageData || '');
 
         document.getElementById('pay-fixed-alipay-enabled').checked = !!config.fixedQr?.alipay?.enabled;
         document.getElementById('pay-fixed-alipay-data').value = config.fixedQr?.alipay?.imageData || '';
         setPaymentRangeFields('pay-fixed-alipay-min', 'pay-fixed-alipay-max', config.fixedQr?.alipay);
-        document.getElementById('pay-fixed-alipay-fee').value = config.fixedQr?.alipay?.feeAmount ?? 0;
+        setPaymentFeeFields('pay-fixed-alipay-fee-mode', 'pay-fixed-alipay-fee', config.fixedQr?.alipay);
         document.getElementById('pay-fixed-alipay-recommended').checked = !!config.fixedQr?.alipay?.recommended;
         updatePaymentImagePreview('pay-fixed-alipay-preview', 'pay-fixed-alipay-empty', config.fixedQr?.alipay?.imageData || '');
 
@@ -1176,11 +1244,19 @@ async function loadPaymentConfig() {
         document.getElementById('pay-futong-wxpay-enabled').checked = !!config.futong?.wxpayEnabled;
         document.getElementById('pay-futong-alipay-min').value = config.futong?.alipayMinAmount ?? '';
         document.getElementById('pay-futong-alipay-max').value = config.futong?.alipayMaxAmount ?? '';
-        document.getElementById('pay-futong-alipay-fee').value = config.futong?.alipayFeeAmount ?? 0;
+        setPaymentFeeFields('pay-futong-alipay-fee-mode', 'pay-futong-alipay-fee', {
+            feeMode: config.futong?.alipayFeeMode,
+            feeValue: config.futong?.alipayFeeValue,
+            feeAmount: config.futong?.alipayFeeAmount
+        });
         document.getElementById('pay-futong-alipay-recommended').checked = !!config.futong?.alipayRecommended;
         document.getElementById('pay-futong-wxpay-min').value = config.futong?.wxpayMinAmount ?? '';
         document.getElementById('pay-futong-wxpay-max').value = config.futong?.wxpayMaxAmount ?? '';
-        document.getElementById('pay-futong-wxpay-fee').value = config.futong?.wxpayFeeAmount ?? 0;
+        setPaymentFeeFields('pay-futong-wxpay-fee-mode', 'pay-futong-wxpay-fee', {
+            feeMode: config.futong?.wxpayFeeMode,
+            feeValue: config.futong?.wxpayFeeValue,
+            feeAmount: config.futong?.wxpayFeeAmount
+        });
         document.getElementById('pay-futong-wxpay-recommended').checked = !!config.futong?.wxpayRecommended;
         document.getElementById('pay-futong-notify-url').value = config.futong?.notifyUrl || '';
         document.getElementById('pay-futong-return-url').value = config.futong?.returnUrl || '';
@@ -1193,15 +1269,11 @@ async function loadPaymentConfig() {
         document.getElementById('pay-bepusdt-trade-type').value = config.bepusdt?.tradeType || 'usdt.bep20';
         document.getElementById('pay-bepusdt-min').value = config.bepusdt?.minAmount ?? '';
         document.getElementById('pay-bepusdt-max').value = config.bepusdt?.maxAmount ?? '';
-        document.getElementById('pay-bepusdt-fee').value = config.bepusdt?.feeAmount ?? 0;
+        setPaymentFeeFields('pay-bepusdt-fee-mode', 'pay-bepusdt-fee', config.bepusdt);
         document.getElementById('pay-bepusdt-recommended').checked = !!config.bepusdt?.recommended;
         document.getElementById('pay-bepusdt-notify-url').value = config.bepusdt?.notifyUrl || '';
         document.getElementById('pay-bepusdt-open-mode').value = config.bepusdt?.openMode || 'redirect';
 
-        document.getElementById('pay-pushplus-enabled').checked = !!config.pushplus?.enabled;
-        document.getElementById('pay-pushplus-api-url').value = config.pushplus?.apiUrl || 'https://www.pushplus.plus/batchSend';
-        document.getElementById('pay-pushplus-token').value = config.pushplus?.token || '';
-        document.getElementById('pay-pushplus-channel').value = config.pushplus?.channel || 'app';
     } catch (err) {
         console.error('Load payment config error:', err);
         alert('加载支付配置失败');
@@ -1230,6 +1302,11 @@ async function savePaymentConfig() {
     const futongAlipayRange = ranges[2];
     const futongWxpayRange = ranges[3];
     const bepusdtRange = ranges[4];
+    const fixedWechatFee = readPaymentFeeFields('pay-fixed-wechat-fee-mode', 'pay-fixed-wechat-fee');
+    const fixedAlipayFee = readPaymentFeeFields('pay-fixed-alipay-fee-mode', 'pay-fixed-alipay-fee');
+    const futongAlipayFee = readPaymentFeeFields('pay-futong-alipay-fee-mode', 'pay-futong-alipay-fee');
+    const futongWxpayFee = readPaymentFeeFields('pay-futong-wxpay-fee-mode', 'pay-futong-wxpay-fee');
+    const bepusdtFee = readPaymentFeeFields('pay-bepusdt-fee-mode', 'pay-bepusdt-fee');
 
     const payload = {
         minRechargeAmount,
@@ -1240,7 +1317,9 @@ async function savePaymentConfig() {
                 imageData: document.getElementById('pay-fixed-wechat-data').value || '',
                 minAmount: fixedWechatRange.minAmount,
                 maxAmount: fixedWechatRange.maxAmount,
-                feeAmount: getPositiveIntegerInputValue('pay-fixed-wechat-fee', 0) || 0,
+                feeMode: fixedWechatFee.feeMode,
+                feeValue: fixedWechatFee.feeValue,
+                feeAmount: fixedWechatFee.feeAmount,
                 recommended: document.getElementById('pay-fixed-wechat-recommended').checked
             },
             alipay: {
@@ -1248,7 +1327,9 @@ async function savePaymentConfig() {
                 imageData: document.getElementById('pay-fixed-alipay-data').value || '',
                 minAmount: fixedAlipayRange.minAmount,
                 maxAmount: fixedAlipayRange.maxAmount,
-                feeAmount: getPositiveIntegerInputValue('pay-fixed-alipay-fee', 0) || 0,
+                feeMode: fixedAlipayFee.feeMode,
+                feeValue: fixedAlipayFee.feeValue,
+                feeAmount: fixedAlipayFee.feeAmount,
                 recommended: document.getElementById('pay-fixed-alipay-recommended').checked
             }
         },
@@ -1264,11 +1345,15 @@ async function savePaymentConfig() {
             wxpayEnabled: document.getElementById('pay-futong-wxpay-enabled').checked,
             alipayMinAmount: futongAlipayRange.minAmount,
             alipayMaxAmount: futongAlipayRange.maxAmount,
-            alipayFeeAmount: getPositiveIntegerInputValue('pay-futong-alipay-fee', 0) || 0,
+            alipayFeeMode: futongAlipayFee.feeMode,
+            alipayFeeValue: futongAlipayFee.feeValue,
+            alipayFeeAmount: futongAlipayFee.feeAmount,
             alipayRecommended: document.getElementById('pay-futong-alipay-recommended').checked,
             wxpayMinAmount: futongWxpayRange.minAmount,
             wxpayMaxAmount: futongWxpayRange.maxAmount,
-            wxpayFeeAmount: getPositiveIntegerInputValue('pay-futong-wxpay-fee', 0) || 0,
+            wxpayFeeMode: futongWxpayFee.feeMode,
+            wxpayFeeValue: futongWxpayFee.feeValue,
+            wxpayFeeAmount: futongWxpayFee.feeAmount,
             wxpayRecommended: document.getElementById('pay-futong-wxpay-recommended').checked
         },
         bepusdt: {
@@ -1281,14 +1366,10 @@ async function savePaymentConfig() {
             tradeType: document.getElementById('pay-bepusdt-trade-type').value || 'usdt.bep20',
             minAmount: bepusdtRange.minAmount,
             maxAmount: bepusdtRange.maxAmount,
-            feeAmount: getPositiveIntegerInputValue('pay-bepusdt-fee', 0) || 0,
+            feeMode: bepusdtFee.feeMode,
+            feeValue: bepusdtFee.feeValue,
+            feeAmount: bepusdtFee.feeAmount,
             recommended: document.getElementById('pay-bepusdt-recommended').checked
-        },
-        pushplus: {
-            enabled: document.getElementById('pay-pushplus-enabled').checked,
-            apiUrl: document.getElementById('pay-pushplus-api-url').value.trim(),
-            token: document.getElementById('pay-pushplus-token').value.trim(),
-            channel: document.getElementById('pay-pushplus-channel').value.trim() || 'app'
         }
     };
 

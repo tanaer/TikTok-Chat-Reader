@@ -34,6 +34,34 @@ router.put('/config', [
     }
 });
 
+router.get('/pushplus-config', async (req, res) => {
+    try {
+        const config = await paymentService.getAdminPushplusConfig(paymentService.getPublicBaseUrl(req));
+        res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        res.set('Pragma', 'no-cache');
+        res.set('Expires', '0');
+        res.json({ config });
+    } catch (error) {
+        console.error('[AdminPayment] pushplus config load error:', error.message);
+        res.status(500).json({ error: '获取通知配置失败' });
+    }
+});
+
+router.put('/pushplus-config', [
+    body('config').isObject().withMessage('无效的通知配置')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+    try {
+        await paymentService.savePushplusConfig(req.body.config);
+        res.json({ message: '通知配置保存成功' });
+    } catch (error) {
+        console.error('[AdminPayment] pushplus config save error:', error.message);
+        res.status(500).json({ error: '保存通知配置失败' });
+    }
+});
+
 router.post('/orders/:id/mark-paid', [
     param('id').isInt({ min: 1 }).withMessage('订单ID无效')
 ], async (req, res) => {

@@ -97,7 +97,11 @@
 .recharge-modal-box {
     width: min(92vw, 920px);
     max-width: 920px;
+    max-height: calc(100vh - 2rem);
     padding: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     background: linear-gradient(180deg, #111827 0%, #0b1220 100%) !important;
     border: 1px solid rgba(96, 165, 250, 0.16);
 }
@@ -106,6 +110,9 @@
     display: flex;
     flex-direction: column;
     gap: 1rem;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
 }
 .recharge-modal-head {
     display: flex;
@@ -518,6 +525,10 @@
     100% { box-shadow: 0 0 0 0 rgba(248, 113, 113, 0); }
 }
 @media (max-width: 640px) {
+    .recharge-modal-box {
+        width: min(94vw, 920px);
+        max-height: calc(100vh - 1rem);
+    }
     .recharge-modal-inner {
         padding: 1rem;
     }
@@ -1430,7 +1441,7 @@
                 <h3 class="recharge-modal-title">余额充值</h3>
                 <button class="btn btn-sm btn-ghost" onclick="document.getElementById('rechargeModal').close()">关闭</button>
             </div>
-            <div class="recharge-section-shell recharge-amount-shell">
+            <div id="recharge-amount-shell" class="recharge-section-shell recharge-amount-shell">
                 <span class="recharge-section-label">充值金额</span>
                 <div class="recharge-amount-row">
                     <div id="recharge-quick-amounts" class="recharge-quick-list"></div>
@@ -2635,10 +2646,31 @@ function updateRechargeRangeSummary(options) {
         : '不同通道金额范围不同，请以下方通道为准';
 }
 
+function formatRechargeFeeValue(value) {
+    const amount = Number(value || 0);
+    if (!Number.isFinite(amount)) return '0';
+    return amount.toFixed(2).replace(/\.00$/, '').replace(/(\.\d)0$/, '$1');
+}
+
+function buildRechargeOptionFeeText(option) {
+    const feeMode = String(option?.feeMode || 'fixed');
+    const feeValue = Number(option?.feeValue ?? option?.feeAmount ?? 0);
+    if (!Number.isFinite(feeValue) || feeValue <= 0) return '';
+    return feeMode === 'percent'
+        ? `手续费 +${formatRechargeFeeValue(feeValue)}%`
+        : `手续费 +¥${feeValue.toFixed(2)}`;
+}
+
+function syncRechargeSelectionVisibility() {
+    const amountShell = document.getElementById('recharge-amount-shell');
+    if (amountShell) amountShell.classList.toggle('hidden', !!currentRechargeOptionKey);
+}
+
 function renderRechargeOptions(options) {
     const wrap = document.getElementById('recharge-options-wrap');
     const container = document.getElementById('recharge-options');
     const emptyEl = document.getElementById('recharge-empty-state');
+    syncRechargeSelectionVisibility();
     if (!options || options.length === 0) {
         wrap.classList.add('hidden');
         emptyEl.classList.remove('hidden');
@@ -2652,7 +2684,7 @@ function renderRechargeOptions(options) {
     emptyEl.classList.add('hidden');
     wrap.classList.remove('hidden');
     container.innerHTML = visibleOptions.map(option => {
-        const feeAmount = Number(option.feeAmount || 0);
+        const feeText = buildRechargeOptionFeeText(option);
         return `
         <button
             type="button"
@@ -2664,7 +2696,7 @@ function renderRechargeOptions(options) {
                 ${option.recommended ? '<span class="recharge-option-badge">推荐</span>' : ''}
             </span>
             <span class="recharge-option-range">${option.rangeText || formatRechargeOptionRange(option)}</span>
-            ${feeAmount > 0 ? `<span class="recharge-option-fee">手续费 +¥${feeAmount.toFixed(2)}</span>` : ''}
+            ${feeText ? `<span class="recharge-option-fee">${feeText}</span>` : ''}
         </button>`;
     }).join('');
 }
@@ -2849,6 +2881,7 @@ function renderRechargeOrder(order) {
 function resetRechargeSelection(keepAmount = false) {
     currentRechargeOrder = null;
     currentRechargeOptionKey = '';
+    syncRechargeSelectionVisibility();
     document.getElementById('recharge-result').classList.add('hidden');
     resetRechargeQrPreview();
     document.getElementById('recharge-open-link').classList.add('hidden');

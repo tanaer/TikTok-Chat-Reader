@@ -75,6 +75,7 @@
             <li><a onclick="showSection('users')">用户管理</a></li>
             <li><a onclick="showSection('orders')">订单管理</a></li>
             <li><a onclick="showSection('payment')">支付管理</a></li>
+            <li><a onclick="showSection('notifications')">通知系统</a></li>
             <li><a onclick="showSection('plans')">套餐设置</a></li>
             <li><a onclick="showSection('gifts')">礼物配置</a></li>
             <li><a onclick="showSection('eulerKeys')">Euler API Keys</a></li>
@@ -165,7 +166,7 @@
                             <div class="flex justify-between items-start gap-4 flex-wrap">
                                 <div>
                                     <h3 class="card-title">支付管理</h3>
-                                    <p class="text-sm text-base-content/60">配置固定码、三方支付和虚拟币支付。前台只显示通道类型，不显示后台备注名。固定码的“完成支付”通知在右侧“固定码通知（PushPlus）”卡片配置。</p>
+                                    <p class="text-sm text-base-content/60">配置固定码、三方支付和虚拟币支付。前台只显示通道类型，不显示后台备注名。固定码的移动确认通知已迁移到“通知系统”菜单单独配置。</p>
                                 </div>
                                 <div class="form-control w-full sm:w-80">
                                     <label class="label"><span class="label-text">默认最低充值金额</span></label>
@@ -178,7 +179,7 @@
                                     <label class="label"><span class="label-text-alt text-base-content/50">用户中心充值弹层快捷金额，多个金额用英文逗号分隔，留空则使用默认值。</span></label>
                                 </div>
                             </div>
-                            <div class="grid grid-cols-1 xl:grid-cols-4 gap-6 mt-4">
+                            <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-4">
                                 <div class="card bg-base-200 border border-base-300">
                                     <div class="card-body p-4">
                                         <div class="flex items-center justify-between">
@@ -188,10 +189,11 @@
                                         <div class="space-y-4 mt-2">
                                             <div class="rounded-box border border-base-300 p-3">
                                                 <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-fixed-wechat-enabled" class="checkbox checkbox-sm"><span class="label-text">启用微信固定码</span></label>
-                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
                                                     <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-fixed-wechat-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                     <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-fixed-wechat-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-fixed-wechat-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-fixed-wechat-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-fixed-wechat-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
                                                     <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-fixed-wechat-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                                 </div>
                                                 <input type="hidden" id="pay-fixed-wechat-data">
@@ -204,10 +206,11 @@
                                             </div>
                                             <div class="rounded-box border border-base-300 p-3">
                                                 <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-fixed-alipay-enabled" class="checkbox checkbox-sm"><span class="label-text">启用支付宝固定码</span></label>
-                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
                                                     <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-fixed-alipay-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                     <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-fixed-alipay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-fixed-alipay-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-fixed-alipay-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-fixed-alipay-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
                                                     <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-fixed-alipay-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                                 </div>
                                                 <input type="hidden" id="pay-fixed-alipay-data">
@@ -233,19 +236,21 @@
                                             <div class="form-control"><label class="label"><span class="label-text">签名密钥</span></label><input type="text" id="pay-futong-secret" class="input input-bordered input-sm"></div>
                                             <div class="rounded-box border border-base-300 p-3">
                                                 <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-futong-alipay-enabled" class="checkbox checkbox-sm"><span class="label-text">支付宝</span></label>
-                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                                     <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-futong-alipay-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                     <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-futong-alipay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-futong-alipay-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-futong-alipay-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-futong-alipay-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
                                                     <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-futong-alipay-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                                 </div>
                                             </div>
                                             <div class="rounded-box border border-base-300 p-3">
                                                 <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-futong-wxpay-enabled" class="checkbox checkbox-sm"><span class="label-text">微信</span></label>
-                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                                     <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-futong-wxpay-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                     <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-futong-wxpay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-futong-wxpay-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-futong-wxpay-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-futong-wxpay-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
                                                     <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-futong-wxpay-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                                 </div>
                                             </div>
@@ -280,10 +285,11 @@
                                                 </select>
                                                 <label class="label"><span class="label-text-alt">这里只能选一个交易类型；旧的逗号分隔配置会自动取第一个有效值。</span></label>
                                             </div>
-                                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                                                 <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-bepusdt-min" class="input input-bordered input-sm" min="1" step="1"></div>
                                                 <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-bepusdt-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                <div class="form-control"><label class="label"><span class="label-text">通道手续费</span></label><input type="number" id="pay-bepusdt-fee" class="input input-bordered input-sm" min="0" step="1" placeholder="0"></div>
+                                                <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-bepusdt-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
+                                                <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-bepusdt-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
                                                 <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-bepusdt-recommended" class="checkbox checkbox-sm"><span class="label-text">价格推荐</span></label>
                                             </div>
                                             <div class="form-control"><label class="label"><span class="label-text">回调地址</span></label><input type="text" id="pay-bepusdt-notify-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前站点域名"></div>
@@ -297,23 +303,40 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="card bg-base-200 border border-base-300">
-                                    <div class="card-body p-4">
-                                        <div class="flex items-center justify-between">
-                                            <div class="flex items-center gap-2"><h4 class="font-bold">固定码通知（PushPlus）</h4><span class="badge badge-ghost badge-sm">完成支付按钮</span></div>
-                                            <label class="label cursor-pointer gap-3"><span class="label-text">启用</span><input type="checkbox" id="pay-pushplus-enabled" class="toggle toggle-primary toggle-sm"></label>
-                                        </div>
-                                        <div class="space-y-3 mt-2">
-                                            <div class="form-control"><label class="label"><span class="label-text">API 地址</span></label><input type="text" id="pay-pushplus-api-url" class="input input-bordered input-sm" placeholder="https://www.pushplus.plus/batchSend"></div>
-                                            <div class="form-control"><label class="label"><span class="label-text">Token</span></label><input type="text" id="pay-pushplus-token" class="input input-bordered input-sm"></div>
-                                            <div class="form-control"><label class="label"><span class="label-text">Channel</span></label><input type="text" id="pay-pushplus-channel" class="input input-bordered input-sm" placeholder="app"></div>
-                                            <div class="text-xs text-base-content/50 leading-6">用户点击固定码的“完成支付”后，会把移动确认链接推送到这里；消息发出成功后，前台按钮会自动锁定。</div>
-                                        </div>
+                            </div>
+                            <div class="flex justify-end mt-6">
+                                <button class="btn btn-primary" onclick="savePaymentConfig()">保存支付配置</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Notifications Section -->
+            <section id="sec-notifications" class="hidden">
+                <div class="max-w-4xl space-y-6">
+                    <div class="card bg-base-100 shadow">
+                        <div class="card-body">
+                            <div class="mb-4">
+                                <h3 class="card-title">通知系统</h3>
+                                <p class="text-sm text-base-content/60">这里统一管理固定码订单的移动确认通知。当前支持 PushPlus，在用户点击“完成支付”后推送确认链接。</p>
+                            </div>
+                            <div class="card bg-base-200 border border-base-300">
+                                <div class="card-body p-4">
+                                    <div class="flex items-center justify-between">
+                                        <div class="flex items-center gap-2"><h4 class="font-bold">固定码通知（PushPlus）</h4><span class="badge badge-ghost badge-sm">完成支付按钮</span></div>
+                                        <label class="label cursor-pointer gap-3"><span class="label-text">启用</span><input type="checkbox" id="notice-pushplus-enabled" class="toggle toggle-primary toggle-sm"></label>
+                                    </div>
+                                    <div class="space-y-3 mt-2">
+                                        <div class="form-control"><label class="label"><span class="label-text">API 地址</span></label><input type="text" id="notice-pushplus-api-url" class="input input-bordered input-sm" placeholder="https://www.pushplus.plus/batchSend"></div>
+                                        <div class="form-control"><label class="label"><span class="label-text">Token</span></label><input type="text" id="notice-pushplus-token" class="input input-bordered input-sm"></div>
+                                        <div class="form-control"><label class="label"><span class="label-text">Channel</span></label><input type="text" id="notice-pushplus-channel" class="input input-bordered input-sm" placeholder="app"></div>
+                                        <div class="text-xs text-base-content/50 leading-6">用户点击固定码的“完成支付”后，会把移动确认链接推送到这里；消息发出成功后，前台按钮会自动锁定。</div>
                                     </div>
                                 </div>
                             </div>
                             <div class="flex justify-end mt-6">
-                                <button class="btn btn-primary" onclick="savePaymentConfig()">保存支付配置</button>
+                                <button class="btn btn-primary" onclick="saveNotificationConfig()">保存通知配置</button>
                             </div>
                         </div>
                     </div>

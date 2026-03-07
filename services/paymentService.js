@@ -45,6 +45,7 @@ const BEPUSDT_TRADE_TYPE_ALIAS_MAP = {
 
 
 const DEFAULT_RECHARGE_QUICK_AMOUNTS = [50, 100, 200, 500, 1000];
+const PAYMENT_FEE_MODES = ['fixed', 'percent'];
 const PUSHPLUS_DEFAULT_API_URL = 'https://www.pushplus.plus/batchSend';
 const PUSHPLUS_DEFAULT_CHANNEL = 'app';
 const MOBILE_REVIEW_TOKEN_TTL_MS = 72 * 60 * 60 * 1000;
@@ -80,10 +81,22 @@ function normalizeExternalUrl(value) {
     }
 }
 
+function roundMoney(value) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return NaN;
+    return Math.round((amount + Number.EPSILON) * 100) / 100;
+}
+
 function toSafeAmount(value) {
     const amount = Number(value);
     if (!Number.isFinite(amount)) return NaN;
     return Math.round(amount);
+}
+
+function toSafeMoneyAmount(value) {
+    const amount = Number(value);
+    if (!Number.isFinite(amount)) return NaN;
+    return roundMoney(amount);
 }
 
 function normalizePositiveAmount(value, fallback = null) {
@@ -92,10 +105,54 @@ function normalizePositiveAmount(value, fallback = null) {
     return amount;
 }
 
-function normalizeFeeAmount(value, fallback = 0) {
+function normalizeFeeMode(value, fallback = 'fixed') {
+    const safeFallback = PAYMENT_FEE_MODES.includes(fallback) ? fallback : 'fixed';
+    const raw = normalizeString(value).toLowerCase();
+    if (raw === 'percent' || raw === 'percentage' || raw === 'rate') return 'percent';
+    if (raw === 'fixed' || raw === 'amount' || raw === 'fixed_amount') return 'fixed';
+    return safeFallback;
+}
+
+function normalizeFeeValue(value, fallback = 0) {
     const amount = Number(value);
     if (!Number.isFinite(amount) || amount < 0) return fallback;
-    return Math.round(amount);
+    return roundMoney(amount);
+}
+
+function normalizeFeeAmount(value, fallback = 0) {
+    return normalizeFeeValue(value, fallback);
+}
+
+function resolvePaymentFeeConfig(modeValue, valueValue, legacyAmount = 0) {
+    const rawMode = normalizeString(modeValue).toLowerCase();
+    const rawValue = normalizeString(valueValue);
+    const fallbackFixedValue = normalizeFeeValue(legacyAmount, 0);
+
+    if (rawMode === 'percent' || rawMode === 'percentage' || rawMode === 'rate') {
+        return {
+            feeMode: 'percent',
+            feeValue: rawValue ? normalizeFeeValue(valueValue, 0) : 0,
+            feeAmount: 0
+        };
+    }
+
+    return {
+        feeMode: 'fixed',
+        feeValue: rawValue ? normalizeFeeValue(valueValue, fallbackFixedValue) : fallbackFixedValue,
+        feeAmount: rawValue ? normalizeFeeValue(valueValue, fallbackFixedValue) : fallbackFixedValue
+    };
+}
+
+function calculateRechargeFee(baseAmount, feeMode, feeValue) {
+    const safeBaseAmount = Number(baseAmount);
+    if (!Number.isFinite(safeBaseAmount) || safeBaseAmount <= 0) return 0;
+    const safeFeeMode = normalizeFeeMode(feeMode, 'fixed');
+    const safeFeeValue = normalizeFeeValue(feeValue, 0);
+    if (safeFeeValue <= 0) return 0;
+    if (safeFeeMode === 'percent') {
+        return roundMoney((safeBaseAmount * safeFeeValue) / 100);
+    }
+    return roundMoney(safeFeeValue);
 }
 
 function normalizeRechargeQuickAmounts(value, fallback = DEFAULT_RECHARGE_QUICK_AMOUNTS) {
@@ -460,12 +517,16 @@ function getRechargeOptionExtraConfig(config, channel, method) {
     if (channel === 'fixed_qr') {
         if (method === 'wxpay') {
             return {
+                feeMode: normalizeFeeMode(config.fixedQr.wechat.feeMode, 'fixed'),
+                feeValue: normalizeFeeValue(config.fixedQr.wechat.feeValue, 0),
                 feeAmount: normalizeFeeAmount(config.fixedQr.wechat.feeAmount, 0),
                 recommended: config.fixedQr.wechat.recommended === true
             };
         }
         if (method === 'alipay') {
             return {
+                feeMode: normalizeFeeMode(config.fixedQr.alipay.feeMode, 'fixed'),
+                feeValue: normalizeFeeValue(config.fixedQr.alipay.feeValue, 0),
                 feeAmount: normalizeFeeAmount(config.fixedQr.alipay.feeAmount, 0),
                 recommended: config.fixedQr.alipay.recommended === true
             };
@@ -475,12 +536,16 @@ function getRechargeOptionExtraConfig(config, channel, method) {
     if (channel === 'futong') {
         if (method === 'alipay') {
             return {
+                feeMode: normalizeFeeMode(config.futong.alipayFeeMode, 'fixed'),
+                feeValue: normalizeFeeValue(config.futong.alipayFeeValue, 0),
                 feeAmount: normalizeFeeAmount(config.futong.alipayFeeAmount, 0),
                 recommended: config.futong.alipayRecommended === true
             };
         }
         if (method === 'wxpay') {
             return {
+                feeMode: normalizeFeeMode(config.futong.wxpayFeeMode, 'fixed'),
+                feeValue: normalizeFeeValue(config.futong.wxpayFeeValue, 0),
                 feeAmount: normalizeFeeAmount(config.futong.wxpayFeeAmount, 0),
                 recommended: config.futong.wxpayRecommended === true
             };
@@ -489,12 +554,14 @@ function getRechargeOptionExtraConfig(config, channel, method) {
 
     if (channel === 'bepusdt' && method === 'usdt') {
         return {
+            feeMode: normalizeFeeMode(config.bepusdt.feeMode, 'fixed'),
+            feeValue: normalizeFeeValue(config.bepusdt.feeValue, 0),
             feeAmount: normalizeFeeAmount(config.bepusdt.feeAmount, 0),
             recommended: config.bepusdt.recommended === true
         };
     }
 
-    return { feeAmount: 0, recommended: false };
+    return { feeMode: 'fixed', feeValue: 0, feeAmount: 0, recommended: false };
 }
 
 function getPublicBaseUrl(req) {
@@ -542,11 +609,11 @@ function normalizePaymentConfig(settings = {}, baseUrl = '') {
     const futongWxpayEnabled = normalizeBoolean(settings.payment_futong_wxpay_enabled);
     const bepusdtEnabled = normalizeBoolean(settings.payment_bepusdt_enabled);
     const pushplusEnabled = normalizeBoolean(settings.payment_pushplus_enabled);
-    const fixedWechatFeeAmount = normalizeFeeAmount(settings.payment_fixed_wechat_fee_amount, 0);
-    const fixedAlipayFeeAmount = normalizeFeeAmount(settings.payment_fixed_alipay_fee_amount, 0);
-    const futongAlipayFeeAmount = normalizeFeeAmount(settings.payment_futong_alipay_fee_amount, 0);
-    const futongWxpayFeeAmount = normalizeFeeAmount(settings.payment_futong_wxpay_fee_amount, 0);
-    const bepusdtFeeAmount = normalizeFeeAmount(settings.payment_bepusdt_fee_amount, 0);
+    const fixedWechatFeeConfig = resolvePaymentFeeConfig(settings.payment_fixed_wechat_fee_mode, settings.payment_fixed_wechat_fee_value, settings.payment_fixed_wechat_fee_amount);
+    const fixedAlipayFeeConfig = resolvePaymentFeeConfig(settings.payment_fixed_alipay_fee_mode, settings.payment_fixed_alipay_fee_value, settings.payment_fixed_alipay_fee_amount);
+    const futongAlipayFeeConfig = resolvePaymentFeeConfig(settings.payment_futong_alipay_fee_mode, settings.payment_futong_alipay_fee_value, settings.payment_futong_alipay_fee_amount);
+    const futongWxpayFeeConfig = resolvePaymentFeeConfig(settings.payment_futong_wxpay_fee_mode, settings.payment_futong_wxpay_fee_value, settings.payment_futong_wxpay_fee_amount);
+    const bepusdtFeeConfig = resolvePaymentFeeConfig(settings.payment_bepusdt_fee_mode, settings.payment_bepusdt_fee_value, settings.payment_bepusdt_fee_amount);
     const fixedWechatRecommended = normalizeBoolean(settings.payment_fixed_wechat_recommended);
     const fixedAlipayRecommended = normalizeBoolean(settings.payment_fixed_alipay_recommended);
     const futongAlipayRecommended = normalizeBoolean(settings.payment_futong_alipay_recommended);
@@ -579,7 +646,9 @@ function normalizePaymentConfig(settings = {}, baseUrl = '') {
                 imageData: normalizeString(settings.payment_fixed_wechat_image),
                 minAmount: fixedWechatRange.minAmount,
                 maxAmount: fixedWechatRange.maxAmount,
-                feeAmount: fixedWechatFeeAmount,
+                feeMode: fixedWechatFeeConfig.feeMode,
+                feeValue: fixedWechatFeeConfig.feeValue,
+                feeAmount: fixedWechatFeeConfig.feeAmount,
                 recommended: fixedWechatRecommended
             },
             alipay: {
@@ -587,7 +656,9 @@ function normalizePaymentConfig(settings = {}, baseUrl = '') {
                 imageData: normalizeString(settings.payment_fixed_alipay_image),
                 minAmount: fixedAlipayRange.minAmount,
                 maxAmount: fixedAlipayRange.maxAmount,
-                feeAmount: fixedAlipayFeeAmount,
+                feeMode: fixedAlipayFeeConfig.feeMode,
+                feeValue: fixedAlipayFeeConfig.feeValue,
+                feeAmount: fixedAlipayFeeConfig.feeAmount,
                 recommended: fixedAlipayRecommended
             }
         },
@@ -603,8 +674,12 @@ function normalizePaymentConfig(settings = {}, baseUrl = '') {
             alipayMaxAmount: futongAlipayRange.maxAmount,
             wxpayMinAmount: futongWxpayRange.minAmount,
             wxpayMaxAmount: futongWxpayRange.maxAmount,
-            alipayFeeAmount: futongAlipayFeeAmount,
-            wxpayFeeAmount: futongWxpayFeeAmount,
+            alipayFeeMode: futongAlipayFeeConfig.feeMode,
+            alipayFeeValue: futongAlipayFeeConfig.feeValue,
+            alipayFeeAmount: futongAlipayFeeConfig.feeAmount,
+            wxpayFeeMode: futongWxpayFeeConfig.feeMode,
+            wxpayFeeValue: futongWxpayFeeConfig.feeValue,
+            wxpayFeeAmount: futongWxpayFeeConfig.feeAmount,
             alipayRecommended: futongAlipayRecommended,
             wxpayRecommended: futongWxpayRecommended
         },
@@ -617,7 +692,9 @@ function normalizePaymentConfig(settings = {}, baseUrl = '') {
             tradeType: normalizeBepusdtTradeType(settings.payment_bepusdt_trade_type),
             minAmount: bepusdtRange.minAmount,
             maxAmount: bepusdtRange.maxAmount,
-            feeAmount: bepusdtFeeAmount,
+            feeMode: bepusdtFeeConfig.feeMode,
+            feeValue: bepusdtFeeConfig.feeValue,
+            feeAmount: bepusdtFeeConfig.feeAmount,
             recommended: bepusdtRecommended
         },
         pushplus: {
@@ -663,6 +740,8 @@ async function getAdminPaymentConfig(baseUrl = '') {
                 imageData: normalizeString(settings.payment_fixed_wechat_image),
                 minAmount: config.fixedQr.wechat.minAmount,
                 maxAmount: config.fixedQr.wechat.maxAmount,
+                feeMode: config.fixedQr.wechat.feeMode,
+                feeValue: config.fixedQr.wechat.feeValue,
                 feeAmount: config.fixedQr.wechat.feeAmount,
                 recommended: config.fixedQr.wechat.recommended === true
             },
@@ -671,6 +750,8 @@ async function getAdminPaymentConfig(baseUrl = '') {
                 imageData: normalizeString(settings.payment_fixed_alipay_image),
                 minAmount: config.fixedQr.alipay.minAmount,
                 maxAmount: config.fixedQr.alipay.maxAmount,
+                feeMode: config.fixedQr.alipay.feeMode,
+                feeValue: config.fixedQr.alipay.feeValue,
                 feeAmount: config.fixedQr.alipay.feeAmount,
                 recommended: config.fixedQr.alipay.recommended === true
             }
@@ -688,7 +769,11 @@ async function getAdminPaymentConfig(baseUrl = '') {
             alipayMaxAmount: config.futong.alipayMaxAmount,
             wxpayMinAmount: config.futong.wxpayMinAmount,
             wxpayMaxAmount: config.futong.wxpayMaxAmount,
+            alipayFeeMode: config.futong.alipayFeeMode,
+            alipayFeeValue: config.futong.alipayFeeValue,
             alipayFeeAmount: config.futong.alipayFeeAmount,
+            wxpayFeeMode: config.futong.wxpayFeeMode,
+            wxpayFeeValue: config.futong.wxpayFeeValue,
             wxpayFeeAmount: config.futong.wxpayFeeAmount,
             alipayRecommended: config.futong.alipayRecommended === true,
             wxpayRecommended: config.futong.wxpayRecommended === true,
@@ -707,6 +792,8 @@ async function getAdminPaymentConfig(baseUrl = '') {
             tradeType: normalizeBepusdtTradeType(settings.payment_bepusdt_trade_type),
             minAmount: config.bepusdt.minAmount,
             maxAmount: config.bepusdt.maxAmount,
+            feeMode: config.bepusdt.feeMode,
+            feeValue: config.bepusdt.feeValue,
             feeAmount: config.bepusdt.feeAmount,
             recommended: config.bepusdt.recommended === true,
             notifyUrl: config.notifyUrls.bepusdt,
@@ -724,9 +811,36 @@ async function getAdminPaymentConfig(baseUrl = '') {
     };
 }
 
+async function getAdminPushplusConfig(baseUrl = '') {
+    const settings = await db.getSystemSettings();
+    const config = normalizePaymentConfig(settings, baseUrl);
+    return {
+        enabled: normalizeBoolean(settings.payment_pushplus_enabled),
+        apiUrl: config.pushplus.apiUrl,
+        token: normalizeString(settings.payment_pushplus_token),
+        tokenMasked: maskSecret(settings.payment_pushplus_token),
+        channel: normalizePushplusChannel(settings.payment_pushplus_channel),
+        ready: config.pushplus.ready
+    };
+}
+
+function sanitizePushplusConfigInput(input = {}) {
+    return {
+        payment_pushplus_enabled: String(normalizeBoolean(input.enabled)),
+        payment_pushplus_api_url: normalizeString(input.apiUrl) || PUSHPLUS_DEFAULT_API_URL,
+        payment_pushplus_token: normalizeString(input.token),
+        payment_pushplus_channel: normalizePushplusChannel(input.channel)
+    };
+}
+
 function sanitizePaymentConfigInput(input = {}) {
     const minRechargeAmount = Math.max(1, normalizePositiveAmount(input.minRechargeAmount, 1) || 1);
     const quickAmounts = normalizeRechargeQuickAmounts(input.quickAmounts);
+    const fixedWechatFeeConfig = resolvePaymentFeeConfig(input.fixedQr?.wechat?.feeMode, input.fixedQr?.wechat?.feeValue ?? input.fixedQr?.wechat?.feeAmount, input.fixedQr?.wechat?.feeAmount);
+    const fixedAlipayFeeConfig = resolvePaymentFeeConfig(input.fixedQr?.alipay?.feeMode, input.fixedQr?.alipay?.feeValue ?? input.fixedQr?.alipay?.feeAmount, input.fixedQr?.alipay?.feeAmount);
+    const futongAlipayFeeConfig = resolvePaymentFeeConfig(input.futong?.alipayFeeMode, input.futong?.alipayFeeValue ?? input.futong?.alipayFeeAmount, input.futong?.alipayFeeAmount);
+    const futongWxpayFeeConfig = resolvePaymentFeeConfig(input.futong?.wxpayFeeMode, input.futong?.wxpayFeeValue ?? input.futong?.wxpayFeeAmount, input.futong?.wxpayFeeAmount);
+    const bepusdtFeeConfig = resolvePaymentFeeConfig(input.bepusdt?.feeMode, input.bepusdt?.feeValue ?? input.bepusdt?.feeAmount, input.bepusdt?.feeAmount);
     return {
         min_recharge_amount: String(minRechargeAmount),
         payment_quick_amounts: quickAmounts.join(','),
@@ -734,13 +848,17 @@ function sanitizePaymentConfigInput(input = {}) {
         payment_fixed_wechat_image: normalizeString(input.fixedQr?.wechat?.imageData),
         payment_fixed_wechat_min_amount: serializeAmountSetting(input.fixedQr?.wechat?.minAmount, { fallback: minRechargeAmount }),
         payment_fixed_wechat_max_amount: serializeAmountSetting(input.fixedQr?.wechat?.maxAmount, { allowEmpty: true }),
-        payment_fixed_wechat_fee_amount: String(normalizeFeeAmount(input.fixedQr?.wechat?.feeAmount, 0)),
+        payment_fixed_wechat_fee_mode: fixedWechatFeeConfig.feeMode,
+        payment_fixed_wechat_fee_value: String(fixedWechatFeeConfig.feeValue),
+        payment_fixed_wechat_fee_amount: String(fixedWechatFeeConfig.feeAmount),
         payment_fixed_wechat_recommended: String(normalizeBoolean(input.fixedQr?.wechat?.recommended)),
         payment_fixed_alipay_enabled: String(normalizeBoolean(input.fixedQr?.alipay?.enabled)),
         payment_fixed_alipay_image: normalizeString(input.fixedQr?.alipay?.imageData),
         payment_fixed_alipay_min_amount: serializeAmountSetting(input.fixedQr?.alipay?.minAmount, { fallback: minRechargeAmount }),
         payment_fixed_alipay_max_amount: serializeAmountSetting(input.fixedQr?.alipay?.maxAmount, { allowEmpty: true }),
-        payment_fixed_alipay_fee_amount: String(normalizeFeeAmount(input.fixedQr?.alipay?.feeAmount, 0)),
+        payment_fixed_alipay_fee_mode: fixedAlipayFeeConfig.feeMode,
+        payment_fixed_alipay_fee_value: String(fixedAlipayFeeConfig.feeValue),
+        payment_fixed_alipay_fee_amount: String(fixedAlipayFeeConfig.feeAmount),
         payment_fixed_alipay_recommended: String(normalizeBoolean(input.fixedQr?.alipay?.recommended)),
         payment_futong_enabled: String(normalizeBoolean(input.futong?.enabled)),
         payment_futong_api_url: normalizeString(input.futong?.apiUrl),
@@ -753,11 +871,15 @@ function sanitizePaymentConfigInput(input = {}) {
         payment_futong_wxpay_enabled: String(normalizeBoolean(input.futong?.wxpayEnabled)),
         payment_futong_alipay_min_amount: serializeAmountSetting(input.futong?.alipayMinAmount, { fallback: minRechargeAmount }),
         payment_futong_alipay_max_amount: serializeAmountSetting(input.futong?.alipayMaxAmount, { allowEmpty: true }),
-        payment_futong_alipay_fee_amount: String(normalizeFeeAmount(input.futong?.alipayFeeAmount, 0)),
+        payment_futong_alipay_fee_mode: futongAlipayFeeConfig.feeMode,
+        payment_futong_alipay_fee_value: String(futongAlipayFeeConfig.feeValue),
+        payment_futong_alipay_fee_amount: String(futongAlipayFeeConfig.feeAmount),
         payment_futong_alipay_recommended: String(normalizeBoolean(input.futong?.alipayRecommended)),
         payment_futong_wxpay_min_amount: serializeAmountSetting(input.futong?.wxpayMinAmount, { fallback: minRechargeAmount }),
         payment_futong_wxpay_max_amount: serializeAmountSetting(input.futong?.wxpayMaxAmount, { allowEmpty: true }),
-        payment_futong_wxpay_fee_amount: String(normalizeFeeAmount(input.futong?.wxpayFeeAmount, 0)),
+        payment_futong_wxpay_fee_mode: futongWxpayFeeConfig.feeMode,
+        payment_futong_wxpay_fee_value: String(futongWxpayFeeConfig.feeValue),
+        payment_futong_wxpay_fee_amount: String(futongWxpayFeeConfig.feeAmount),
         payment_futong_wxpay_recommended: String(normalizeBoolean(input.futong?.wxpayRecommended)),
         payment_bepusdt_enabled: String(normalizeBoolean(input.bepusdt?.enabled)),
         payment_bepusdt_api_url: normalizeString(input.bepusdt?.apiUrl),
@@ -768,13 +890,36 @@ function sanitizePaymentConfigInput(input = {}) {
         payment_bepusdt_trade_type: normalizeBepusdtTradeType(input.bepusdt?.tradeType),
         payment_bepusdt_min_amount: serializeAmountSetting(input.bepusdt?.minAmount, { fallback: minRechargeAmount }),
         payment_bepusdt_max_amount: serializeAmountSetting(input.bepusdt?.maxAmount, { allowEmpty: true }),
-        payment_bepusdt_fee_amount: String(normalizeFeeAmount(input.bepusdt?.feeAmount, 0)),
+        payment_bepusdt_fee_mode: bepusdtFeeConfig.feeMode,
+        payment_bepusdt_fee_value: String(bepusdtFeeConfig.feeValue),
+        payment_bepusdt_fee_amount: String(bepusdtFeeConfig.feeAmount),
         payment_bepusdt_recommended: String(normalizeBoolean(input.bepusdt?.recommended)),
         payment_pushplus_enabled: String(normalizeBoolean(input.pushplus?.enabled)),
         payment_pushplus_api_url: normalizeString(input.pushplus?.apiUrl) || PUSHPLUS_DEFAULT_API_URL,
         payment_pushplus_token: normalizeString(input.pushplus?.token),
         payment_pushplus_channel: normalizePushplusChannel(input.pushplus?.channel)
     };
+}
+
+async function savePushplusConfig(input = {}) {
+    const entries = Object.entries(sanitizePushplusConfigInput(input));
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        for (const [key, value] of entries) {
+            await client.query(
+                `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, NOW())
+                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+                [key, value]
+            );
+        }
+        await client.query('COMMIT');
+    } catch (error) {
+        await client.query('ROLLBACK');
+        throw error;
+    } finally {
+        client.release();
+    }
 }
 
 async function savePaymentConfig(input = {}) {
@@ -848,6 +993,8 @@ function buildRechargeOptions(config) {
             minAmount: range.minAmount,
             maxAmount: range.maxAmount,
             rangeText: formatAmountRangeText(range.minAmount, range.maxAmount),
+            feeMode: extraConfig.feeMode,
+            feeValue: extraConfig.feeValue,
             feeAmount: extraConfig.feeAmount,
             recommended: extraConfig.recommended === true
         });
@@ -901,6 +1048,8 @@ function buildUserOrderMetadata(metadata, { openMode, label }) {
         label,
         amount: metadata.amount ?? null,
         creditAmount: metadata.creditAmount ?? metadata.amount ?? null,
+        feeMode: normalizeFeeMode(metadata.feeMode, 'fixed'),
+        feeValue: normalizeFeeValue(metadata.feeValue ?? metadata.feeAmount, 0),
         feeAmount: metadata.feeAmount ?? 0,
         payableAmount: metadata.payableAmount ?? metadata.amount ?? null,
         minAmount: metadata.minAmount ?? null,
@@ -944,6 +1093,8 @@ function serializeOrder(row) {
         itemName: order.itemName,
         amount: Number(order.amount || 0),
         creditAmount: Number((metadata.creditAmount ?? order.amount) || 0),
+        feeMode: normalizeFeeMode(metadata.feeMode, 'fixed'),
+        feeValue: normalizeFeeValue(metadata.feeValue ?? metadata.feeAmount, 0),
         feeAmount: Number(metadata.feeAmount || 0),
         payableAmount: Number((metadata.payableAmount ?? order.amount) || 0),
         currency: order.currency,
@@ -982,6 +1133,8 @@ function serializeUserOrder(row) {
         itemName: order.itemName,
         amount: Number(order.amount || 0),
         creditAmount: Number((metadata.creditAmount ?? order.amount) || 0),
+        feeMode: normalizeFeeMode(metadata.feeMode, 'fixed'),
+        feeValue: normalizeFeeValue(metadata.feeValue ?? metadata.feeAmount, 0),
         feeAmount: Number(metadata.feeAmount || 0),
         payableAmount: Number((metadata.payableAmount ?? order.amount) || 0),
         currency: order.currency,
@@ -1254,8 +1407,10 @@ async function createRechargeOrder({ userId, amount, optionKey, req }) {
 
     const optionRange = getOptionAmountRange(config, channel, method);
     const optionExtra = getRechargeOptionExtraConfig(config, channel, method);
-    const feeAmount = normalizeFeeAmount(optionExtra.feeAmount, 0);
-    const payableAmount = safeAmount + feeAmount;
+    const feeMode = normalizeFeeMode(optionExtra.feeMode, 'fixed');
+    const feeValue = normalizeFeeValue(optionExtra.feeValue, 0);
+    const feeAmount = calculateRechargeFee(safeAmount, feeMode, feeValue);
+    const payableAmount = roundMoney(safeAmount + feeAmount);
     const paymentMethod = `${channel}_${method}`;
     const openMode = getChannelPaymentOpenMode(config, channel);
     const baseMetadata = {
@@ -1265,6 +1420,8 @@ async function createRechargeOrder({ userId, amount, optionKey, req }) {
         label: createDisplayLabel(channel, method),
         amount: safeAmount,
         creditAmount: safeAmount,
+        feeMode,
+        feeValue,
         feeAmount,
         payableAmount,
         recommended: optionExtra.recommended === true,
@@ -1559,11 +1716,11 @@ async function markRechargeOrderPaid({ orderNo = null, orderId = null, transacti
         }
 
         if (expectedAmount !== null && expectedAmount !== undefined) {
-            const callbackAmount = toSafeAmount(expectedAmount);
+            const callbackAmount = toSafeMoneyAmount(expectedAmount);
             const orderMetadata = normalizeOrderMetadata(order.metadata);
             const payableAmount = Number.isFinite(Number(orderMetadata.payableAmount))
-                ? Number(orderMetadata.payableAmount)
-                : Number(order.amount || 0);
+                ? roundMoney(orderMetadata.payableAmount)
+                : roundMoney(order.amount || 0);
             if (Number.isFinite(callbackAmount) && callbackAmount !== payableAmount) {
                 await client.query('ROLLBACK');
                 return { success: false, error: '回调金额校验失败' };
@@ -1792,7 +1949,9 @@ async function handleBepusdtNotify(payload) {
 module.exports = {
     getPaymentConfig,
     getAdminPaymentConfig,
+    getAdminPushplusConfig,
     savePaymentConfig,
+    savePushplusConfig,
     getRechargeOptions,
     createRechargeOrder,
     getOrderForUser,
