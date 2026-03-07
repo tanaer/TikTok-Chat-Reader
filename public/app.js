@@ -302,10 +302,8 @@ async function changeSession(val) {
             } else {
                 disconnectLive();
                 updateRoomStatusUI(false);
-                await Promise.all([
-                    loadHistoryData(val),
-                    loadDetailStats(currentDetailRoomId, val)
-                ]);
+                addSystemMessage(`已切换到场次 ${val}`);
+                await loadDetailStats(currentDetailRoomId, val);
             }
         } catch (err) {
             console.error('changeSession error:', err);
@@ -421,14 +419,6 @@ function disconnectLive() {
     // Use 'unsubscribe' instead of 'requestDisconnect' to keep recording active
     socket.emit('unsubscribe');
     console.log('Switched to history view, unsubscribed from live events. Recording continues.');
-}
-
-async function loadHistoryData(sessionId) {
-    addSystemMessage(`Loading session ${sessionId}...`);
-    addSystemMessage("History playback not fully implemented yet (requires Event Replay API). Showing Metadata only.");
-
-    const session = await $.get(`/api/sessions/${sessionId}`);
-    addSystemMessage(`Session Info: ${JSON.stringify(session)}`);
 }
 
 function isViewingLive() {

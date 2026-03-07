@@ -111,9 +111,9 @@
     - 如果提供 `startTime`，则只标记 `timestamp >= startTime` 的事件
 
 - `GET /api/sessions?roomId=...`：列出 session（可选 roomId）
-- `GET /api/sessions/:id`：返回该 session 的 `snapshot_json`（JSON 解析后）
+- `GET /api/sessions/:id`：返回该 session 的 `snapshot_json`（JSON 解析后），当前仅保留给调试/兼容用途
 
-> 当前前端“历史回放”只会请求 `/api/sessions/:id` 并打印元数据；真正的事件回放接口暂未对外暴露（尽管 `manager.js` 里有 `getSessionEvents(sessionId)`）。
+> 当前房间详情切换场次只依赖 `/api/rooms/:id/sessions` 和 `/api/rooms/:id/stats_detail`；`/api/sessions/:id` 不再参与详情页切换流程。
 
 ### 2.6 历史/时间分布
 
