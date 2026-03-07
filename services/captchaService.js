@@ -4,7 +4,7 @@ const { JWT_SECRET } = require('../middleware/auth');
 const CAPTCHA_EXPIRES_MS = 5 * 60 * 1000;
 const CAPTCHA_LENGTH = 5;
 const CAPTCHA_MAX_ATTEMPTS = 5;
-const CAPTCHA_PURPOSES = new Set(['send-code']);
+const CAPTCHA_PURPOSES = new Set(['send-code', 'login']);
 const CAPTCHA_TOKEN_KEY = crypto.createHash('sha256').update(`${JWT_SECRET}:captcha:v1`).digest();
 const captchaUsage = new Map();
 
@@ -31,8 +31,8 @@ function base64UrlDecode(value) {
     return Buffer.from(normalized + padding, 'base64');
 }
 
-function normalizeEmail(email) {
-    return String(email || '').trim().toLowerCase();
+function normalizeIdentity(value) {
+    return String(value || '').trim().toLowerCase();
 }
 
 function cleanupUsage(now = Date.now()) {
@@ -155,13 +155,13 @@ function createCaptcha({ purpose, email }) {
         throw new Error('unsupported captcha purpose');
     }
 
-    const normalizedEmail = normalizeEmail(email);
+    const normalizedIdentity = normalizeIdentity(email);
     const answer = generateCode();
     const expiresAt = Date.now() + CAPTCHA_EXPIRES_MS;
     const token = encryptPayload({
         answer,
         purpose,
-        email: normalizedEmail,
+        email: normalizedIdentity,
         expiresAt,
         nonce: crypto.randomBytes(8).toString('hex')
     });
@@ -181,7 +181,7 @@ function verifyCaptcha({ purpose, email, answer, captchaToken }) {
         cleanupUsage();
 
         const payload = decryptToken(captchaToken);
-        const normalizedEmail = normalizeEmail(email);
+        const normalizedIdentity = normalizeIdentity(email);
         const normalizedAnswer = String(answer || '').trim();
         const key = usageKey(captchaToken);
         const usage = captchaUsage.get(key) || { attempts: 0, consumed: false, expiresAt: Number(payload.expiresAt || 0) };
@@ -200,8 +200,11 @@ function verifyCaptcha({ purpose, email, answer, captchaToken }) {
             return { ok: false, status: 429, error: '图形验证码尝试次数过多，请刷新后重试' };
         }
 
-        if (payload.purpose !== purpose || payload.email !== normalizedEmail) {
-            return { ok: false, status: 400, error: '图形验证码与当前邮箱不匹配，请刷新后重试' };
+        if (payload.purpose !== purpose || payload.email !== normalizedIdentity) {
+            const mismatchMessage = purpose === 'login'
+                ? '图形验证码与当前登录环境不匹配，请刷新后重试'
+                : '图形验证码与当前邮箱不匹配，请刷新后重试';
+            return { ok: false, status: 400, error: mismatchMessage };
         }
 
         if (!/^\d{5}$/.test(normalizedAnswer)) {

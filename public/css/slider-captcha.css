@@ -50,7 +50,7 @@
     user-select: none;
 }
 
-.slider-captcha-widget canvas {
+.slider-captcha-widget > canvas:not(.block) {
     display: block;
     width: 100%;
     max-width: 100%;
@@ -60,10 +60,16 @@
     background: hsl(var(--b1) / 1);
 }
 
-.slider-captcha-widget .block {
+.slider-captcha-widget > canvas.block {
     position: absolute;
     left: 0;
     top: 0;
+    width: auto;
+    max-width: none;
+    height: auto;
+    border: none;
+    border-radius: 0;
+    background: transparent;
 }
 
 .slider-captcha-widget .sliderContainer {

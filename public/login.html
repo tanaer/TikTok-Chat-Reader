@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>登录 - TikTok Live Monitor</title>
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
-    <link href="/css/slider-captcha.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/js/auth.js"></script>
 </head>
@@ -31,20 +30,6 @@
                 <div class="text-right mb-4">
                     <a href="/forgot-password.html" class="link link-primary text-sm">忘记密码？</a>
                 </div>
-
-                <div class="slider-captcha-shell">
-                    <div class="slider-captcha-card">
-                        <div class="slider-captcha-head">
-                            <div>
-                                <div class="slider-captcha-title">安全验证</div>
-                                <div class="slider-captcha-tip">请拖动滑块完成登录验证</div>
-                            </div>
-                        </div>
-                        <div id="login-slider-captcha"></div>
-                        <div id="login-slider-status" class="slider-captcha-status"></div>
-                    </div>
-                </div>
-
                 <button type="submit" id="loginBtn" class="btn btn-primary w-full">
                     <span id="loginBtnText">登录</span>
                 </button>
@@ -60,10 +45,9 @@
         </div>
     </div>
 
-    <script src="/vendor/slider-captcha/longbow.slidercaptcha.js"></script>
-    <script src="/js/slider-captcha-flow.js"></script>
+    <script src="/js/login-captcha-flow.js"></script>
     <script>
-        let loginSliderCaptcha = null;
+        let loginCaptcha = null;
 
         if (Auth.isLoggedIn()) {
             const params = new URLSearchParams(window.location.search);
@@ -71,64 +55,65 @@
         }
 
         document.addEventListener('DOMContentLoaded', () => {
-            if (!window.sliderCaptcha || !window.SharedSliderCaptcha) {
-                document.getElementById('login-slider-status').textContent = '滑块验证加载失败，请刷新后重试';
-                document.getElementById('login-slider-status').className = 'slider-captcha-status is-error';
+            if (window.LoginImageCaptcha) {
+                loginCaptcha = LoginImageCaptcha.create({
+                    captchaUrl: '/api/auth/login-captcha'
+                });
+            }
+        });
+
+        function showError(message) {
+            const errorMsg = document.getElementById('errorMsg');
+            const errorText = document.getElementById('errorText');
+            errorText.textContent = message || '登录失败';
+            errorMsg.classList.remove('hidden');
+        }
+
+        function hideError() {
+            document.getElementById('errorMsg').classList.add('hidden');
+        }
+
+        function setLoginLoading(loading, text = '登录') {
+            const btn = document.getElementById('loginBtn');
+            const btnText = document.getElementById('loginBtnText');
+            btn.disabled = loading;
+            btnText.textContent = text;
+        }
+
+        async function submitLogin(account, password, captchaPayload = null, priorCaptchaError = '') {
+            const { ok, data } = await Auth.login(account, password, captchaPayload || {});
+            if (ok) {
+                setLoginLoading(true, '登录成功');
+                const params = new URLSearchParams(window.location.search);
+                window.location.href = params.get('redirect') || '/';
                 return;
             }
 
-            loginSliderCaptcha = SharedSliderCaptcha.create({
-                purpose: 'login',
-                widget: '#login-slider-captcha',
-                status: '#login-slider-status',
-                readyText: '请完成滑块验证',
-                successText: '验证通过，可继续登录'
-            });
-        });
+            if (data.code === 'CAPTCHA_REQUIRED') {
+                if (!loginCaptcha) {
+                    throw new Error('验证码组件加载失败，请刷新页面后重试');
+                }
+                setLoginLoading(true, '等待验证...');
+                const loginCaptchaPayload = await loginCaptcha.open(priorCaptchaError || (data.error !== '请先完成验证码验证' ? data.error : ''));
+                return submitLogin(account, password, loginCaptchaPayload);
+            }
 
-        async function handleLogin(e) {
-            e.preventDefault();
-            const btn = document.getElementById('loginBtn');
-            const btnText = document.getElementById('loginBtnText');
-            const errorMsg = document.getElementById('errorMsg');
-            const errorText = document.getElementById('errorText');
+            throw new Error(data.error || '登录失败');
+        }
 
-            btn.disabled = true;
-            btnText.textContent = '登录中...';
-            errorMsg.classList.add('hidden');
+        async function handleLogin(event) {
+            event.preventDefault();
+            hideError();
+            setLoginLoading(true, '登录中...');
 
             const account = document.getElementById('account').value.trim();
             const password = document.getElementById('password').value;
-            const sliderPassToken = loginSliderCaptcha?.getPassToken() || '';
-
-            if (!sliderPassToken) {
-                btn.disabled = false;
-                btnText.textContent = '登录';
-                errorText.textContent = '请先完成滑块验证';
-                errorMsg.classList.remove('hidden');
-                return;
-            }
 
             try {
-                const { ok, data } = await Auth.login(account, password, { sliderPassToken });
-
-                if (ok) {
-                    btnText.textContent = '登录成功';
-                    const params = new URLSearchParams(window.location.search);
-                    window.location.href = params.get('redirect') || '/';
-                } else {
-                    btn.disabled = false;
-                    btnText.textContent = '登录';
-                    errorText.textContent = data.error || '登录失败';
-                    errorMsg.classList.remove('hidden');
-                    loginSliderCaptcha?.reset('请重新完成滑块验证');
-                }
+                await submitLogin(account, password);
             } catch (err) {
-                btn.disabled = false;
-                btnText.textContent = '登录';
-                errorText.textContent = '网络错误，请重试';
-                errorMsg.classList.remove('hidden');
-                loginSliderCaptcha?.reset('请重新完成滑块验证');
+                setLoginLoading(false, '登录');
+                showError(err.message || '登录失败');
             }
         }
     </script>

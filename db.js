@@ -365,6 +365,31 @@ async function initDb() {
         await pool.query(`ALTER TABLE user_quota_overrides ADD COLUMN IF NOT EXISTS daily_room_create_limit_temporary INTEGER`);
         await pool.query(`ALTER TABLE user_quota_overrides ADD COLUMN IF NOT EXISTS daily_room_create_limit_temporary_expires_at TIMESTAMP`);
 
+        // Refresh tokens for auth sessions
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS refresh_tokens (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                session_version INTEGER NOT NULL DEFAULT 0,
+                expires_at TIMESTAMP NOT NULL,
+                revoked BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE refresh_tokens ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0`);
+        await pool.query(`UPDATE refresh_tokens SET session_version = 0 WHERE session_version IS NULL`).catch(() => {});
+        await pool.query(`ALTER TABLE refresh_tokens ALTER COLUMN session_version SET DEFAULT 0`).catch(() => {});
+        await pool.query(`ALTER TABLE refresh_tokens ALTER COLUMN session_version SET NOT NULL`).catch(() => {});
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_active ON refresh_tokens(user_id, revoked, expires_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_session_active ON refresh_tokens(user_id, session_version) WHERE revoked = FALSE`);
+
+        // Session version supports global single-login enforcement
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INTEGER DEFAULT 0`);
+        await pool.query(`UPDATE users SET session_version = 0 WHERE session_version IS NULL`).catch(() => {});
+        await pool.query(`ALTER TABLE users ALTER COLUMN session_version SET DEFAULT 0`).catch(() => {});
+        await pool.query(`ALTER TABLE users ALTER COLUMN session_version SET NOT NULL`).catch(() => {});
+
         // In-app user notifications
         await pool.query(`
             CREATE TABLE IF NOT EXISTS user_notifications (

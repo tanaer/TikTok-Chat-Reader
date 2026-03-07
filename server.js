@@ -356,7 +356,8 @@ const SENSITIVE_SETTING_KEYS = [
     'proxy_url', 'dynamic_tunnel_proxy', 'proxy_api_url',
     'session_id', 'port',
     'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_pass',
-    'smtp_from', 'smtp_from_name', 'email_verification_enabled'
+    'smtp_from', 'smtp_from_name', 'email_verification_enabled',
+    'single_session_login_enabled'
 ];
 
 function filterSensitiveSettings(settings) {

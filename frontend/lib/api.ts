@@ -82,9 +82,16 @@ async function apiFetch(
                 headers["Authorization"] = `Bearer ${newTokens.accessToken}`;
                 return fetch(`${API_BASE}${endpoint}`, { ...options, headers }).then(r => r.json());
             }
+
+            tokenStorage.clear();
+            if (typeof window !== "undefined") {
+                window.location.href = "/login";
+            }
         } catch {
             tokenStorage.clear();
-            window.location.href = "/login";
+            if (typeof window !== "undefined") {
+                window.location.href = "/login";
+            }
         }
     }
 

@@ -3,6 +3,9 @@
  * Manages tokens, provides authenticated fetch, and handles auth state
  */
 const Auth = {
+    _sessionHeartbeatTimer: null,
+    _sessionCheckPromise: null,
+
     // Token storage
     getAccessToken() {
         return localStorage.getItem('accessToken');
@@ -20,8 +23,10 @@ const Auth = {
         localStorage.setItem('accessToken', accessToken);
         localStorage.setItem('refreshToken', refreshToken);
         if (user) localStorage.setItem('authUser', JSON.stringify(user));
+        this.startSessionHeartbeat();
     },
     clearTokens() {
+        this.stopSessionHeartbeat();
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
         localStorage.removeItem('authUser');
@@ -32,6 +37,16 @@ const Auth = {
     isAdmin() {
         const user = this.getUser();
         return user && user.role === 'admin';
+    },
+
+    redirectToLogin(message) {
+        if (message) {
+            try { alert(message); } catch { /* ignore */ }
+        }
+        this.clearTokens();
+        if (!window.location.pathname.endsWith('/login.html')) {
+            window.location.href = '/login.html';
+        }
     },
 
     /**
@@ -66,8 +81,7 @@ const Auth = {
                 headers['Authorization'] = `Bearer ${this.getAccessToken()}`;
                 response = await fetch(url, { ...options, headers });
             } else {
-                this.clearTokens();
-                window.location.href = '/login.html';
+                this.redirectToLogin();
                 return response;
             }
         }
@@ -85,7 +99,15 @@ const Auth = {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ refreshToken: this.getRefreshToken() })
             });
-            if (!res.ok) return false;
+            if (!res.ok) {
+                try {
+                    const data = await res.json();
+                    if (data.code === 'SESSION_REVOKED') {
+                        this.redirectToLogin(data.error || '您的账号已在其他地方登录，请重新登录');
+                    }
+                } catch { /* ignore */ }
+                return false;
+            }
             const data = await res.json();
             this.setTokens(data.accessToken, data.refreshToken, data.user);
             return true;
@@ -94,12 +116,54 @@ const Auth = {
         }
     },
 
+    async ensureSessionActive() {
+        if (!this.isLoggedIn()) return false;
+        if (this._sessionCheckPromise) return this._sessionCheckPromise;
+
+        this._sessionCheckPromise = (async () => {
+            try {
+                const res = await this.apiFetch('/api/auth/me', {
+                    headers: { 'Cache-Control': 'no-store' }
+                });
+                return !!res?.ok;
+            } catch {
+                return true;
+            } finally {
+                this._sessionCheckPromise = null;
+            }
+        })();
+
+        return this._sessionCheckPromise;
+    },
+
+    startSessionHeartbeat(intervalMs = 15000) {
+        if (!this.isLoggedIn() || this._sessionHeartbeatTimer) return;
+
+        this.ensureSessionActive().catch(() => {});
+        this._sessionHeartbeatTimer = setInterval(() => {
+            if (!this.isLoggedIn()) {
+                this.stopSessionHeartbeat();
+                return;
+            }
+            this.ensureSessionActive().catch(() => {});
+        }, intervalMs);
+    },
+
+    stopSessionHeartbeat() {
+        if (this._sessionHeartbeatTimer) {
+            clearInterval(this._sessionHeartbeatTimer);
+            this._sessionHeartbeatTimer = null;
+        }
+    },
+
     /**
      * Login
      */
     async login(account, password, options = {}) {
         const body = { username: account, account, password };
-        if (options.sliderPassToken) body.sliderPassToken = options.sliderPassToken;
+        if (options.captchaToken) body.captchaToken = options.captchaToken;
+        if (options.captchaAnswer) body.captchaAnswer = options.captchaAnswer;
+        if (options.captchaPassToken && !body.captchaToken) body.captchaPassToken = options.captchaPassToken;
 
         const res = await fetch('/api/auth/login', {
             method: 'POST',
@@ -152,6 +216,8 @@ const Auth = {
             window.location.href = '/login.html?redirect=' + encodeURIComponent(window.location.pathname);
             return false;
         }
+        this.startSessionHeartbeat();
+        this.ensureSessionActive().catch(() => {});
         return true;
     },
 
@@ -235,6 +301,10 @@ const Auth = {
         });
     }
 };
+
+if (typeof window !== 'undefined' && Auth.isLoggedIn()) {
+    Auth.startSessionHeartbeat();
+}
 
 // Auto-attach Authorization header to all jQuery AJAX requests
 if (typeof $ !== 'undefined') {

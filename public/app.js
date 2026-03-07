@@ -45,10 +45,12 @@ window.hideGlobalLoading = hideGlobalLoading;
 window.withGlobalLoading = withGlobalLoading;
 
 // Initialization
-$(document).ready(() => {
+$(document).ready(async () => {
     // Require authentication - redirect to login if not authenticated
     if (typeof Auth !== 'undefined') {
         if (!Auth.requireAuth()) return; // Redirects to login if not authenticated
+        const sessionOk = await Auth.ensureSessionActive();
+        if (!sessionOk) return;
         Auth.updateNavbar();
         // Show export button for admins or users with export feature
         if (Auth.isAdmin()) {

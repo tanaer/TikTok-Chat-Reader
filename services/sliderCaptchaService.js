@@ -3,17 +3,24 @@ const { JWT_SECRET } = require('../middleware/auth');
 
 const SLIDER_CAPTCHA_PURPOSES = new Set(['login']);
 const SLIDER_PASS_EXPIRES_MS = 5 * 60 * 1000;
-const SLIDER_MAX_DURATION_MS = 20 * 1000;
-const SLIDER_MIN_DURATION_MS = 300;
-const SLIDER_MIN_TRAIL_LENGTH = 12;
-const SLIDER_MAX_TRAIL_LENGTH = 256;
-const SLIDER_PASS_KEY = crypto.createHash('sha256').update(`${JWT_SECRET}:slider:pass:v1`).digest();
+const LOGIN_FAILURE_THRESHOLD = 3;
+const LOGIN_FAILURE_WINDOW_MS = 30 * 60 * 1000;
+const SLIDER_PASS_KEY = crypto.createHash('sha256').update(`${JWT_SECRET}:login-captcha:pass:v2`).digest();
 const sliderPassUsage = new Map();
+const loginFailureUsage = new Map();
 
-function cleanupUsage(now = Date.now()) {
+function cleanupPassUsage(now = Date.now()) {
     for (const [key, usage] of sliderPassUsage.entries()) {
         if (!usage || usage.expiresAt <= now || usage.consumed) {
             sliderPassUsage.delete(key);
+        }
+    }
+}
+
+function cleanupFailureUsage(now = Date.now()) {
+    for (const [key, usage] of loginFailureUsage.entries()) {
+        if (!usage || now - Number(usage.lastFailedAt || 0) > LOGIN_FAILURE_WINDOW_MS) {
+            loginFailureUsage.delete(key);
         }
     }
 }
@@ -65,59 +72,58 @@ function normalizeUserAgent(userAgent) {
 
 function normalizeIp(ip) {
     const raw = Array.isArray(ip) ? ip[0] : String(ip || '');
-    return raw.split(',')[0].trim();
+    let normalized = raw.split(',')[0].trim().toLowerCase() || '127.0.0.1';
+    if (normalized === '::1') return '127.0.0.1';
+    if (normalized.startsWith('::ffff:')) normalized = normalized.slice(7);
+    return normalized || '127.0.0.1';
 }
 
 function fingerprint(value) {
     return crypto.createHash('sha256').update(String(value || '')).digest('hex');
 }
 
-function analyzeTrail(trail, durationMs) {
-    if (!Array.isArray(trail)) {
-        return { ok: false, error: '滑块验证数据无效' };
-    }
+function getFailureState({ ip }) {
+    cleanupFailureUsage();
+    const key = normalizeIp(ip);
+    const usage = loginFailureUsage.get(key);
+    const count = usage ? Number(usage.count || 0) : 0;
+    return {
+        count,
+        captchaRequired: count >= LOGIN_FAILURE_THRESHOLD,
+        remainingBeforeCaptcha: Math.max(0, LOGIN_FAILURE_THRESHOLD - count),
+    };
+}
 
-    const normalizedTrail = trail
-        .map(value => Number(value))
-        .filter(value => Number.isFinite(value))
-        .slice(0, SLIDER_MAX_TRAIL_LENGTH)
-        .map(value => Math.round(value));
+function isCaptchaRequired({ ip }) {
+    return getFailureState({ ip }).captchaRequired;
+}
 
-    if (normalizedTrail.length < SLIDER_MIN_TRAIL_LENGTH) {
-        return { ok: false, error: '滑块轨迹过短，请重试' };
-    }
+function recordFailedAttempt({ ip }) {
+    cleanupFailureUsage();
+    const key = normalizeIp(ip);
+    const current = loginFailureUsage.get(key) || { count: 0, lastFailedAt: 0 };
+    const next = {
+        count: Number(current.count || 0) + 1,
+        lastFailedAt: Date.now(),
+    };
+    loginFailureUsage.set(key, next);
+    return {
+        count: next.count,
+        captchaRequired: next.count >= LOGIN_FAILURE_THRESHOLD,
+        remainingBeforeCaptcha: Math.max(0, LOGIN_FAILURE_THRESHOLD - next.count),
+    };
+}
 
-    const normalizedDuration = Number(durationMs || 0);
-    if (!Number.isFinite(normalizedDuration) || normalizedDuration < SLIDER_MIN_DURATION_MS || normalizedDuration > SLIDER_MAX_DURATION_MS) {
-        return { ok: false, error: '滑块验证超时或过快，请重试' };
-    }
-
-    const uniqueValues = new Set(normalizedTrail);
-    if (uniqueValues.size < 2) {
-        return { ok: false, error: '滑块轨迹异常，请重试' };
-    }
-
-    const nonZeroMoves = normalizedTrail.filter(value => value !== 0).length;
-    if (nonZeroMoves < 2) {
-        return { ok: false, error: '滑块轨迹过于机械，请重试' };
-    }
-
-    const sum = normalizedTrail.reduce((acc, value) => acc + value, 0);
-    const average = sum / normalizedTrail.length;
-    const variance = normalizedTrail.reduce((acc, value) => acc + Math.pow(value - average, 2), 0) / normalizedTrail.length;
-    if (!Number.isFinite(variance) || variance <= 0) {
-        return { ok: false, error: '滑块轨迹校验失败，请重试' };
-    }
-
-    return { ok: true };
+function clearFailedAttempts({ ip }) {
+    loginFailureUsage.delete(normalizeIp(ip));
 }
 
 function issuePassToken({ purpose, ip, userAgent }) {
     if (!SLIDER_CAPTCHA_PURPOSES.has(purpose)) {
-        return { ok: false, error: '不支持的滑块用途' };
+        return { ok: false, error: '不支持的验证码用途' };
     }
 
-    cleanupUsage();
+    cleanupPassUsage();
 
     const expiresAt = Date.now() + SLIDER_PASS_EXPIRES_MS;
     const token = encryptPayload({
@@ -143,48 +149,52 @@ function issuePassToken({ purpose, ip, userAgent }) {
 
 function consumePassToken({ purpose, passToken, ip, userAgent }) {
     try {
-        cleanupUsage();
+        cleanupPassUsage();
 
         const payload = decryptPayload(passToken);
         const key = usageKey(passToken);
         const usage = sliderPassUsage.get(key);
         if (!usage) {
-            return { ok: false, error: '滑块验证已失效，请重新验证' };
+            return { ok: false, error: '验证码已失效，请重新验证' };
         }
 
         if (usage.consumed) {
             sliderPassUsage.delete(key);
-            return { ok: false, error: '滑块验证已失效，请重新验证' };
+            return { ok: false, error: '验证码已失效，请重新验证' };
         }
 
         if (Date.now() > Number(payload.expiresAt || 0) || Date.now() > Number(usage.expiresAt || 0)) {
             sliderPassUsage.delete(key);
-            return { ok: false, error: '滑块验证已过期，请重新验证' };
+            return { ok: false, error: '验证码已过期，请重新验证' };
         }
 
         if (payload.purpose !== purpose || usage.purpose !== purpose) {
             sliderPassUsage.delete(key);
-            return { ok: false, error: '滑块验证用途不匹配，请重新验证' };
+            return { ok: false, error: '验证码用途不匹配，请重新验证' };
         }
 
         const currentIpFingerprint = fingerprint(normalizeIp(ip));
         const currentUserAgentFingerprint = fingerprint(normalizeUserAgent(userAgent));
         if (usage.ipFingerprint !== currentIpFingerprint || usage.userAgentFingerprint !== currentUserAgentFingerprint) {
             sliderPassUsage.delete(key);
-            return { ok: false, error: '滑块验证环境已变化，请重新验证' };
+            return { ok: false, error: '验证码环境已变化，请重新验证' };
         }
 
         usage.consumed = true;
         sliderPassUsage.set(key, usage);
         return { ok: true };
     } catch {
-        return { ok: false, error: '滑块验证已失效，请重新验证' };
+        return { ok: false, error: '验证码已失效，请重新验证' };
     }
 }
 
 module.exports = {
-    analyzeTrail,
+    SLIDER_CAPTCHA_PURPOSES,
+    LOGIN_FAILURE_THRESHOLD,
+    getFailureState,
+    isCaptchaRequired,
+    recordFailedAttempt,
+    clearFailedAttempts,
     issuePassToken,
     consumePassToken,
-    SLIDER_CAPTCHA_PURPOSES,
 };

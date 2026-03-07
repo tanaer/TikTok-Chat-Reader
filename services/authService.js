@@ -6,6 +6,15 @@ const { JWT_SECRET, JWT_EXPIRES_IN, REFRESH_EXPIRES_IN } = require('../middlewar
 
 const SALT_ROUNDS = 10;
 
+function normalizeBooleanSetting(value) {
+    return value === true || value === 'true' || value === 1 || value === '1';
+}
+
+function normalizeSessionVersion(value) {
+    const num = Number(value);
+    return Number.isInteger(num) && num >= 0 ? num : 0;
+}
+
 /**
  * Hash a password
  */
@@ -25,7 +34,12 @@ async function comparePassword(password, hash) {
  */
 function generateAccessToken(user) {
     return jwt.sign(
-        { userId: user.id, username: user.username, role: user.role },
+        {
+            userId: user.id,
+            username: user.username,
+            role: user.role,
+            sessionVersion: normalizeSessionVersion(user.sessionVersion ?? user.session_version)
+        },
         JWT_SECRET,
         { expiresIn: JWT_EXPIRES_IN }
     );
@@ -34,7 +48,8 @@ function generateAccessToken(user) {
 /**
  * Generate refresh token and store hash in DB
  */
-async function generateRefreshToken(userId, executor = db.pool) {
+async function generateRefreshToken(userId, options = {}, executor = db.pool) {
+    const sessionVersion = normalizeSessionVersion(options.sessionVersion);
     const token = crypto.randomBytes(40).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
@@ -53,8 +68,8 @@ async function generateRefreshToken(userId, executor = db.pool) {
     const expiresAt = new Date(Date.now() + expiresMs);
 
     await executor.query(
-        `INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
-        [userId, tokenHash, expiresAt.toISOString()]
+        `INSERT INTO refresh_tokens (user_id, token_hash, session_version, expires_at) VALUES ($1, $2, $3, $4)`,
+        [userId, tokenHash, sessionVersion, expiresAt.toISOString()]
     );
 
     return token;
@@ -67,10 +82,24 @@ async function generateRefreshToken(userId, executor = db.pool) {
 async function verifyRefreshToken(token) {
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
     const row = await db.get(
-        `SELECT user_id FROM refresh_tokens WHERE token_hash = ? AND expires_at > NOW() AND revoked = false`,
+        `SELECT user_id, session_version FROM refresh_tokens WHERE token_hash = ? AND expires_at > NOW() AND revoked = false`,
         [tokenHash]
     );
-    return row ? row.userId : null;
+    if (!row) {
+        return null;
+    }
+
+    return {
+        userId: row.userId,
+        sessionVersion: normalizeSessionVersion(row.sessionVersion)
+    };
+}
+
+async function isSingleSessionEnabled(executor = db) {
+    const row = await executor.get
+        ? await executor.get('SELECT value FROM settings WHERE key = ?', ['single_session_login_enabled'])
+        : (await executor.query('SELECT value FROM settings WHERE key = $1', ['single_session_login_enabled'])).rows[0] || null;
+    return normalizeBooleanSetting(row?.value);
 }
 
 /**
@@ -103,5 +132,7 @@ module.exports = {
     verifyRefreshToken,
     revokeRefreshToken,
     revokeAllUserTokens,
-    cleanExpiredTokens
+    cleanExpiredTokens,
+    isSingleSessionEnabled,
+    normalizeSessionVersion
 };

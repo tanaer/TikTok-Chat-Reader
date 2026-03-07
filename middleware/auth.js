@@ -5,6 +5,17 @@ const JWT_SECRET = process.env.JWT_SECRET || 'tkmonitor_jwt_secret_change_in_pro
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '2h';
 const REFRESH_EXPIRES_IN = process.env.REFRESH_EXPIRES_IN || '7d';
 
+function normalizeSessionVersion(value) {
+    const num = Number(value);
+    return Number.isInteger(num) && num >= 0 ? num : 0;
+}
+
+function isSessionRevoked(decoded, user) {
+    const tokenSessionVersion = normalizeSessionVersion(decoded?.sessionVersion);
+    const userSessionVersion = normalizeSessionVersion(user?.sessionVersion ?? user?.session_version);
+    return tokenSessionVersion !== userSessionVersion;
+}
+
 /**
  * Authenticate middleware - requires valid access token
  */
@@ -18,7 +29,7 @@ async function authenticate(req, res, next) {
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
         const user = await db.get(
-            'SELECT id, username, email, nickname, balance, role, status FROM users WHERE id = ?',
+            'SELECT id, username, email, nickname, balance, role, status, session_version FROM users WHERE id = ?',
             [decoded.userId]
         );
         if (!user) {
@@ -26,6 +37,9 @@ async function authenticate(req, res, next) {
         }
         if (user.status !== 'active') {
             return res.status(403).json({ error: '账户已被禁用', code: 'ACCOUNT_DISABLED' });
+        }
+        if (isSessionRevoked(decoded, user)) {
+            return res.status(401).json({ error: '账号已在其他地方登录，请重新登录', code: 'SESSION_REVOKED' });
         }
         req.user = user;
         next();
@@ -51,10 +65,10 @@ async function optionalAuth(req, res, next) {
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
         const user = await db.get(
-            'SELECT id, username, email, nickname, balance, role, status FROM users WHERE id = ?',
+            'SELECT id, username, email, nickname, balance, role, status, session_version FROM users WHERE id = ?',
             [decoded.userId]
         );
-        req.user = (user && user.status === 'active') ? user : null;
+        req.user = (user && user.status === 'active' && !isSessionRevoked(decoded, user)) ? user : null;
     } catch {
         req.user = null;
     }

@@ -592,6 +592,10 @@ const smtpSettingDefs = [
     { key: 'email_verification_enabled', label: '注册邮箱验证', type: 'toggle' },
 ];
 
+const authSettingDefs = [
+    { key: 'single_session_login_enabled', label: '单点登录（新登录踢掉旧登录）', type: 'toggle' },
+];
+
 async function loadSettingsForm() {
     const res = await Auth.apiFetch('/api/admin/settings');
     const data = await res.json();
@@ -620,6 +624,10 @@ async function loadSettingsForm() {
         <h4 class="text-lg font-bold mb-2">邮箱 SMTP 配置</h4>
         <p class="text-sm text-base-content/60 mb-3">配置 SMTP 后可开启注册邮箱验证码功能</p>
         ${renderSettingFields(smtpSettingDefs)}
+        <div class="divider"></div>
+        <h4 class="text-lg font-bold mb-2">登录与安全</h4>
+        <p class="text-sm text-base-content/60 mb-3">开启后，同一账号再次登录会让旧登录立即失效。</p>
+        ${renderSettingFields(authSettingDefs)}
         <div class="flex gap-2 mt-3">
             <button class="btn btn-sm btn-outline" onclick="testSmtpConnection()">测试连接</button>
             <button class="btn btn-sm btn-outline" onclick="testSmtpSend()">发送测试邮件</button>

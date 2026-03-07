@@ -12,6 +12,14 @@ const router = express.Router();
 const SUPPORTED_EMAIL_CODE_PURPOSES = ['register', 'reset_password', 'change_email'];
 const SUPPORTED_SLIDER_CAPTCHA_PURPOSES = Array.from(sliderCaptchaService.SLIDER_CAPTCHA_PURPOSES);
 
+function resolveClientIp(req) {
+    const xForwardedFor = req.headers['x-forwarded-for'];
+    if (typeof xForwardedFor === 'string' && xForwardedFor.trim()) {
+        return xForwardedFor.split(',')[0].trim();
+    }
+    return req.ip || req.socket?.remoteAddress || '127.0.0.1';
+}
+
 function normalizeEmailInput(email) {
     return String(email || '').trim().toLowerCase();
 }
@@ -90,6 +98,30 @@ router.get('/captcha', [
         return res.json(captcha);
     } catch (err) {
         console.error('[Auth] Captcha create error:', err.message);
+        return res.status(500).json({ error: '验证码生成失败，请稍后重试' });
+    }
+});
+
+
+/**
+ * GET /api/auth/login-captcha
+ * Create captcha for login after repeated failed attempts
+ */
+router.get('/login-captcha', async (req, res) => {
+    try {
+        const clientIp = resolveClientIp(req);
+        if (!sliderCaptchaService.isCaptchaRequired({ ip: clientIp })) {
+            return res.status(400).json({ error: '当前无需验证码', code: 'CAPTCHA_NOT_REQUIRED' });
+        }
+
+        const captcha = captchaService.createCaptcha({
+            purpose: 'login',
+            email: clientIp,
+        });
+        res.set('Cache-Control', 'no-store');
+        return res.json(captcha);
+    } catch (err) {
+        console.error('[Auth] Login captcha create error:', err.message);
         return res.status(500).json({ error: '验证码生成失败，请稍后重试' });
     }
 });
@@ -174,15 +206,13 @@ router.post('/register-availability', [
     }
 });
 
+
 /**
- * POST /api/auth/slider-captcha/verify
- * Verify slider captcha trail and issue short-lived pass token
+ * POST /api/auth/jigsaw/pass
+ * Issue short-lived captcha pass token after jigsaw succeeds on client
  */
-router.post('/slider-captcha/verify', [
-    body('purpose').optional().isIn(SUPPORTED_SLIDER_CAPTCHA_PURPOSES).withMessage('不支持的滑块验证用途'),
-    body('trail').isArray({ min: 1 }).withMessage('缺少滑块轨迹'),
-    body('trail.*').optional().isInt({ min: -200, max: 200 }).withMessage('滑块轨迹数据无效'),
-    body('durationMs').isInt({ min: 1, max: 30000 }).withMessage('滑块验证时长无效'),
+router.post('/jigsaw/pass', [
+    body('purpose').optional().isIn(SUPPORTED_SLIDER_CAPTCHA_PURPOSES).withMessage('不支持的验证码用途'),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -191,14 +221,13 @@ router.post('/slider-captcha/verify', [
 
     try {
         const purpose = req.body.purpose || 'login';
-        const trailCheck = sliderCaptchaService.analyzeTrail(req.body.trail, req.body.durationMs);
-        if (!trailCheck.ok) {
-            return res.status(400).json({ error: trailCheck.error });
+        if (!sliderCaptchaService.isCaptchaRequired({ ip: resolveClientIp(req) })) {
+            return res.status(400).json({ error: '当前无需验证码', code: 'CAPTCHA_NOT_REQUIRED' });
         }
 
         const issued = sliderCaptchaService.issuePassToken({
             purpose,
-            ip: req.ip,
+            ip: resolveClientIp(req),
             userAgent: req.headers['user-agent'] || ''
         });
         if (!issued.ok) {
@@ -210,8 +239,8 @@ router.post('/slider-captcha/verify', [
             expiresIn: issued.expiresIn
         });
     } catch (err) {
-        console.error('[Auth] Slider captcha verify error:', err.message);
-        return res.status(500).json({ error: '滑块验证失败，请稍后重试' });
+        console.error('[Auth] Jigsaw pass issue error:', err.message);
+        return res.status(500).json({ error: '验证码处理失败，请稍后重试' });
     }
 });
 
@@ -338,7 +367,7 @@ router.post('/register', [
             const userResult = await client.query(
                 `INSERT INTO users (username, email, password_hash, nickname)
                  VALUES ($1, $2, $3, $4)
-                 RETURNING id, username, nickname, email, balance, role`,
+                 RETURNING id, username, nickname, email, balance, role, session_version`,
                 [username, normalizedEmail, passwordHash, nickname || username]
             );
             const user = userResult.rows[0];
@@ -373,7 +402,11 @@ router.post('/register', [
             }
 
             const accessToken = authService.generateAccessToken(user);
-            const refreshToken = await authService.generateRefreshToken(user.id, client);
+            const refreshToken = await authService.generateRefreshToken(
+                user.id,
+                { sessionVersion: authService.normalizeSessionVersion(user.session_version) },
+                client
+            );
 
             await client.query('COMMIT');
 
@@ -420,7 +453,8 @@ router.post('/register', [
 router.post('/login', [
     body('username').trim().notEmpty().withMessage('请输入用户名或邮箱'),
     body('password').notEmpty().withMessage('请输入密码'),
-    body('sliderPassToken').trim().notEmpty().withMessage('请先完成滑块验证'),
+    body('captchaToken').optional().trim(),
+    body('captchaAnswer').optional().trim(),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -428,51 +462,121 @@ router.post('/login', [
     }
 
     try {
-        const { username, password, sliderPassToken } = req.body;
-        const sliderCheck = sliderCaptchaService.consumePassToken({
-            purpose: 'login',
-            passToken: sliderPassToken,
-            ip: req.ip,
-            userAgent: req.headers['user-agent'] || ''
-        });
-        if (!sliderCheck.ok) {
-            return res.status(400).json({ error: sliderCheck.error });
+        const { username, password } = req.body;
+        const clientIp = resolveClientIp(req);
+        const captchaToken = String(req.body.captchaToken || '').trim();
+        const captchaAnswer = String(req.body.captchaAnswer || '').trim();
+        const captchaRequired = sliderCaptchaService.isCaptchaRequired({ ip: clientIp });
+        if (captchaRequired) {
+            if (!captchaToken || !captchaAnswer) {
+                return res.status(403).json({ error: '请先完成验证码验证', code: 'CAPTCHA_REQUIRED' });
+            }
+            const captchaCheck = captchaService.verifyCaptcha({
+                purpose: 'login',
+                email: clientIp,
+                answer: captchaAnswer,
+                captchaToken,
+            });
+            if (!captchaCheck.ok) {
+                return res.status(captchaCheck.status || 400).json({ error: captchaCheck.error, code: 'CAPTCHA_REQUIRED' });
+            }
         }
 
         const loginInput = String(username || '').trim();
         const normalizedLoginInput = loginInput.toLowerCase();
 
-        const result = await db.pool.query(
-            `SELECT id, username, email, nickname, balance, role, status, password_hash
-             FROM users
-             WHERE username = $1 OR LOWER(email) = $2`,
-            [loginInput, normalizedLoginInput]
-        );
-        if (result.rows.length === 0) {
-            return res.status(401).json({ error: '用户名或密码错误' });
+        const singleSessionEnabled = await authService.isSingleSessionEnabled();
+        const client = await db.pool.connect();
+
+        try {
+            await client.query('BEGIN');
+
+            const result = await client.query(
+                `SELECT id, username, email, nickname, balance, role, status, password_hash, session_version
+                 FROM users
+                 WHERE username = $1 OR LOWER(email) = $2
+                 FOR UPDATE`,
+                [loginInput, normalizedLoginInput]
+            );
+            if (result.rows.length === 0) {
+                await client.query('ROLLBACK');
+                const failureState = sliderCaptchaService.recordFailedAttempt({ ip: resolveClientIp(req) });
+                return res.status(401).json({
+                    error: '用户名或密码错误',
+                    code: 'INVALID_CREDENTIALS',
+                    captchaRequiredNext: failureState.captchaRequired,
+                    remainingBeforeCaptcha: failureState.remainingBeforeCaptcha,
+                });
+            }
+
+            const user = result.rows[0];
+            if (user.status !== 'active') {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ error: '账户已被禁用' });
+            }
+
+            const valid = await authService.comparePassword(password, user.password_hash);
+            if (!valid) {
+                await client.query('ROLLBACK');
+                const failureState = sliderCaptchaService.recordFailedAttempt({ ip: resolveClientIp(req) });
+                return res.status(401).json({
+                    error: '用户名或密码错误',
+                    code: 'INVALID_CREDENTIALS',
+                    captchaRequiredNext: failureState.captchaRequired,
+                    remainingBeforeCaptcha: failureState.remainingBeforeCaptcha,
+                });
+            }
+
+            sliderCaptchaService.clearFailedAttempts({ ip: resolveClientIp(req) });
+
+            const currentSessionVersion = authService.normalizeSessionVersion(user.session_version);
+            const nextSessionVersion = singleSessionEnabled
+                ? currentSessionVersion + 1
+                : currentSessionVersion;
+
+            if (singleSessionEnabled) {
+                await client.query(
+                    'UPDATE refresh_tokens SET revoked = true WHERE user_id = $1 AND revoked = false',
+                    [user.id]
+                );
+            }
+
+            await client.query(
+                'UPDATE users SET last_login_at = NOW(), session_version = $1 WHERE id = $2',
+                [nextSessionVersion, user.id]
+            );
+
+            const sessionUser = {
+                ...user,
+                session_version: nextSessionVersion
+            };
+            const accessToken = authService.generateAccessToken(sessionUser);
+            const refreshToken = await authService.generateRefreshToken(
+                user.id,
+                { sessionVersion: nextSessionVersion },
+                client
+            );
+
+            await client.query('COMMIT');
+
+            res.json({
+                accessToken,
+                refreshToken,
+                user: {
+                    id: user.id,
+                    username: user.username,
+                    nickname: user.nickname,
+                    email: user.email,
+                    role: user.role,
+                    balance: Number(user.balance)
+                }
+            });
+        } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
+        } finally {
+            client.release();
         }
-
-        const user = result.rows[0];
-        if (user.status !== 'active') {
-            return res.status(403).json({ error: '账户已被禁用' });
-        }
-
-        const valid = await authService.comparePassword(password, user.password_hash);
-        if (!valid) {
-            return res.status(401).json({ error: '用户名或密码错误' });
-        }
-
-        // Update last login
-        await db.run(`UPDATE users SET last_login_at = NOW() WHERE id = ?`, [user.id]);
-
-        const accessToken = authService.generateAccessToken(user);
-        const refreshToken = await authService.generateRefreshToken(user.id);
-
-        res.json({
-            accessToken,
-            refreshToken,
-            user: { id: user.id, username: user.username, nickname: user.nickname, email: user.email, role: user.role, balance: Number(user.balance) }
-        });
     } catch (err) {
         console.error('[Auth] Login error:', err.message);
         res.status(500).json({ error: '登录失败' });
@@ -489,23 +593,32 @@ router.post('/refresh', async (req, res) => {
             return res.status(400).json({ error: '缺少刷新令牌' });
         }
 
-        const userId = await authService.verifyRefreshToken(refreshToken);
-        if (!userId) {
+        const refreshSession = await authService.verifyRefreshToken(refreshToken);
+        if (!refreshSession) {
             return res.status(401).json({ error: '无效或已过期的刷新令牌' });
         }
 
         const user = await db.get(
-            'SELECT id, username, email, nickname, balance, role, status FROM users WHERE id = ?',
-            [userId]
+            'SELECT id, username, email, nickname, balance, role, status, session_version FROM users WHERE id = ?',
+            [refreshSession.userId]
         );
         if (!user || user.status !== 'active') {
             return res.status(401).json({ error: '用户不存在或已被禁用' });
         }
 
+        const currentSessionVersion = authService.normalizeSessionVersion(user.sessionVersion ?? user.session_version);
+        if (refreshSession.sessionVersion !== currentSessionVersion) {
+            await authService.revokeRefreshToken(refreshToken);
+            return res.status(401).json({ error: '账号已在其他地方登录，请重新登录', code: 'SESSION_REVOKED' });
+        }
+
         // Revoke old refresh token and issue new one (token rotation)
         await authService.revokeRefreshToken(refreshToken);
         const newAccessToken = authService.generateAccessToken(user);
-        const newRefreshToken = await authService.generateRefreshToken(user.id);
+        const newRefreshToken = await authService.generateRefreshToken(
+            user.id,
+            { sessionVersion: currentSessionVersion }
+        );
 
         res.json({
             accessToken: newAccessToken,
@@ -564,7 +677,10 @@ router.put('/change-password', authenticate, [
         }
 
         const newHash = await authService.hashPassword(newPassword);
-        await db.run(`UPDATE users SET password_hash = ?, updated_at = NOW() WHERE id = ?`, [newHash, req.user.id]);
+        await db.run(
+            `UPDATE users SET password_hash = ?, session_version = COALESCE(session_version, 0) + 1, updated_at = NOW() WHERE id = ?`,
+            [newHash, req.user.id]
+        );
 
         // Revoke all refresh tokens (force re-login)
         await authService.revokeAllUserTokens(req.user.id);
@@ -618,7 +734,7 @@ router.post('/reset-password', [
 
         const newHash = await authService.hashPassword(req.body.newPassword);
         await client.query(
-            'UPDATE users SET password_hash = $1, updated_at = NOW() WHERE id = $2',
+            'UPDATE users SET password_hash = $1, session_version = COALESCE(session_version, 0) + 1, updated_at = NOW() WHERE id = $2',
             [newHash, userResult.rows[0].id]
         );
         await client.query('UPDATE refresh_tokens SET revoked = true WHERE user_id = $1', [userResult.rows[0].id]);
