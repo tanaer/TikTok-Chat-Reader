@@ -16,6 +16,10 @@ const router = express.Router();
 router.use(authenticate, requireAdmin);
 
 const DOCS_ROOT = path.resolve(__dirname, '..', 'docs');
+const AI_MODEL_FAILURE_COOLDOWN_MS = (() => {
+    const raw = parseInt(process.env.AI_MODEL_FAILURE_COOLDOWN_MS || `${5 * 60 * 1000}`, 10);
+    return Number.isFinite(raw) && raw > 0 ? raw : 5 * 60 * 1000;
+})();
 
 function normalizeDocRelativePath(input) {
     return String(input || '')
@@ -39,6 +43,49 @@ function extractDocTitle(markdown, fallbackName) {
     const match = String(markdown || '').match(/^#\s+(.+)$/m);
     if (match && match[1]) return match[1].trim();
     return fallbackName;
+}
+
+function getAiModelCooldownMeta(row) {
+    const raw = row?.cooldownUntil;
+    if (!raw) return { cooldownUntil: null, isCooling: false, cooldownRemainingSeconds: 0 };
+    const cooldownUntil = new Date(raw);
+    if (Number.isNaN(cooldownUntil.getTime())) {
+        return { cooldownUntil: null, isCooling: false, cooldownRemainingSeconds: 0 };
+    }
+    const remainingMs = cooldownUntil.getTime() - Date.now();
+    if (remainingMs <= 0) {
+        return { cooldownUntil: cooldownUntil.toISOString(), isCooling: false, cooldownRemainingSeconds: 0 };
+    }
+    return {
+        cooldownUntil: cooldownUntil.toISOString(),
+        isCooling: true,
+        cooldownRemainingSeconds: Math.ceil(remainingMs / 1000)
+    };
+}
+
+function serializeAdminAiModel(row) {
+    const cooldown = getAiModelCooldownMeta(row);
+    return {
+        id: row.id,
+        channelId: row.channelId,
+        name: row.name,
+        modelId: row.modelId,
+        isActive: Boolean(row.isActive),
+        isDefault: Boolean(row.isDefault),
+        callCount: Number(row.callCount || 0),
+        successCount: Number(row.successCount || 0),
+        failCount: Number(row.failCount || 0),
+        consecutiveFailures: Number(row.consecutiveFailures || 0),
+        avgLatencyMs: Number(row.avgLatencyMs || 0),
+        lastUsedAt: row.lastUsedAt || null,
+        lastError: row.lastError || '',
+        lastStatus: row.lastStatus || 'unknown',
+        cooldownUntil: cooldown.cooldownUntil,
+        isCooling: cooldown.isCooling,
+        cooldownRemainingSeconds: cooldown.cooldownRemainingSeconds,
+        createdAt: row.createdAt || null,
+        updatedAt: row.updatedAt || null
+    };
 }
 
 async function collectMarkdownFiles(dirPath, prefix = '') {
@@ -871,14 +918,31 @@ router.post('/euler-keys/:id/test', async (req, res) => {
  */
 router.get('/ai-channels', async (req, res) => {
     try {
-        const channels = await db.all('SELECT * FROM ai_channels ORDER BY id');
-        const models = await db.all('SELECT * FROM ai_models ORDER BY channel_id, id');
+        const channels = await db.all(
+            `SELECT id, name, api_url, api_key, is_active, created_at, updated_at
+             FROM ai_channels
+             ORDER BY id`
+        );
+        const models = await db.all(
+            `SELECT id, channel_id, name, model_id, is_active, is_default,
+                    call_count, success_count, fail_count, consecutive_failures,
+                    avg_latency_ms, last_used_at, cooldown_until, last_error,
+                    last_status, created_at, updated_at
+             FROM ai_models
+             ORDER BY channel_id, is_default DESC, id`
+        );
         // Group models under channels
         const result = channels.map(ch => ({
             ...ch,
-            models: models.filter(m => m.channelId === ch.id)
+            models: models.filter(m => m.channelId === ch.id).map(serializeAdminAiModel)
         }));
-        res.json({ channels: result });
+        res.json({
+            channels: result,
+            fallbackPolicy: {
+                strategy: 'recent_failure_cooldown',
+                cooldownMs: AI_MODEL_FAILURE_COOLDOWN_MS
+            }
+        });
     } catch (err) {
         console.error('[Admin] AI channels error:', err.message);
         res.status(500).json({ error: '获取 AI 通道列表失败' });
@@ -968,6 +1032,35 @@ router.put('/ai-models/:id', async (req, res) => {
     } catch (err) { res.status(500).json({ error: '更新失败' }); }
 });
 
+/** POST /api/admin/ai-models/:id/set-default */
+router.post('/ai-models/:id/set-default', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+        const model = await db.get(
+            `SELECT m.id, m.is_active, c.is_active AS channel_is_active
+             FROM ai_models m
+             JOIN ai_channels c ON c.id = m.channel_id
+             WHERE m.id = ?`,
+            [req.params.id]
+        );
+        if (!model) return res.status(404).json({ error: '模型不存在' });
+        if (!model.isActive) return res.status(400).json({ error: '请先启用该模型，再设为默认' });
+        if (!model.channelIsActive) return res.status(400).json({ error: '该模型所属通道已禁用，请先启用通道' });
+
+        await client.query('BEGIN');
+        await client.query(`UPDATE ai_models SET is_default = false, updated_at = NOW() WHERE is_default = true`);
+        await client.query(`UPDATE ai_models SET is_default = true, updated_at = NOW() WHERE id = $1`, [req.params.id]);
+        await client.query('COMMIT');
+
+        res.json({ message: '默认模型已更新' });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        res.status(500).json({ error: '设置默认模型失败' });
+    } finally {
+        client.release();
+    }
+});
+
 /** DELETE /api/admin/ai-models/:id */
 router.delete('/ai-models/:id', async (req, res) => {
     try {
@@ -1004,31 +1097,62 @@ router.post('/ai-models/:id/test', async (req, res) => {
             const data = await response.json();
             const reply = data.choices?.[0]?.message?.content || '';
             await db.run(
-                `UPDATE ai_models SET last_status = 'ok', last_error = NULL, last_used_at = NOW(), avg_latency_ms = ?, updated_at = NOW() WHERE id = ?`,
+                `UPDATE ai_models
+                 SET last_status = 'ok', last_error = NULL, last_used_at = NOW(),
+                     avg_latency_ms = ?, consecutive_failures = 0, cooldown_until = NULL, updated_at = NOW()
+                 WHERE id = ?`,
                 [latency, req.params.id]
             );
             res.json({ success: true, latency, reply: reply.slice(0, 100) });
         } else {
             const errText = await response.text().catch(() => '');
+            const cooldownUntil = new Date(Date.now() + AI_MODEL_FAILURE_COOLDOWN_MS).toISOString();
             await db.run(
-                `UPDATE ai_models SET last_status = 'error', last_error = ?, last_used_at = NOW(), updated_at = NOW() WHERE id = ?`,
-                [`HTTP ${response.status}: ${errText.slice(0, 200)}`, req.params.id]
+                `UPDATE ai_models
+                 SET last_status = 'error', last_error = ?, last_used_at = NOW(),
+                     consecutive_failures = COALESCE(consecutive_failures, 0) + 1,
+                     cooldown_until = ?, updated_at = NOW()
+                 WHERE id = ?`,
+                [`HTTP ${response.status}: ${errText.slice(0, 200)}`, cooldownUntil, req.params.id]
             );
             res.json({ success: false, latency, status: response.status, error: errText.slice(0, 200) });
         }
     } catch (err) {
-        await db.run(`UPDATE ai_models SET last_status = 'error', last_error = ?, updated_at = NOW() WHERE id = ?`, [err.message.slice(0, 200), req.params.id]);
+        const cooldownUntil = new Date(Date.now() + AI_MODEL_FAILURE_COOLDOWN_MS).toISOString();
+        await db.run(
+            `UPDATE ai_models
+             SET last_status = 'error', last_error = ?,
+                 consecutive_failures = COALESCE(consecutive_failures, 0) + 1,
+                 cooldown_until = ?, updated_at = NOW()
+             WHERE id = ?`,
+            [err.message.slice(0, 200), cooldownUntil, req.params.id]
+        );
         res.json({ success: false, error: err.message });
     }
 });
 
 // ==================== AI Credit Packages ====================
 
+function serializeAiCreditPackage(row) {
+    const priceYuan = Math.round(Number(row?.priceCents || 0) / 100);
+    return {
+        id: row.id,
+        name: row.name,
+        credits: Number(row.credits || 0),
+        priceYuan,
+        description: row.description || '',
+        isActive: Boolean(row.isActive),
+        createdAt: row.createdAt || null
+    };
+}
+
 /** GET /api/admin/ai-credit-packages */
 router.get('/ai-credit-packages', async (req, res) => {
     try {
-        const packages = await db.all('SELECT * FROM ai_credit_packages ORDER BY credits');
-        res.json({ packages });
+        const packages = await db.all(
+            'SELECT id, name, credits, price_cents, description, is_active, created_at FROM ai_credit_packages ORDER BY credits'
+        );
+        res.json({ packages: packages.map(serializeAiCreditPackage) });
     } catch (err) { res.status(500).json({ error: '获取失败' }); }
 });
 
@@ -1036,15 +1160,15 @@ router.get('/ai-credit-packages', async (req, res) => {
 router.post('/ai-credit-packages', [
     body('name').trim().notEmpty(),
     body('credits').isInt({ min: 1 }),
-    body('priceCents').isInt({ min: 0 }),
+    body('priceYuan').isInt({ min: 0 }).withMessage('价格必须是非负整数元'),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
     try {
-        const { name, credits, priceCents, description } = req.body;
+        const { name, credits, priceYuan, description } = req.body;
         await db.run(
             'INSERT INTO ai_credit_packages (name, credits, price_cents, description) VALUES (?, ?, ?, ?)',
-            [name, credits, priceCents, description || '']
+            [name, credits, Number(priceYuan) * 100, description || '']
         );
         res.status(201).json({ message: '创建成功' });
     } catch (err) { res.status(500).json({ error: '创建失败' }); }
@@ -1053,11 +1177,18 @@ router.post('/ai-credit-packages', [
 /** PUT /api/admin/ai-credit-packages/:id */
 router.put('/ai-credit-packages/:id', async (req, res) => {
     try {
-        const { name, credits, priceCents, description, isActive } = req.body;
+        const { name, credits, priceYuan, description, isActive } = req.body;
         const updates = []; const params = []; let idx = 0;
         if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
         if (credits !== undefined) { updates.push(`credits = $${++idx}`); params.push(credits); }
-        if (priceCents !== undefined) { updates.push(`price_cents = $${++idx}`); params.push(priceCents); }
+        if (priceYuan !== undefined) {
+            const normalizedPriceYuan = Number(priceYuan);
+            if (!Number.isInteger(normalizedPriceYuan) || normalizedPriceYuan < 0) {
+                return res.status(400).json({ error: '价格必须是非负整数元' });
+            }
+            updates.push(`price_cents = $${++idx}`);
+            params.push(normalizedPriceYuan * 100);
+        }
         if (description !== undefined) { updates.push(`description = $${++idx}`); params.push(description); }
         if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
         if (updates.length === 0) return res.status(400).json({ error: '无更新' });

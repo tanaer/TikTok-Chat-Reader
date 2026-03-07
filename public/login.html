@@ -51,7 +51,7 @@
 
         if (Auth.isLoggedIn()) {
             const params = new URLSearchParams(window.location.search);
-            window.location.href = params.get('redirect') || '/';
+            window.location.href = params.get('redirect') || '/monitor.html';
         }
 
         document.addEventListener('DOMContentLoaded', () => {
@@ -85,7 +85,8 @@
             if (ok) {
                 setLoginLoading(true, '登录成功');
                 const params = new URLSearchParams(window.location.search);
-                window.location.href = params.get('redirect') || '/';
+                const redirect = params.get('redirect') || '/monitor.html';
+                window.location.href = redirect;
                 return;
             }
 

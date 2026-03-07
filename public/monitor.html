@@ -9,6 +9,7 @@
     <!-- Tailwind + DaisyUI -->
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/shared-shell.css">
 
     <!-- Third Party Libs -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
@@ -18,13 +19,13 @@
 
     <!-- App Scripts -->
     <script src="js/auth.js"></script>
-    <script src="connection.js"></script>
-    <script src="config.js"></script>
-    <script src="room_list.js"></script>
-    <script src="user_analysis.js"></script>
-    <script src="room_analysis.js"></script>
-    <script src="recording_ui.js"></script>
-    <script src="app.js"></script>
+    <script src="connection.js?v=20260308f"></script>
+    <script src="config.js?v=20260308f"></script>
+    <script src="room_list.js?v=20260308h"></script>
+    <script src="user_analysis.js?v=20260308f"></script>
+    <script src="room_analysis.js?v=20260308f"></script>
+    <script src="recording_ui.js?v=20260308f"></script>
+    <script src="app.js?v=20260308i"></script>
 
 
     <link rel="stylesheet" href="style.css"> <!-- Minimal overrides -->
@@ -33,22 +34,24 @@
 <body class="bg-base-300 min-h-screen flex flex-col">
 
     <!-- Global Top Navigation -->
-    <div class="navbar bg-base-100 shadow-lg z-20">
-        <div class="flex-1">
-            <a class="btn btn-ghost text-xl text-primary font-bold" href="/">TikTok Monitor</a>
-            <ul id="global-top-nav" class="menu menu-horizontal gap-1 ml-4">
-                <!-- Populated by Auth.updateNavbar() -->
+    <div class="navbar app-shell-nav z-20 flex-wrap gap-2 px-3 py-2">
+        <div class="flex-1 min-w-0 flex flex-wrap items-center gap-2">
+            <a class="btn btn-ghost text-xl font-bold px-2 app-shell-nav-brand" href="/">TikTok Monitor</a>
+            <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1 ml-0 md:ml-2">
+                <li><a href="/" class="app-shell-nav-link">首页</a></li>
+                <li><a href="/monitor.html" class="app-shell-nav-link is-active">监控中心</a></li>
             </ul>
         </div>
-        <div class="flex-none">
-            <ul id="auth-nav-area" class="menu menu-horizontal px-1 gap-2">
-                <!-- Populated by Auth.updateNavbar() -->
+        <div class="w-full md:w-auto">
+            <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap justify-start md:justify-end px-0 gap-2">
+                <li><a href="/user-center.html" class="btn btn-ghost btn-sm app-shell-nav-action">用户中心</a></li>
+                <li><a onclick="if(window.Auth){Auth.logout()}" class="btn btn-outline btn-error btn-sm cursor-pointer app-shell-nav-action app-shell-nav-danger">退出</a></li>
             </ul>
         </div>
     </div>
 
     <!-- Sub Navigation (Monitor Center) -->
-    <div id="sub-nav-container" class="bg-base-200 border-b border-base-300 hidden">
+    <div id="sub-nav-container" class="bg-base-200 border-b border-base-300">
         <div class="mx-auto px-4">
             <ul class="menu menu-horizontal gap-1 py-2 text-sm">
                 <li><a class="sub-nav-btn active" onclick="switchSection('roomList')">📺 房间列表</a></li>
@@ -69,29 +72,29 @@
                 <div class="flex items-center gap-4">
                     <h2 class="text-2xl font-bold">监控房间列表</h2>
                     <div class="join join-horizontal flex-wrap">
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn active"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn active btn-primary"
                             onclick="setRoomSort('default', this)" title="按最近更新时间排序">默认</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('priority_desc', this)" title="管理员手动设定的优先级数值，越高越靠前">优先级</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('gift_desc', this)" title="当前场次收到的礼物钻石总价值">本场💎</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('total_gift_desc', this)" title="历史所有场次累计的礼物钻石总价值">总💎</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('gift_eff_desc', this)" title="赚钱效率 = 总钻石 / 总进场人数，数值越高说明每个访客贡献越多">赚钱效率</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('interact_eff_desc', this)" title="话题度 = 总弹幕数 / 总进场人数，数值越高说明直播间互动越活跃">话题度</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('account_quality_desc', this)" title="账号质量 = 总进场人数 / 总开播分钟数，数值越高说明越能吸引新观众">账号质量</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('top1_ratio_desc', this)" title="Top1用户贡献占总礼物价值的百分比，越高说明越依赖大哥">T1</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('top3_ratio_desc', this)" title="Top3用户贡献占总礼物价值的百分比">T3</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('top10_ratio_desc', this)" title="Top10用户贡献占总礼物价值的百分比">T10</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('top30_ratio_desc', this)" title="Top30用户贡献占总礼物价值的百分比，越低说明长尾用户越多">T30</button>
-                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn"
+                        <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
                             onclick="setRoomSort('daily_avg_desc', this)" title="有效日均钻石收入，仅统计开播超过2小时的日期">💎日均</button>
                     </div>
                 </div>
@@ -165,7 +168,7 @@
                             <a role="tab" class="tab tab-active" onclick="switchDetailTab('currentLive', this)">实时弹幕</a>
                             <a role="tab" class="tab" onclick="switchDetailTab('giftStats', this)">礼物明细</a>
                             <a role="tab" class="tab" onclick="switchDetailTab('interactStats', this)">互动榜单</a>
-                            <a role="tab" class="tab" onclick="switchDetailTab('timeStats', this)" data-admin-only="true">时段分析</a>
+                            <a role="tab" class="tab" onclick="switchDetailTab('timeStats', this)">AI直播复盘</a>
                         </div>
 
                         <div id="tab-currentLive"
@@ -243,9 +246,198 @@
                             </div>
                         </div>
 
-                        <div id="tab-timeStats" class="detail-tab-content hidden h-full bg-base-100 rounded-box p-4">
-                            <div class="h-64 w-full">
-                                <canvas id="timeStatsChart"></canvas>
+                        <div id="tab-timeStats" class="detail-tab-content hidden h-full bg-base-100 rounded-box p-4 overflow-y-auto">
+                            <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                                <div>
+                                    <h3 class="font-bold text-lg">AI直播复盘</h3>
+                                    <p class="text-sm opacity-60">当前先支持单场模式。点击生成后，会给出老板摘要、关键时刻、价值客户和下一场动作建议。</p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span id="sessionRecapStatus" class="badge badge-outline">待生成复盘</span>
+                                    <button class="btn btn-primary btn-sm" id="generateSessionRecapBtn" onclick="generateSessionAiReview()">生成完整复盘（10点）</button>
+                                </div>
+                            </div>
+
+                            <div id="sessionRecapEmpty" class="space-y-4">
+                                <div class="rounded-box border border-base-300 bg-base-100 p-5 text-sm opacity-70 shadow-sm">
+                                    请先选择一场直播。当前先支持单场模式，建议切到归档场次后生成完整复盘。
+                                </div>
+                            </div>
+
+                            <div id="sessionRecapContent" class="hidden space-y-4">
+                                <div class="grid grid-cols-1 xl:grid-cols-4 gap-4">
+                                    <div class="card bg-gradient-to-br from-primary/15 to-secondary/10 border border-primary/20 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="text-xs uppercase tracking-[0.2em] opacity-60">复盘评分</div>
+                                            <div class="flex items-end gap-2 mt-2">
+                                                <div id="recapScoreValue" class="text-5xl font-black text-primary stat-num">--</div>
+                                                <div id="recapScoreGrade" class="badge badge-primary badge-lg mb-1">-</div>
+                                            </div>
+                                            <div id="recapScoreLabel" class="text-sm opacity-70 mt-2">暂无数据</div>
+                                            <div id="recapTags" class="flex flex-wrap gap-2 mt-4"></div>
+                                        </div>
+                                    </div>
+
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="text-xs uppercase tracking-[0.18em] opacity-60">本场结果</div>
+                                            <div class="grid grid-cols-2 gap-3 mt-3 text-sm">
+                                                <div>
+                                                    <div class="opacity-60">礼物</div>
+                                                    <div id="recapGiftValue" class="text-xl font-bold text-warning">💎 0</div>
+                                                </div>
+                                                <div>
+                                                    <div class="opacity-60">弹幕</div>
+                                                    <div id="recapCommentValue" class="text-xl font-bold text-info">0</div>
+                                                </div>
+                                                <div>
+                                                    <div class="opacity-60">点赞</div>
+                                                    <div id="recapLikeValue" class="text-xl font-bold text-error">0</div>
+                                                </div>
+                                                <div>
+                                                    <div class="opacity-60">时长</div>
+                                                    <div id="recapDurationValue" class="text-xl font-bold">00:00</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="text-xs uppercase tracking-[0.18em] opacity-60">客户结构</div>
+                                            <div class="grid grid-cols-2 gap-3 mt-3 text-sm">
+                                                <div>
+                                                    <div class="opacity-60">活跃客户</div>
+                                                    <div id="recapParticipantValue" class="text-xl font-bold">0</div>
+                                                    <div id="recapParticipantHint" class="text-[11px] opacity-50 mt-1">发言/点赞/送礼/进房去重</div>
+                                                </div>
+                                                <div>
+                                                    <div class="opacity-60">出手客户</div>
+                                                    <div id="recapPayingValue" class="text-xl font-bold text-success">0</div>
+                                                    <div class="text-[11px] opacity-50 mt-1">本场发生送礼的去重客户</div>
+                                                </div>
+                                                <div class="col-span-2">
+                                                    <div class="opacity-60">头部占比</div>
+                                                    <div id="recapTopShareValue" class="text-xl font-bold">0%</div>
+                                                    <progress id="recapTopShareBar" class="progress progress-primary w-full mt-2" value="0" max="100"></progress>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="text-xs uppercase tracking-[0.18em] opacity-60">老板摘要</div>
+                                            <p id="sessionAiSummary" class="text-sm leading-7 mt-3 opacity-80">点击右上角生成 AI 老板摘要，当前单场模式默认按 10 点计费。</p>
+                                            <div id="sessionAiMeta" class="text-xs opacity-50 mt-4">未生成</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm xl:col-span-2">
+                                        <div class="card-body p-5">
+                                            <div class="flex items-center justify-between gap-2 mb-3">
+                                                <div>
+                                                    <h4 class="font-bold">本场节奏图</h4>
+                                                    <p class="text-xs opacity-60">礼物流速、弹幕热度、在线波动</p>
+                                                </div>
+                                                <span class="badge badge-outline">单场</span>
+                                            </div>
+                                            <div class="h-80 w-full">
+                                                <canvas id="sessionRecapTrendChart"></canvas>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="flex items-center justify-between gap-2 mb-3">
+                                                <div>
+                                                    <h4 class="font-bold">复盘雷达</h4>
+                                                    <p class="text-xs opacity-60">变现、互动、客户、节奏</p>
+                                                </div>
+                                                <span class="badge badge-secondary badge-outline">V1</span>
+                                            </div>
+                                            <div class="h-80 w-full">
+                                                <canvas id="sessionRecapRadarChart"></canvas>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                    <div class="card-body p-5">
+                                        <div class="flex items-center justify-between gap-2 mb-3">
+                                            <div>
+                                                <h4 class="font-bold">关键时刻时间轴</h4>
+                                                <p class="text-xs opacity-60">最值得回看和复用的单场节点</p>
+                                            </div>
+                                            <span class="badge badge-outline">Top 3</span>
+                                        </div>
+                                        <div id="recapKeyMoments" class="grid grid-cols-1 lg:grid-cols-3 gap-3"></div>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="flex items-center justify-between gap-2 mb-3">
+                                                <h4 class="font-bold text-success">本场亮点</h4>
+                                                <span class="badge badge-success badge-outline">正向</span>
+                                            </div>
+                                            <ul id="recapHighlights" class="space-y-3 text-sm"></ul>
+                                        </div>
+                                    </div>
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="flex items-center justify-between gap-2 mb-3">
+                                                <h4 class="font-bold text-warning">主要问题</h4>
+                                                <span class="badge badge-warning badge-outline">风险</span>
+                                            </div>
+                                            <ul id="recapIssues" class="space-y-3 text-sm"></ul>
+                                        </div>
+                                    </div>
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="flex items-center justify-between gap-2 mb-3">
+                                                <h4 class="font-bold text-info">下一步建议</h4>
+                                                <span class="badge badge-info badge-outline">动作</span>
+                                            </div>
+                                            <ul id="recapActions" class="space-y-3 text-sm"></ul>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="grid grid-cols-1 xl:grid-cols-3 gap-4">
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="flex items-center justify-between gap-2 mb-3">
+                                                <h4 class="font-bold text-warning">核心价值客户</h4>
+                                                <span class="badge badge-warning badge-outline">重点维护</span>
+                                            </div>
+                                            <div id="recapCoreCustomers" class="space-y-3"></div>
+                                        </div>
+                                    </div>
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="flex items-center justify-between gap-2 mb-3">
+                                                <h4 class="font-bold text-info">潜力转化客户</h4>
+                                                <span class="badge badge-info badge-outline">待转化</span>
+                                            </div>
+                                            <div id="recapPotentialCustomers" class="space-y-3"></div>
+                                        </div>
+                                    </div>
+                                    <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                        <div class="card-body p-5">
+                                            <div class="flex items-center justify-between gap-2 mb-3">
+                                                <h4 class="font-bold text-error">流失风险客户</h4>
+                                                <span class="badge badge-error badge-outline">需召回</span>
+                                            </div>
+                                            <div id="recapRiskCustomers" class="space-y-3"></div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

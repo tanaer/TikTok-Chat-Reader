@@ -64,6 +64,16 @@ const formatTimeAgo = (dateStr) => {
     return `${years}年前`;
 };
 
+function formatBeijingDateTime(value, fallback = '--') {
+    if (!value) return fallback;
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return fallback;
+    return date.toLocaleString('zh-CN', {
+        timeZone: 'Asia/Shanghai',
+        hour12: false
+    });
+}
+
 // Helper to escape strings for use in HTML attributes
 const escapeHtml = (str) => str == null ? '' : String(str).replace(/'/g, "\\'").replace(/"/g, '&quot;');
 
@@ -92,13 +102,34 @@ const copyToClipboard = (text, event) => {
 };
 window.copyToClipboard = copyToClipboard;
 
+
+function applyRoomSortButtonState() {
+    const buttons = Array.from(document.querySelectorAll('.room-sort-btn'));
+    if (!buttons.length) return;
+
+    buttons.forEach((button) => {
+        button.classList.remove('active', 'btn-primary');
+        button.classList.add('btn-ghost');
+    });
+
+    const activeButton = buttons.find((button) => {
+        const onclick = button.getAttribute('onclick') || '';
+        return onclick.includes(`setRoomSort('${roomListSort}'`);
+    });
+
+    if (activeButton) {
+        activeButton.classList.add('active', 'btn-primary');
+        activeButton.classList.remove('btn-ghost');
+    }
+}
+
 // Render a single room as a card
 function renderRoomCard(r, index = 0) {
     const isLive = r.isLive === true;
     const badgeClass = isLive ? 'badge-success' : 'badge-ghost';
     const statusText = isLive ? '🟢 直播中' : '未开播';
     const duration = formatRoomDuration(r.broadcastDuration);
-    const lastSession = r.lastSessionTime ? new Date(r.lastSessionTime).toLocaleString() : '无记录';
+    const lastSession = r.lastSessionTime ? formatBeijingDateTime(r.lastSessionTime, '无记录') : '无记录';
     const isMonitorOn = r.isMonitorEnabled !== 0;
     const isRecordingEnabled = r.isRecordingEnabled === 1;
     const recordingAccountId = escapeHtml(r.recordingAccountId || '');
@@ -277,6 +308,7 @@ function renderRoomRow(r, index = 0) {
 
 async function renderRoomList() {
     const container = $('#roomListContainer');
+    applyRoomSortButtonState();
 
     // Show loading indicator immediately
     container.html(`
@@ -434,10 +466,8 @@ function clearRoomSearch() {
 function setRoomSort(sort, btn) {
     roomListSort = sort;
 
-    // Update active UI state
-    $('.room-sort-btn').removeClass('active btn-primary').addClass('btn-ghost');
     if (btn) {
-        $(btn).addClass('active btn-primary').removeClass('btn-ghost');
+        applyRoomSortButtonState();
     }
 
     roomListPage = 1;
@@ -617,6 +647,24 @@ function enterRoom(id, name) {
 
 // Global Exports
 window.renderRoomList = renderRoomList;
+
+window.bootRoomListOnMonitorPage = function bootRoomListOnMonitorPage() {
+    if (window.__roomListBootstrapped) return;
+    const container = document.getElementById('roomListContainer');
+    if (!container) return;
+    window.__roomListBootstrapped = true;
+    renderRoomList();
+};
+
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', () => {
+        if (typeof window.bootRoomListOnMonitorPage === 'function') {
+            window.bootRoomListOnMonitorPage();
+        }
+    }, { once: true });
+} else if (typeof window !== 'undefined' && typeof window.bootRoomListOnMonitorPage === 'function') {
+    setTimeout(() => window.bootRoomListOnMonitorPage(), 0);
+}
 window.openAddRoomModal = openAddRoomModal;
 window.closeRoomModal = closeRoomModal;
 window.enterRoom = enterRoom;

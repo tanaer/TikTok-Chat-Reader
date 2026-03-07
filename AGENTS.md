@@ -2,6 +2,10 @@
 
 ## Repo Rules
 
+### Commit Policy
+- All future git commit messages must be written in Chinese.
+- Prefer Conventional Commits, but keep the type/scope structure readable with a Chinese summary and body.
+
 ### Security First
 - Treat every API response as public unless the route is explicitly admin-only.
 - For user-facing APIs, use explicit response whitelists. Do not return raw database rows or raw `metadata` blobs directly.

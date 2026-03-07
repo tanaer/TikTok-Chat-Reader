@@ -16,13 +16,31 @@ const Auth = {
     getUser() {
         try {
             const u = localStorage.getItem('authUser');
-            return u ? JSON.parse(u) : null;
-        } catch { return null; }
+            if (u) return JSON.parse(u);
+        } catch {}
+
+        const token = this.getAccessToken();
+        if (!token) return null;
+
+        try {
+            const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+            return {
+                id: payload.userId,
+                username: payload.username,
+                nickname: payload.nickname || payload.username,
+                role: payload.role
+            };
+        } catch {
+            return null;
+        }
+    },
+    setUser(user) {
+        if (user) localStorage.setItem('authUser', JSON.stringify(user));
     },
     setTokens(accessToken, refreshToken, user) {
         localStorage.setItem('accessToken', accessToken);
         localStorage.setItem('refreshToken', refreshToken);
-        if (user) localStorage.setItem('authUser', JSON.stringify(user));
+        if (user) this.setUser(user);
         this.startSessionHeartbeat();
     },
     clearTokens() {
@@ -125,6 +143,12 @@ const Auth = {
                 const res = await this.apiFetch('/api/auth/me', {
                     headers: { 'Cache-Control': 'no-store' }
                 });
+                if (res?.ok) {
+                    try {
+                        const data = await res.clone().json();
+                        if (data?.user) this.setUser(data.user);
+                    } catch {}
+                }
                 return !!res?.ok;
             } catch {
                 return true;
@@ -233,6 +257,70 @@ const Auth = {
         return true;
     },
 
+    getCurrentPath() {
+        return (typeof window !== 'undefined' && window.location && window.location.pathname) ? window.location.pathname : '/';
+    },
+
+    buildNavLink(href, label, { active = false, tone = 'default', button = false, onclick = '' } = {}) {
+        const classes = [];
+        if (button) {
+            classes.push('btn', 'btn-sm', 'app-shell-nav-action');
+            if (tone === 'primary') classes.push('btn-primary');
+            else if (tone === 'warning') classes.push('btn-warning');
+            else if (tone === 'danger') classes.push('btn-outline', 'btn-error', 'app-shell-nav-danger');
+            else classes.push('btn-ghost');
+            if (active) classes.push('is-active');
+        } else {
+            classes.push('app-shell-nav-link');
+            if (active) classes.push('is-active');
+            if (tone === 'warning') classes.push('text-warning');
+        }
+        const hrefAttr = href ? ` href="${href}"` : '';
+        const onclickAttr = onclick ? ` onclick="${onclick}"` : '';
+        return `<li><a${hrefAttr}${onclickAttr} class="${classes.join(' ')}">${label}</a></li>`;
+    },
+
+    renderGlobalNav(globalNav) {
+        if (!globalNav) return;
+        const currentPath = this.getCurrentPath();
+        if (this.isLoggedIn()) {
+            const items = [
+                this.buildNavLink('/', '首页', { active: currentPath === '/' }),
+                this.buildNavLink('/monitor.html', '监控中心', { active: currentPath === '/monitor.html' })
+            ];
+            if (this.isAdmin()) {
+                items.push(this.buildNavLink('/admin.html', '管理后台', { active: currentPath === '/admin.html' }));
+            }
+            globalNav.innerHTML = items.join('');
+        } else {
+            globalNav.innerHTML = this.buildNavLink('/login.html', '立即开始', { button: true, tone: 'primary' });
+        }
+    },
+
+    renderAuthArea(authArea, { hasGlobalNav = false } = {}) {
+        if (!authArea) return;
+        const currentPath = this.getCurrentPath();
+        if (this.isLoggedIn()) {
+            const user = this.getUser();
+            const items = [];
+            if (!hasGlobalNav) {
+                items.push(this.buildNavLink('/monitor.html', '监控中心', { button: true, tone: 'default', active: currentPath === '/monitor.html' }));
+                if (this.isAdmin()) {
+                    items.push(this.buildNavLink('/admin.html', '管理后台', { button: true, tone: 'warning', active: currentPath === '/admin.html' }));
+                }
+            }
+            items.push(this.buildNavLink('/user-center.html', '用户中心', { button: true, tone: 'default', active: currentPath === '/user-center.html' }));
+            items.push(`<li><span class="btn btn-ghost btn-sm app-shell-nav-user">${user?.nickname || user?.username || '用户'}</span></li>`);
+            items.push(this.buildNavLink('', '退出', { button: true, tone: 'danger', onclick: 'Auth.logout()' }));
+            authArea.innerHTML = items.join('');
+        } else {
+            authArea.innerHTML = [
+                this.buildNavLink('/login.html', '登录', { button: true, tone: 'default' }),
+                this.buildNavLink('/register.html', '注册', { button: true, tone: 'primary' })
+            ].join('');
+        }
+    },
+
     /**
      * Update navbar based on auth state
      */
@@ -240,47 +328,9 @@ const Auth = {
         const authArea = document.getElementById('auth-nav-area');
         if (!authArea) return;
 
-        // Update global top nav if present
         const globalNav = document.getElementById('global-top-nav');
-        if (globalNav) {
-            if (this.isLoggedIn()) {
-                let adminLink = '';
-                if (this.isAdmin()) {
-                    adminLink = `<li><a href="/admin.html" class="text-warning">管理后台</a></li>`;
-                }
-                globalNav.innerHTML = `
-                    <li><a href="/">首页</a></li>
-                    <li><a href="/monitor.html">监控中心</a></li>
-                    ${adminLink}
-                `;
-            } else {
-                globalNav.innerHTML = `
-                    <li><a href="/login.html" class="btn btn-primary btn-sm">立即开始</a></li>
-                `;
-            }
-        }
-
-        // Update auth area (right side)
-        if (this.isLoggedIn()) {
-            const user = this.getUser();
-            authArea.innerHTML = `
-                <li><a href="/user-center.html" class="btn btn-ghost btn-sm">用户中心</a></li>
-                <li class="dropdown dropdown-end">
-                    <label tabindex="0" class="btn btn-ghost btn-sm">
-                        ${user?.nickname || user?.username || '用户'}
-                        <svg class="w-4 h-4 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>
-                    </label>
-                    <ul tabindex="0" class="dropdown-content z-[1] menu p-2 shadow bg-base-100 rounded-box w-40">
-                        <li><a onclick="Auth.logout()" class="text-error cursor-pointer">退出登录</a></li>
-                    </ul>
-                </li>
-            `;
-        } else {
-            authArea.innerHTML = `
-                <li><a href="/login.html" class="btn btn-ghost btn-sm">登录</a></li>
-                <li><a href="/register.html" class="btn btn-primary btn-sm">注册</a></li>
-            `;
-        }
+        this.renderGlobalNav(globalNav);
+        this.renderAuthArea(authArea, { hasGlobalNav: !!globalNav });
 
         // Apply admin-only visibility
         this.applyAdminVisibility();
@@ -301,6 +351,10 @@ const Auth = {
         });
     }
 };
+
+if (typeof window !== 'undefined') {
+    window.Auth = Auth;
+}
 
 if (typeof window !== 'undefined' && Auth.isLoggedIn()) {
     Auth.startSessionHeartbeat();

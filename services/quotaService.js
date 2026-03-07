@@ -144,7 +144,10 @@ async function getUserQuota(userId) {
     const sub = await getActiveSubscription(userId);
     const subLimit = sub ? normalizeLimitValue(sub.planRoomLimit, 0) : 0;
     const baseOpenRoomLimit = sub ? normalizeLimitValue(sub.planOpenRoomLimit, -1) : -1;
-    const baseDailyRoomCreateLimit = sub ? normalizeLimitValue(sub.planDailyRoomCreateLimit, -1) : -1;
+    const fallbackGiftDailyRoomCreateLimit = sub && sub.planCode === 'gift' && subLimit > 0 ? subLimit : -1;
+    const baseDailyRoomCreateLimit = sub
+        ? normalizeLimitValue(sub.planDailyRoomCreateLimit, fallbackGiftDailyRoomCreateLimit)
+        : -1;
     const isSubUnlimited = subLimit === -1;
     const hasSubscription = !!sub;
 

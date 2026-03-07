@@ -6,6 +6,7 @@
     <title>用户中心 - TikTok Live Monitor</title>
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/shared-shell.css">
     <script src="/js/auth.js"></script>
     <script src="/js/email-verification-flow.js"></script>
     <script src="/vendor/qrious.min.js"></script>
@@ -1147,17 +1148,17 @@
 </head>
 <body class="fantasy-body min-h-screen">
     <!-- Navbar -->
-    <div class="navbar fantasy-nav sticky top-0 z-50">
-        <div class="flex-1">
-            <a class="btn btn-ghost text-xl text-primary font-bold" href="/">TikTok Monitor</a>
-            <ul id="global-top-nav" class="menu menu-horizontal gap-1 ml-2"></ul>
+    <div class="navbar app-shell-nav sticky top-0 z-50 flex-wrap gap-2 px-3 py-2">
+        <div class="flex-1 min-w-0 flex flex-wrap items-center gap-2">
+            <a class="btn btn-ghost text-xl font-bold app-shell-nav-brand" href="/">TikTok Monitor</a>
+            <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1 ml-0 sm:ml-2"></ul>
         </div>
-        <div class="flex-none flex items-center gap-2">
-            <button id="message-menu-btn" type="button" class="btn btn-ghost btn-sm gap-2" onclick="openMessagesModal()">
+        <div class="w-full md:w-auto flex flex-wrap items-center justify-start md:justify-end gap-2">
+            <button id="message-menu-btn" type="button" class="btn btn-ghost btn-sm gap-2 app-shell-nav-action" onclick="openMessagesModal()">
                 消息
                 <span id="message-menu-badge" class="badge badge-error badge-sm notification-badge-inline hidden">0</span>
             </button>
-            <ul id="auth-nav-area" class="menu menu-horizontal gap-1"></ul>
+            <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap gap-1 px-0"></ul>
         </div>
     </div>
 
@@ -2122,7 +2123,7 @@ function updateRechargePresetState() {
         }
 
         aiGrid.innerHTML = packages.map((pkg, index) => {
-            const priceYuan = Number(pkg.priceCents || 0) / 100;
+            const priceYuan = Number(pkg.priceYuan || 0);
             const defaultDescription = Number(pkg.credits || 0) >= 1000
                 ? '适合高频分析。'
                 : Number(pkg.credits || 0) >= 300
@@ -2243,6 +2244,7 @@ function updateRechargePresetState() {
                 roomText,
                 dailyCreateText,
                 aiCredits,
+                features,
                 supportText,
                 isCurrent,
                 isDowngrade,
@@ -2268,6 +2270,16 @@ function updateRechargePresetState() {
                 label: 'AI点',
                 hint: '每月可用 AI 分析额度',
                 render: (item) => `<strong>${item.aiCredits}</strong> 点/月`
+            },
+            {
+                label: 'AI直播复盘',
+                hint: '单场 AI直播复盘与老板摘要',
+                render: (item) => hasFlag(item.features, 'ai_live_recap', 'aiLiveRecap') ? '<strong>支持</strong>' : '<span class="opacity-50">未包含</span>'
+            },
+            {
+                label: '数据导出',
+                hint: '导出客户与分析数据',
+                render: (item) => hasFlag(item.features, 'export', 'data_export') ? '<strong>支持</strong>' : '<span class="opacity-50">未包含</span>'
             },
             {
                 label: '业务支持',
@@ -2371,6 +2383,7 @@ function updateRechargePresetState() {
             feat(true, `<strong>${roomText}</strong> 个监控房间`),
             feat(true, `每日可添加 <strong>${dailyCreateText}</strong> 次房间`),
             feat(true, `AI 额度 <strong>${aiCredits}</strong> 点/月`),
+            feat(hasFlag(features, 'ai_live_recap', 'aiLiveRecap'), 'AI直播复盘（单场）'),
             feat(hasFlag(features, 'export', 'data_export'), '数据导出'),
             feat(true, 'AI 用户分析'),
             feat(hasFlag(features, 'priority_support', 'prioritySupport'), '优先支持')

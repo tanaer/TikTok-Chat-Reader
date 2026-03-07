@@ -329,6 +329,7 @@ router.post('/register', [
         const giftRoomLimit = Number(settings.gift_room_limit || 0);
         const giftDurationDays = Number(settings.gift_duration_days || 0);
         const giftOpenRoomLimit = Number(settings.gift_open_room_limit || giftRoomLimit || -1);
+        const giftDailyRoomCreateLimit = giftRoomLimit > 0 ? giftRoomLimit : -1;
 
         const client = await db.pool.connect();
 
@@ -374,19 +375,20 @@ router.post('/register', [
 
             if (giftRoomLimit > 0 && giftDurationDays > 0) {
                 const giftPlanResult = await client.query(
-                    `INSERT INTO subscription_plans (name, code, room_limit, open_room_limit, price_monthly, price_quarterly, price_annual, is_active, sort_order)
-                     VALUES ('注册赠送', 'gift', $1, $2, 0, 0, 0, true, 0)
+                    `INSERT INTO subscription_plans (name, code, room_limit, open_room_limit, daily_room_create_limit, price_monthly, price_quarterly, price_annual, is_active, sort_order)
+                     VALUES ('注册赠送', 'gift', $1, $2, $3, 0, 0, 0, true, 0)
                      ON CONFLICT (code) DO UPDATE
                      SET name = EXCLUDED.name,
                          room_limit = EXCLUDED.room_limit,
                          open_room_limit = EXCLUDED.open_room_limit,
+                         daily_room_create_limit = EXCLUDED.daily_room_create_limit,
                          price_monthly = EXCLUDED.price_monthly,
                          price_quarterly = EXCLUDED.price_quarterly,
                          price_annual = EXCLUDED.price_annual,
                          is_active = EXCLUDED.is_active,
                          sort_order = EXCLUDED.sort_order
                      RETURNING id`,
-                    [giftRoomLimit, giftOpenRoomLimit]
+                    [giftRoomLimit, giftOpenRoomLimit, giftDailyRoomCreateLimit]
                 );
 
                 const startDate = new Date();

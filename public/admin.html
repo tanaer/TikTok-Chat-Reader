@@ -6,6 +6,7 @@
     <title>管理后台 - TikTok Live Monitor</title>
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/shared-shell.css">
     <script src="/js/auth.js"></script>
     <style>
         .doc-markdown h1, .doc-markdown h2, .doc-markdown h3, .doc-markdown h4 {
@@ -89,10 +90,13 @@
     <!-- Main Content -->
     <div class="flex-1 flex flex-col min-h-screen">
         <!-- Top bar -->
-        <div class="navbar bg-base-100 shadow px-6">
-            <div class="flex-1"><h2 id="section-title" class="text-lg font-bold">系统概览</h2></div>
-            <div class="flex-none">
-                <ul id="auth-nav-area" class="menu menu-horizontal gap-1"></ul>
+        <div class="navbar app-shell-nav px-6 py-3 flex-wrap gap-3">
+            <div class="flex-1 min-w-0 flex flex-wrap items-center gap-3">
+                <h2 id="section-title" class="text-lg font-bold shrink-0">系统概览</h2>
+                <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1"></ul>
+            </div>
+            <div class="w-full md:w-auto">
+                <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap justify-start md:justify-end gap-2 px-0"></ul>
             </div>
         </div>
 
@@ -442,7 +446,7 @@
                     <div class="flex justify-between items-center mb-4">
                         <div>
                             <h3 class="text-lg font-bold">AI 通道配置</h3>
-                            <p class="text-sm text-base-content/60">配置 AI 通道（API提供商）及其下属模型。系统使用默认模型（或第一个启用的模型）进行分析。</p>
+                            <p class="text-sm text-base-content/60">配置 AI 通道（API提供商）及其下属模型。系统会优先使用默认模型；默认模型最近失败时，会短时冷却并自动降级到其它启用模型。</p>
                         </div>
                         <button class="btn btn-primary btn-sm" onclick="showAddAiModel()">添加模型</button>
                     </div>
@@ -546,6 +550,15 @@
             <div class="form-control mt-2"><label class="label"><span class="label-text">可打开房间数 (-1=不限)</span></label><input type="number" id="pf-open-room" class="input input-bordered" min="-1" value="-1"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">每日新建房间上限 (-1=无限)</span></label><input type="number" id="pf-daily" class="input input-bordered" min="-1" value="-1"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">每月 AI 点数</span></label><input type="number" id="pf-ai" class="input input-bordered" min="0" value="0"></div>
+            <div class="mt-3 rounded-box border border-base-300 bg-base-200/40 p-3">
+                <div class="text-sm font-semibold">套餐权益开关</div>
+                <div class="text-xs text-base-content/60 mt-1">控制会员计划可用的增值能力；AI直播复盘需要同时满足套餐权益与 AI 点数余额。</div>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+                    <label class="label cursor-pointer justify-start gap-3"><input type="checkbox" id="pf-feature-export" class="checkbox checkbox-primary checkbox-sm"><span class="label-text">数据导出</span></label>
+                    <label class="label cursor-pointer justify-start gap-3"><input type="checkbox" id="pf-feature-ai-live-recap" class="checkbox checkbox-primary checkbox-sm"><span class="label-text">AI直播复盘（单场）</span></label>
+                    <label class="label cursor-pointer justify-start gap-3"><input type="checkbox" id="pf-feature-priority-support" class="checkbox checkbox-primary checkbox-sm"><span class="label-text">优先支持</span></label>
+                </div>
+            </div>
             <div class="grid grid-cols-3 gap-2 mt-2">
                 <div class="form-control"><label class="label"><span class="label-text">月价</span></label><input type="number" id="pf-pm" class="input input-bordered input-sm" step="0.01"></div>
                 <div class="form-control"><label class="label"><span class="label-text">季价</span></label><input type="number" id="pf-pq" class="input input-bordered input-sm" step="0.01"></div>
@@ -582,7 +595,7 @@
             <input type="hidden" id="aic-id">
             <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input type="text" id="aic-name" class="input input-bordered" placeholder="例：基础包"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">AI 点数</span></label><input type="number" id="aic-credits" class="input input-bordered" min="1"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">价格（余额扣除，分）</span></label><input type="number" id="aic-price" class="input input-bordered" min="0" step="1"><p class="text-xs text-base-content/50 mt-1">例：1000 = ¥10.00</p></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">价格（元）</span></label><input type="number" id="aic-price" class="input input-bordered" min="0" step="1"><p class="text-xs text-base-content/50 mt-1">例：10 = ¥10</p></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input type="text" id="aic-desc" class="input input-bordered" placeholder="可选"></div>
             <div class="modal-action">
                 <button class="btn" onclick="document.getElementById('aiCreditModal').close()">取消</button>
@@ -635,6 +648,6 @@
         </div>
     </dialog>
 
-    <script src="/js/admin.js"></script>
+    <script src="/js/admin.js?v=20260308g"></script>
 </body>
 </html>

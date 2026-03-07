@@ -11,6 +11,7 @@ let currentAdminUserDetailId = null;
 let adminDocsLoadedOnce = false;
 let adminDocsListCache = [];
 let currentAdminDocPath = '';
+let currentPlanFeatureFlags = {};
 
 function showSection(name) {
     currentSection = name;
@@ -448,7 +449,22 @@ async function loadPlans() {
     }).join('');
 }
 
+function normalizePlanFeatureFlags(rawFlags) {
+    if (!rawFlags) return {};
+    if (typeof rawFlags === 'string') {
+        try {
+            return JSON.parse(rawFlags);
+        } catch (err) {
+            console.warn('Parse plan feature flags error:', err);
+            return {};
+        }
+    }
+    return rawFlags;
+}
+
 function showPlanForm(plan) {
+    const featureFlags = normalizePlanFeatureFlags(plan?.featureFlags);
+    currentPlanFeatureFlags = { ...featureFlags };
     document.getElementById('plan-form-title').textContent = plan ? '编辑套餐' : '新增套餐';
     document.getElementById('pf-id').value = plan?.id || '';
     document.getElementById('pf-name').value = plan?.name || '';
@@ -462,6 +478,9 @@ function showPlanForm(plan) {
     document.getElementById('pf-pq').value = plan?.priceQuarterly ?? '';
     document.getElementById('pf-py').value = plan?.priceAnnual ?? '';
     document.getElementById('pf-sort').value = plan?.sortOrder ?? 0;
+    document.getElementById('pf-feature-export').checked = Boolean(featureFlags.export || featureFlags.data_export);
+    document.getElementById('pf-feature-ai-live-recap').checked = Boolean(featureFlags.ai_live_recap || featureFlags.aiLiveRecap);
+    document.getElementById('pf-feature-priority-support').checked = Boolean(featureFlags.priority_support || featureFlags.prioritySupport);
     document.getElementById('planFormModal').showModal();
 }
 
@@ -469,17 +488,36 @@ function editPlan(plan) { showPlanForm(plan); }
 
 async function submitPlanForm() {
     const id = document.getElementById('pf-id').value;
+    const parseIntOr = (elementId, fallback) => {
+        const value = parseInt(document.getElementById(elementId).value, 10);
+        return Number.isFinite(value) ? value : fallback;
+    };
+    const parseFloatOr = (elementId, fallback = 0) => {
+        const value = parseFloat(document.getElementById(elementId).value);
+        return Number.isFinite(value) ? value : fallback;
+    };
+    const featureFlags = {
+        ...currentPlanFeatureFlags,
+        export: document.getElementById('pf-feature-export').checked,
+        ai_live_recap: document.getElementById('pf-feature-ai-live-recap').checked,
+        priority_support: document.getElementById('pf-feature-priority-support').checked,
+    };
+    delete featureFlags.data_export;
+    delete featureFlags.aiLiveRecap;
+    delete featureFlags.prioritySupport;
+
     const body = {
         name: document.getElementById('pf-name').value,
         code: document.getElementById('pf-code').value,
-        roomLimit: parseInt(document.getElementById('pf-room').value),
-        openRoomLimit: parseInt(document.getElementById('pf-open-room').value) || -1,
-        dailyRoomCreateLimit: parseInt(document.getElementById('pf-daily').value) || -1,
-        aiCreditsMonthly: parseInt(document.getElementById('pf-ai').value) || 0,
-        priceMonthly: parseFloat(document.getElementById('pf-pm').value),
-        priceQuarterly: parseFloat(document.getElementById('pf-pq').value),
-        priceAnnual: parseFloat(document.getElementById('pf-py').value),
-        sortOrder: parseInt(document.getElementById('pf-sort').value) || 0,
+        roomLimit: parseIntOr('pf-room', -1),
+        openRoomLimit: parseIntOr('pf-open-room', -1),
+        dailyRoomCreateLimit: parseIntOr('pf-daily', -1),
+        aiCreditsMonthly: parseIntOr('pf-ai', 0),
+        priceMonthly: parseFloatOr('pf-pm', 0),
+        priceQuarterly: parseFloatOr('pf-pq', 0),
+        priceAnnual: parseFloatOr('pf-py', 0),
+        sortOrder: parseIntOr('pf-sort', 0),
+        featureFlags,
     };
 
     const url = id ? `/api/admin/plans/${id}` : '/api/admin/plans';
@@ -865,39 +903,58 @@ async function deleteEulerKey(id) {
 }
 
 // ==================== AI Channels & Models ====================
+function formatAiCooldown(seconds) {
+    const total = Math.max(0, Number(seconds || 0));
+    const mins = Math.floor(total / 60);
+    const secs = total % 60;
+    if (mins > 0) return `${mins}分${secs}秒`;
+    return `${secs}秒`;
+}
+
 async function loadAiModels() {
     try {
         const res = await Auth.apiFetch('/api/admin/ai-channels');
         const data = await res.json();
         const channels = data.channels || [];
         const container = document.getElementById('ai-models-list');
+        const cooldownMinutes = Math.max(1, Math.round(Number(data.fallbackPolicy?.cooldownMs || 0) / 60000) || 5);
+        const strategyHtml = `<div class="alert bg-base-200 border border-base-300 text-sm mb-3">
+            <span>策略：默认模型优先；最近失败的模型会自动冷却约 ${cooldownMinutes} 分钟并临时后置，减少重复撞到坏模型的额外延迟。</span>
+        </div>`;
 
         if (channels.length === 0) {
-            container.innerHTML = '<p class="text-base-content/60">暂无 AI 通道，点击右上方添加</p>';
+            container.innerHTML = `${strategyHtml}<p class="text-base-content/60">暂无 AI 通道，点击右上方添加</p>`;
             return;
         }
 
-        container.innerHTML = channels.map(ch => {
+        container.innerHTML = strategyHtml + channels.map(ch => {
             const maskedKey = ch.apiKey ? ch.apiKey.slice(0, 8) + '...' + ch.apiKey.slice(-4) : '-';
             const modelsHtml = (ch.models || []).map(m => {
                 const statusBadge = m.lastStatus === 'ok' ? '<span class="badge badge-success badge-xs">正常</span>'
                     : m.lastStatus === 'error' ? '<span class="badge badge-error badge-xs">异常</span>'
                     : '<span class="badge badge-ghost badge-xs">未测试</span>';
                 const successRate = m.callCount > 0 ? Math.round((m.successCount / m.callCount) * 100) : '-';
+                const coolingBadge = m.isCooling ? `<span class="badge badge-warning badge-xs">冷却中 ${formatAiCooldown(m.cooldownRemainingSeconds)}</span>` : '';
+                const failBadge = m.consecutiveFailures > 0 ? `<span class="badge badge-outline badge-xs">连败 ${m.consecutiveFailures}</span>` : '';
                 return `<div class="flex items-center justify-between py-2 px-3 bg-base-200 rounded ${!m.isActive ? 'opacity-50' : ''}">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2">
                             <span class="font-mono text-sm">${m.name}</span>
                             ${statusBadge}
                             ${m.isDefault ? '<span class="badge badge-primary badge-xs">默认</span>' : ''}
+                            ${coolingBadge}
+                            ${failBadge}
                             ${!m.isActive ? '<span class="badge badge-error badge-xs">禁用</span>' : ''}
                         </div>
                         <div class="text-xs text-base-content/50 mt-0.5">ID: ${m.modelId} | 调用: ${m.callCount||0} | 成功率: ${successRate}% | 延迟: ${m.avgLatencyMs||'-'}ms</div>
                         ${m.lastError ? `<div class="text-xs text-error truncate">${m.lastError.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
                     </div>
                     <div class="flex gap-1 flex-shrink-0 ml-2">
+                        ${m.isDefault
+                            ? '<button class="btn btn-xs btn-disabled">当前默认</button>'
+                            : `<button class="btn btn-xs btn-outline btn-primary" onclick="setDefaultAiModel(${m.id})">设默认</button>`}
                         <button class="btn btn-xs btn-outline btn-info" onclick="testAiModel(${m.id})">测试</button>
-                        <button class="btn btn-xs btn-ghost" onclick="editAiModelInline(${m.id}, '${(m.name||'').replace(/'/g,"\\'")}', '${(m.modelId||'').replace(/'/g,"\\'")}', ${!!m.isDefault})">编辑</button>
+                        <button class="btn btn-xs btn-ghost" onclick="editAiModelInline(${m.id}, '${(m.name||'').replace(/'/g,"\\'")}', '${(m.modelId||'').replace(/'/g,"\\'")}')">编辑</button>
                         <button class="btn btn-xs btn-error btn-outline" onclick="deleteAiModel(${m.id})">删</button>
                     </div>
                 </div>`;
@@ -978,14 +1035,23 @@ function showAddModelToChannel(channelId, channelName) {
     }).then(r => r.json()).then(d => { if (d.error) alert(d.error); loadAiModels(); });
 }
 
-function editAiModelInline(id, name, modelId, isDefault) {
+async function setDefaultAiModel(id) {
+    const res = await Auth.apiFetch(`/api/admin/ai-models/${id}/set-default`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+        alert(data.error || '设置默认模型失败');
+        return;
+    }
+    loadAiModels();
+}
+
+function editAiModelInline(id, name, modelId) {
     const newName = prompt('模型名称:', name);
     if (newName === null) return;
     const newModelId = prompt('模型ID:', modelId);
     if (newModelId === null) return;
-    const newDefault = confirm('设为默认模型？');
     Auth.apiFetch(`/api/admin/ai-models/${id}`, {
-        method: 'PUT', body: JSON.stringify({ name: newName, modelId: newModelId, isDefault: newDefault })
+        method: 'PUT', body: JSON.stringify({ name: newName, modelId: newModelId })
     }).then(() => loadAiModels());
 }
 
@@ -1031,7 +1097,7 @@ async function loadAiCreditPackages() {
                     <div class="flex justify-between items-center">
                         <div>
                             <h4 class="font-bold">${p.name}</h4>
-                            <p class="text-sm">${p.credits} 点 | ¥${(p.priceCents / 100).toFixed(2)} ${normalizedDescription ? '| ' + normalizedDescription : ''}</p>
+                            <p class="text-sm">${p.credits} 点 | ¥${Number(p.priceYuan || 0).toFixed(2)} ${normalizedDescription ? '| ' + normalizedDescription : ''}</p>
                         </div>
                         <div class="flex gap-1">
                             <button class="btn btn-xs btn-ghost" onclick='editAiCreditPkg(${JSON.stringify(p).replace(/'/g,"&#39;")})'>编辑</button>
@@ -1049,7 +1115,7 @@ function showAiCreditForm(pkg) {
     document.getElementById('aic-id').value = pkg?.id || '';
     document.getElementById('aic-name').value = pkg?.name || '';
     document.getElementById('aic-credits').value = pkg?.credits || '';
-    document.getElementById('aic-price').value = pkg?.priceCents || '';
+    document.getElementById('aic-price').value = pkg?.priceYuan || '';
     document.getElementById('aic-desc').value = pkg?.description || '';
     document.getElementById('aiCreditModal').showModal();
 }
@@ -1061,10 +1127,10 @@ async function submitAiCreditForm() {
     const body = {
         name: document.getElementById('aic-name').value.trim(),
         credits: parseInt(document.getElementById('aic-credits').value),
-        priceCents: parseInt(document.getElementById('aic-price').value),
+        priceYuan: parseInt(document.getElementById('aic-price').value, 10),
         description: document.getElementById('aic-desc').value.trim(),
     };
-    if (!body.name || !body.credits || isNaN(body.priceCents)) { alert('请填写必填项'); return; }
+    if (!body.name || !body.credits || isNaN(body.priceYuan)) { alert('请填写必填项'); return; }
     const url = id ? `/api/admin/ai-credit-packages/${id}` : '/api/admin/ai-credit-packages';
     const method = id ? 'PUT' : 'POST';
     const res = await Auth.apiFetch(url, { method, body: JSON.stringify(body) });

@@ -469,8 +469,10 @@ async function initDb() {
                 call_count INTEGER DEFAULT 0,
                 success_count INTEGER DEFAULT 0,
                 fail_count INTEGER DEFAULT 0,
+                consecutive_failures INTEGER DEFAULT 0,
                 avg_latency_ms INTEGER DEFAULT 0,
                 last_used_at TIMESTAMP,
+                cooldown_until TIMESTAMP,
                 last_error TEXT,
                 last_status TEXT DEFAULT 'unknown',
                 created_at TIMESTAMP DEFAULT NOW(),
@@ -481,6 +483,8 @@ async function initDb() {
         try {
             await pool.query(`ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS channel_id INTEGER REFERENCES ai_channels(id) ON DELETE CASCADE`);
             await pool.query(`ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false`);
+            await pool.query(`ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS consecutive_failures INTEGER DEFAULT 0`);
+            await pool.query(`ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS cooldown_until TIMESTAMP`);
             // Make old columns nullable since they're now on ai_channels
             await pool.query(`ALTER TABLE ai_models ALTER COLUMN api_url DROP NOT NULL`).catch(() => {});
             await pool.query(`ALTER TABLE ai_models ALTER COLUMN api_key DROP NOT NULL`).catch(() => {});
@@ -539,6 +543,23 @@ async function initDb() {
             )
         `);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_ai_analysis_member ON user_ai_analysis(member_id, target_user_id)`);
+
+        // Single-session AI review cache table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS session_ai_review (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                room_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
+                review_json TEXT NOT NULL,
+                credits_used INTEGER DEFAULT 0,
+                model_name TEXT,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW(),
+                UNIQUE(user_id, room_id, session_id)
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_ai_review_lookup ON session_ai_review(user_id, room_id, session_id)`);
 
         // Migration: users AI credit columns
         await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_credits_monthly INTEGER DEFAULT 0`);

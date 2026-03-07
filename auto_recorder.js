@@ -901,6 +901,24 @@ class AutoRecorder {
             };
             logEvent('like', data);
         });
+
+
+        wrapper.connection.on('roomUser', msg => {
+            updateLastEventTime();
+            const viewerCount = Number(
+                msg?.viewerCount
+                ?? msg?.viewer_count
+                ?? msg?.onlineUserCount
+                ?? msg?.userCount
+                ?? msg?.roomUserCount
+                ?? msg?.viewer?.count
+                ?? 0
+            ) || 0;
+            logEvent('roomUser', {
+                viewerCount,
+                comment: viewerCount > 0 ? `viewer:${viewerCount}` : null
+            });
+        });
     }
 
     // Check if a room is currently connected

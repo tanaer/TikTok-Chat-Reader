@@ -96,7 +96,10 @@ router.post('/purchase-addon', authenticate, [
 router.get('/ai-credit-packages', async (req, res) => {
     try {
         const packages = await db.all(
-            'SELECT id, name, credits, price_cents, description FROM ai_credit_packages WHERE is_active = true ORDER BY credits'
+            `SELECT id, name, credits, CAST(ROUND(price_cents / 100.0) AS INTEGER) AS price_yuan, description
+             FROM ai_credit_packages
+             WHERE is_active = true
+             ORDER BY credits`
         );
         res.json({ packages });
     } catch (err) {
@@ -115,13 +118,16 @@ router.post('/purchase-ai-credits', authenticate, [
 
     try {
         const { packageId } = req.body;
-        const pkg = await db.get('SELECT * FROM ai_credit_packages WHERE id = ? AND is_active = true', [packageId]);
+        const pkg = await db.get(
+            'SELECT id, name, credits, price_cents FROM ai_credit_packages WHERE id = ? AND is_active = true',
+            [packageId]
+        );
         if (!pkg) return res.status(404).json({ error: '点数包不存在或已下架' });
 
-        const price = Number(pkg.priceCents);
+        const priceYuan = Math.round(Number(pkg.priceCents || 0) / 100);
         const balanceService = require('../services/balanceService');
         const purchase = await balanceService.purchaseWithBalance(
-            req.user.id, price, 'ai_credits', pkg.name,
+            req.user.id, priceYuan, 'ai_credits', pkg.name,
             `AI点数: ${pkg.name}, ${pkg.credits}点`
         );
         if (!purchase.success) return res.status(400).json(purchase);

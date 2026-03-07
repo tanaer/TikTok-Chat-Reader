@@ -692,7 +692,8 @@ async function executeExport() {
 
         document.getElementById('exportModal').close();
     } catch (err) {
-        alert('导出失败: ' + err.message);
+        const message = err?.responseJSON?.error || err?.message || '导出失败，请稍后重试';
+        alert(message);
     } finally {
         $('#exportBtn').removeClass('loading').prop('disabled', false).text('导出 Excel');
     }

@@ -855,43 +855,385 @@ class Manager {
             [sessionId]);
     }
 
-    // Time Statistics (30-min intervals) - OPTIMIZED: GROUPS BY 30min IN SQL
-    async getTimeStats(roomId, sinceTime = null) {
+    // Time Statistics (30-min intervals) - supports full history or a specific session
+    async getTimeStats(roomId, sessionId = null, sinceTime = null) {
         await this.ensureDb();
 
-        let timeFilter = '';
+        let whereClause = `WHERE room_id = ? AND type IN ('gift', 'chat', 'roomUser', 'member')`;
         const params = [roomId];
+
+        if (sessionId === 'live') {
+            whereClause += ' AND session_id IS NULL';
+        } else if (sessionId) {
+            whereClause += ' AND session_id = ?';
+            params.push(sessionId);
+        }
+
         if (sinceTime) {
-            timeFilter = 'AND timestamp >= ?';
+            whereClause += ' AND timestamp >= ?';
             params.push(sinceTime);
         }
 
         const stats = await query(`
+            WITH bucketed AS (
+                SELECT
+                    timestamp,
+                    type,
+                    diamond_count,
+                    repeat_count,
+                    viewer_count,
+                    data_json,
+                    date_trunc('hour', timestamp)
+                        + floor(extract(minute from timestamp) / 30) * interval '30 minute' as bucket_start
+                FROM event
+                ${whereClause}
+            )
             SELECT
-                to_char(
-                    to_timestamp(floor((extract('epoch' from timestamp) / 1800 )) * 1800) AT TIME ZONE 'UTC+8',
-                    'HH24:MI'
-                ) || '-' ||
-                to_char(
-                    to_timestamp(floor((extract('epoch' from timestamp) / 1800 )) * 1800 + 1800) AT TIME ZONE 'UTC+8',
-                    'HH24:MI'
-                ) as time_range,
+                to_char(bucket_start, 'HH24:MI') || '-' ||
+                to_char(bucket_start + interval '30 minute', 'HH24:MI') as time_range,
                 SUM(CASE WHEN type = 'chat' THEN 1 ELSE 0 END) as comments,
                 SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as income,
-                MAX(CASE WHEN type = 'roomUser' THEN COALESCE((data_json::json->>'viewerCount')::int, 0) ELSE 0 END) as max_online
-            FROM event
-            WHERE room_id = ? AND type IN ('gift', 'chat', 'roomUser') ${timeFilter}
-            GROUP BY 1
-            ORDER BY MIN(timestamp) ASC
+                COUNT(*) FILTER (WHERE type = 'member') as member_entries,
+                COUNT(*) FILTER (WHERE type = 'roomUser') as viewer_samples,
+                GREATEST(
+                    MAX(CASE
+                        WHEN type = 'roomUser' THEN COALESCE(viewer_count, (data_json::json->>'viewerCount')::int, 0)
+                        ELSE 0
+                    END),
+                    COUNT(*) FILTER (WHERE type = 'member')
+                ) as max_online
+            FROM bucketed
+            GROUP BY bucket_start
+            ORDER BY bucket_start ASC
         `, params);
 
-        // Convert string counts to numbers (Postgres SUM returns string for bigints)
         return stats.map(s => ({
             time_range: s.timeRange,
             income: parseInt(s.income) || 0,
             comments: parseInt(s.comments) || 0,
+            member_entries: parseInt(s.memberEntries) || 0,
+            viewer_samples: parseInt(s.viewerSamples) || 0,
             max_online: parseInt(s.maxOnline) || 0
         }));
+    }
+
+    async getSessionValueCustomers(roomId, sessionId = null, roomFilter = null) {
+        await this.ensureDb();
+
+        let whereClause = "WHERE room_id = ? AND type IN ('gift', 'chat', 'like', 'member')";
+        const params = [roomId];
+
+        if (sessionId === 'live' || !sessionId) {
+            whereClause += ' AND session_id IS NULL';
+        } else {
+            whereClause += ' AND session_id = ?';
+            params.push(sessionId);
+        }
+
+        const participantAggSql = `
+            SELECT
+                COALESCE(NULLIF(user_id, ''), NULLIF(unique_id, ''), nickname) as participantKey,
+                MAX(user_id) as userId,
+                MAX(nickname) as nickname,
+                MAX(unique_id) as uniqueId,
+                SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as sessionGiftValue,
+                COUNT(*) FILTER (WHERE type = 'chat') as chatCount,
+                SUM(CASE WHEN type = 'like' THEN COALESCE(like_count, 0) ELSE 0 END) as likeCount,
+                COUNT(*) FILTER (WHERE type = 'member') as enterCount
+            FROM event
+            ${whereClause} AND COALESCE(NULLIF(user_id, ''), NULLIF(unique_id, ''), nickname) IS NOT NULL
+            GROUP BY participantKey
+        `;
+
+        const participantSummary = await get(`
+            SELECT
+                COUNT(*) as participants,
+                COUNT(*) FILTER (WHERE sessionGiftValue > 0) as payingUsers,
+                COUNT(*) FILTER (WHERE chatCount > 0) as chattingUsers
+            FROM (${participantAggSql}) participant_base
+        `, params);
+
+        const participants = await query(`
+            SELECT *
+            FROM (${participantAggSql}) participant_base
+            ORDER BY sessionGiftValue DESC, chatCount DESC, likeCount DESC
+            LIMIT 18
+        `, params);
+
+        if (!participants.length) {
+            return {
+                core: [],
+                potential: [],
+                risk: [],
+                meta: { participants: 0, payingUsers: 0, chattingUsers: 0 }
+            };
+        }
+
+        const enriched = await Promise.all(participants.map(async (participant) => {
+            const history = participant.userId ? await this.getUserAnalysis(participant.userId, roomFilter) : null;
+            const sessionGiftValue = parseInt(participant.sessionGiftValue) || 0;
+            const chatCount = parseInt(participant.chatCount) || 0;
+            const likeCount = parseInt(participant.likeCount) || 0;
+            const enterCount = parseInt(participant.enterCount) || 0;
+            const participantKey = participant.participantKey || participant.userId || participant.uniqueId || participant.nickname || '';
+            const historicalValue = parseInt(history?.totalValue) || 0;
+            return {
+                participantKey,
+                userId: participant.userId,
+                nickname: participant.nickname || participant.uniqueId || '匿名',
+                uniqueId: participant.uniqueId || '',
+                sessionGiftValue,
+                chatCount,
+                likeCount,
+                enterCount,
+                historicalValue,
+                activeDays: parseInt(history?.activeDays) || 0,
+                dailyAvg: Math.round(Number(history?.dailyAvg) || 0),
+                commonLanguage: history?.commonLanguage || '',
+                masteredLanguages: history?.masteredLanguages || '',
+                fanLevel: Number(history?.fanLevel || 0),
+                fanClubName: history?.fanClubName || '',
+                topGiftRoom: Array.isArray(history?.giftRooms) && history.giftRooms[0]
+                    ? (history.giftRooms[0].name || history.giftRooms[0].roomId || '')
+                    : '',
+                weightedInteraction: chatCount * 4 + likeCount * 0.15 + enterCount * 2
+            };
+        }));
+
+        const asCard = (item, reason, action) => ({
+            participantKey: item.participantKey,
+            userId: item.userId,
+            nickname: item.nickname,
+            uniqueId: item.uniqueId,
+            sessionGiftValue: item.sessionGiftValue,
+            historicalValue: item.historicalValue,
+            chatCount: item.chatCount,
+            likeCount: item.likeCount,
+            enterCount: item.enterCount,
+            fanLevel: item.fanLevel,
+            commonLanguage: item.commonLanguage,
+            topGiftRoom: item.topGiftRoom,
+            reason,
+            action
+        });
+
+        const core = enriched
+            .filter(item => item.sessionGiftValue > 0)
+            .sort((a, b) => (b.sessionGiftValue - a.sessionGiftValue) || (b.historicalValue - a.historicalValue))
+            .slice(0, 3)
+            .map(item => asCard(
+                item,
+                `本场贡献 💎${item.sessionGiftValue.toLocaleString()}，历史累计 💎${item.historicalValue.toLocaleString()}`,
+                '适合重点点名维护，下一场优先给到情绪反馈和专属承接。'
+            ));
+
+        const used = new Set(core.map(item => item.participantKey));
+
+        const potential = enriched
+            .filter(item => !used.has(item.participantKey))
+            .filter(item => item.weightedInteraction >= 12 && item.sessionGiftValue <= Math.max(0, Math.round(item.historicalValue * 0.03)))
+            .sort((a, b) => (b.weightedInteraction - a.weightedInteraction) || (a.sessionGiftValue - b.sessionGiftValue))
+            .slice(0, 3)
+            .map(item => asCard(
+                item,
+                `互动信号强（${item.chatCount}条弹幕 / ${item.likeCount}点赞），但本场转化仍偏低。`,
+                '适合在高互动节点做轻成交引导，优先尝试首单转化。'
+            ));
+
+        for (const item of potential) used.add(item.participantKey);
+
+        let risk = enriched
+            .filter(item => !used.has(item.participantKey))
+            .filter(item => item.historicalValue >= 1000 && item.sessionGiftValue === 0)
+            .sort((a, b) => (b.historicalValue - a.historicalValue) || (b.enterCount - a.enterCount))
+            .slice(0, 3)
+            .map(item => asCard(
+                item,
+                `历史累计 💎${item.historicalValue.toLocaleString()}，但本场未形成有效出手。`,
+                '建议下场重点召回，优先恢复存在感和关系温度。'
+            ));
+
+        if (!risk.length) {
+            risk = enriched
+                .filter(item => !used.has(item.participantKey))
+                .filter(item => item.historicalValue >= 1000 && item.sessionGiftValue < Math.max(50, Math.round(item.historicalValue * 0.02)))
+                .sort((a, b) => (b.historicalValue - a.historicalValue) || (a.sessionGiftValue - b.sessionGiftValue))
+                .slice(0, 3)
+                .map(item => asCard(
+                    item,
+                    `历史价值高，但本场贡献仅 💎${item.sessionGiftValue.toLocaleString()}，明显偏弱。`,
+                    '建议尽快复盘该客户在本场的互动节点，避免持续降温。'
+                ));
+        }
+
+        return {
+            core,
+            potential,
+            risk,
+            meta: {
+                participants: parseInt(participantSummary?.participants) || 0,
+                payingUsers: parseInt(participantSummary?.payingUsers) || 0,
+                chattingUsers: parseInt(participantSummary?.chattingUsers) || 0
+            }
+        };
+    }
+
+    async getSessionRecap(roomId, sessionId = null, roomFilter = null) {
+        await this.ensureDb();
+
+        const detail = await this.getRoomDetailStats(roomId, sessionId);
+        const timeline = await this.getTimeStats(roomId, sessionId);
+        const valueCustomers = await this.getSessionValueCustomers(roomId, sessionId, roomFilter);
+
+        const totalGiftValue = Number(detail?.summary?.totalGiftValue || 0);
+        const totalComments = Number(detail?.summary?.totalComments || 0);
+        const totalLikes = Number(detail?.summary?.totalLikes || 0);
+        const totalVisits = Number(detail?.summary?.totalVisits || 0);
+        const duration = Number(detail?.summary?.duration || 0);
+        const participantCount = Number(valueCustomers?.meta?.participants || 0);
+        const payingUsers = Number(valueCustomers?.meta?.payingUsers || 0);
+        const topGiftValue = Number(detail?.leaderboards?.gifters?.[0]?.value || 0);
+        const topGiftShare = totalGiftValue > 0 ? Number((topGiftValue / totalGiftValue).toFixed(4)) : 0;
+
+        const activeBuckets = timeline.filter(item => (item.income || 0) > 0 || (item.comments || 0) > 0 || (item.max_online || 0) > 0);
+        const hasViewerSnapshots = timeline.some(item => Number(item.viewer_samples || 0) > 0);
+        const trafficMetricLabel = hasViewerSnapshots ? '在线波动' : '流量波动';
+        let biggestDrop = null;
+        if (hasViewerSnapshots) {
+            for (let i = 1; i < timeline.length; i += 1) {
+                const prev = timeline[i - 1];
+                const curr = timeline[i];
+                const drop = (prev.max_online || 0) - (curr.max_online || 0);
+                if (drop > 0 && (!biggestDrop || drop > biggestDrop.dropValue)) {
+                    biggestDrop = {
+                        from: prev.time_range,
+                        to: curr.time_range,
+                        dropValue: drop,
+                        fromValue: prev.max_online || 0,
+                        toValue: curr.max_online || 0
+                    };
+                }
+            }
+        }
+
+        const giftComponent = Math.min(25, Math.log10(totalGiftValue + 1) * 7);
+        const interactionSignal = totalComments + totalLikes / 20 + totalVisits * 0.6;
+        const interactionComponent = Math.min(20, Math.log10(interactionSignal + 1) * 7);
+        const customerComponent = Math.min(12, valueCustomers.core.length * 3 + valueCustomers.potential.length * 2 + valueCustomers.risk.length);
+        const rhythmComponent = Math.min(8, activeBuckets.length * 1.5);
+        const score = totalGiftValue || totalComments || totalLikes || totalVisits
+            ? Math.round(Math.min(98, 35 + giftComponent + interactionComponent + customerComponent + rhythmComponent))
+            : 0;
+
+        const grade = score >= 88 ? 'A' : score >= 75 ? 'B' : score >= 60 ? 'C' : score > 0 ? 'D' : '-';
+        const gradeLabel = score >= 88 ? '强势场' : score >= 75 ? '稳态场' : score >= 60 ? '波动场' : score > 0 ? '待优化' : '暂无数据';
+
+        const tags = [];
+        if (topGiftShare >= 0.6 && totalGiftValue > 0) tags.push('大哥驱动');
+        if (totalComments >= Math.max(20, totalVisits * 0.8)) tags.push('互动热');
+        if (valueCustomers.potential.length >= 2) tags.push('高互动待转化');
+        if (valueCustomers.core.length >= 2 && topGiftShare < 0.6) tags.push('客户结构健康');
+        if (biggestDrop && biggestDrop.dropValue >= 15) tags.push('后段掉人');
+        if (!tags.length && score > 0) tags.push('稳态经营');
+
+        const topIncomeBucket = [...timeline].sort((a, b) => (b.income || 0) - (a.income || 0))[0] || null;
+        const topCommentBucket = [...timeline].sort((a, b) => (b.comments || 0) - (a.comments || 0))[0] || null;
+        const topOnlineBucket = [...timeline].sort((a, b) => (b.max_online || 0) - (a.max_online || 0))[0] || null;
+
+        const keyMoments = [];
+        if (topIncomeBucket && topIncomeBucket.income > 0) {
+            keyMoments.push({
+                type: 'gift_peak',
+                title: '礼物高峰',
+                timeRange: topIncomeBucket.time_range,
+                metric: `💎 ${Number(topIncomeBucket.income || 0).toLocaleString()}`,
+                description: `本场礼物峰值出现在 ${topIncomeBucket.time_range}，是最值得回看和复用的话术节点。`
+            });
+        }
+        if (topCommentBucket && topCommentBucket.comments > 0) {
+            keyMoments.push({
+                type: 'comment_peak',
+                title: '互动高峰',
+                timeRange: topCommentBucket.time_range,
+                metric: `💬 ${Number(topCommentBucket.comments || 0).toLocaleString()}`,
+                description: `互动热度最高出现在 ${topCommentBucket.time_range}，说明该时段内容更容易把人留下来。`
+            });
+        }
+        if (biggestDrop && biggestDrop.dropValue > 0) {
+            keyMoments.push({
+                type: 'audience_drop',
+                title: trafficMetricLabel,
+                timeRange: `${biggestDrop.from} → ${biggestDrop.to}`,
+                metric: `-${biggestDrop.dropValue.toLocaleString()}`,
+                description: `在线高点从 ${biggestDrop.fromValue.toLocaleString()} 降到 ${biggestDrop.toValue.toLocaleString()}，建议重点复盘该转折段。`
+            });
+        } else if (topOnlineBucket && topOnlineBucket.max_online > 0) {
+            keyMoments.push({
+                type: 'online_peak',
+                title: hasViewerSnapshots ? '在线峰值' : '流量峰值',
+                timeRange: topOnlineBucket.time_range,
+                metric: `👥 ${Number(topOnlineBucket.max_online || 0).toLocaleString()}`,
+                description: hasViewerSnapshots ? `在线峰值出现在 ${topOnlineBucket.time_range}，可作为下次起量阶段的节奏参考。` : `该时段流量触达最强，可作为下次起量节奏参考。`
+            });
+        }
+
+        const highlights = [];
+        if (totalGiftValue > 0) highlights.push(`本场累计礼物达到 💎${totalGiftValue.toLocaleString()}，具备清晰的变现结果。`);
+        if (topIncomeBucket && topIncomeBucket.income > 0) highlights.push(`礼物高峰出现在 ${topIncomeBucket.time_range}，说明该时段内容更能打。`);
+        if (valueCustomers.core.length > 0) highlights.push(`核心价值客户 ${valueCustomers.core[0].nickname} 本场贡献突出，适合重点维护。`);
+        if (totalComments > Math.max(30, totalVisits)) highlights.push(`弹幕互动密度较高，说明内容具备留人能力。`);
+
+        const issues = [];
+        if (topGiftShare >= 0.6 && totalGiftValue > 0) issues.push(`本场收入对头部客户依赖较高，前排结构仍需扩宽。`);
+        if (valueCustomers.potential.length >= 2) issues.push(`互动热度不低，但潜力客户尚未有效转化。`);
+        if (biggestDrop && biggestDrop.dropValue >= 15) issues.push(`后段出现明显掉人，节奏衔接仍有优化空间。`);
+        if (!totalGiftValue && (totalComments > 0 || totalLikes > 0)) issues.push(`本场有互动但变现偏弱，承接成交的动作不足。`);
+
+        const actions = [];
+        if (valueCustomers.core.length > 0) actions.push('下场开播前优先准备对核心价值客户的点名与情绪反馈。');
+        if (valueCustomers.potential.length > 0) actions.push('在互动高点补一段轻成交话术，把热度尽快转成首单。');
+        if (valueCustomers.risk.length > 0) actions.push('对流失风险客户做定向维护，避免高价值用户持续降温。');
+        if (biggestDrop && biggestDrop.dropValue >= 15) actions.push(`重点回看 ${biggestDrop.from} 到 ${biggestDrop.to} 的内容切换，优化留存节点。`);
+
+        const overview = {
+            score,
+            grade,
+            gradeLabel,
+            dominantTag: tags[0] || '稳态经营',
+            tags: tags.slice(0, 3),
+            totalGiftValue,
+            totalComments,
+            totalLikes,
+            totalVisits,
+            duration,
+            startTime: detail?.summary?.startTime || null,
+            participantCount,
+            payingUsers,
+            chattingUsers: Number(valueCustomers?.meta?.chattingUsers || 0),
+            topGiftShare,
+            sessionMode: sessionId === 'live' || !sessionId ? 'live' : 'archived',
+            trafficMetricLabel
+        };
+
+        const radar = [
+            { label: '变现', value: Math.max(5, Math.round(Math.min(100, giftComponent * 4))) },
+            { label: '互动', value: Math.max(5, Math.round(Math.min(100, interactionComponent * 5))) },
+            { label: '客户', value: Math.max(5, Math.round(Math.min(100, (customerComponent / 12) * 100))) },
+            { label: '节奏', value: Math.max(5, Math.round(Math.min(100, activeBuckets.length ? (rhythmComponent / 8) * 100 : 0))) }
+        ];
+
+        return {
+            overview,
+            timeline,
+            radar,
+            keyMoments: keyMoments.slice(0, 3),
+            insights: {
+                highlights: highlights.slice(0, 3),
+                issues: issues.slice(0, 3),
+                actions: actions.slice(0, 3)
+            },
+            valueCustomers
+        };
     }
 
     // User Analysis

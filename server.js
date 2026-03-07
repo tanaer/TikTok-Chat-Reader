@@ -81,6 +81,45 @@ async function canAccessRoom(req, roomId) {
     const row = await db.get('SELECT room_id FROM user_room WHERE user_id = ? AND room_id = ? AND deleted_at IS NULL', [req.user.id, roomId]);
     return { allowed: !!row };
 }
+
+function normalizePlanFeatureFlags(rawFlags) {
+    if (!rawFlags) return {};
+    if (typeof rawFlags === 'string') {
+        try {
+            return JSON.parse(rawFlags);
+        } catch (err) {
+            console.warn('[FeatureFlags] Parse error:', err.message);
+            return {};
+        }
+    }
+    return rawFlags;
+}
+
+async function ensureUserPlanFeature(req, featureKeys = [], errorMessage = '当前套餐暂无此权益', errorCode = 'FEATURE_NOT_ALLOWED') {
+    if (!req.user) {
+        return { allowed: false, status: 401, payload: { error: '请先登录' } };
+    }
+    if (req.user.role === 'admin') {
+        return { allowed: true, flags: { admin: true } };
+    }
+
+    const quota = await getUserQuota(req.user.id);
+    const flags = normalizePlanFeatureFlags(quota?.subscription?.planFeatureFlags || quota?.subscription?.featureFlags);
+    const allowed = featureKeys.some(key => Boolean(flags?.[key]));
+
+    if (allowed) {
+        return { allowed: true, flags };
+    }
+
+    return {
+        allowed: false,
+        status: 403,
+        payload: {
+            error: errorMessage,
+            code: errorCode
+        }
+    };
+}
 // Helper: check if user owns a specific room
 async function checkRoomOwnership(req, roomId) {
     if (!req.user) return false; // not logged in
@@ -724,6 +763,176 @@ app.get('/api/rooms/:id/stats_detail', optionalAuth, async (req, res) => {
     }
 });
 
+app.get('/api/rooms/:id/session-recap', optionalAuth, async (req, res) => {
+    try {
+        const roomId = req.params.id;
+        const access = await canAccessRoom(req, roomId);
+        if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
+
+        const featureAccess = await ensureUserPlanFeature(
+            req,
+            ['ai_live_recap', 'aiLiveRecap'],
+            'AI直播复盘为指定套餐权益，请升级套餐后使用',
+            'LIVE_RECAP_NOT_ALLOWED'
+        );
+        if (!featureAccess.allowed) return res.status(featureAccess.status).json(featureAccess.payload);
+
+        const sessionId = req.query.sessionId || 'live';
+        const roomFilter = await getUserRoomFilter(req);
+        const recap = await manager.getSessionRecap(roomId, sessionId, roomFilter);
+        const cachedReview = req.user && sessionId !== 'live'
+            ? await getCachedSessionAiReview(req.user.id, roomId, sessionId)
+            : null;
+
+        const serializeValueCustomer = (item = {}) => ({
+            nickname: item.nickname || '匿名',
+            uniqueId: item.uniqueId || '',
+            sessionGiftValue: Number(item.sessionGiftValue || 0),
+            historicalValue: Number(item.historicalValue || 0),
+            chatCount: Number(item.chatCount || 0),
+            likeCount: Number(item.likeCount || 0),
+            enterCount: Number(item.enterCount || 0),
+            reason: item.reason || '',
+            action: item.action || ''
+        });
+
+        res.json({
+            sessionId,
+            pointCost: SESSION_RECAP_AI_POINTS,
+            overview: {
+                score: recap?.overview?.score || 0,
+                grade: recap?.overview?.grade || '-',
+                gradeLabel: recap?.overview?.gradeLabel || '暂无数据',
+                dominantTag: recap?.overview?.dominantTag || '',
+                tags: Array.isArray(recap?.overview?.tags) ? recap.overview.tags : [],
+                totalGiftValue: Number(recap?.overview?.totalGiftValue || 0),
+                totalComments: Number(recap?.overview?.totalComments || 0),
+                totalLikes: Number(recap?.overview?.totalLikes || 0),
+                totalVisits: Number(recap?.overview?.totalVisits || 0),
+                duration: Number(recap?.overview?.duration || 0),
+                startTime: recap?.overview?.startTime || null,
+                participantCount: Number(recap?.overview?.participantCount || 0),
+                payingUsers: Number(recap?.overview?.payingUsers || 0),
+                chattingUsers: Number(recap?.overview?.chattingUsers || 0),
+                topGiftShare: Number(recap?.overview?.topGiftShare || 0),
+                sessionMode: recap?.overview?.sessionMode || 'live',
+                trafficMetricLabel: recap?.overview?.trafficMetricLabel || '在线波动'
+            },
+            timeline: Array.isArray(recap?.timeline)
+                ? recap.timeline.map(item => ({
+                    timeRange: item.time_range,
+                    income: Number(item.income || 0),
+                    comments: Number(item.comments || 0),
+                    maxOnline: Number(item.max_online || 0)
+                }))
+                : [],
+            radar: Array.isArray(recap?.radar) ? recap.radar.map(item => ({ label: item.label, value: Number(item.value || 0) })) : [],
+            keyMoments: Array.isArray(recap?.keyMoments) ? recap.keyMoments.map(item => ({
+                type: item.type,
+                title: item.title,
+                timeRange: item.timeRange,
+                metric: item.metric,
+                description: item.description
+            })) : [],
+            insights: {
+                highlights: normalizeAiReviewList(recap?.insights?.highlights),
+                issues: normalizeAiReviewList(recap?.insights?.issues),
+                actions: normalizeAiReviewList(recap?.insights?.actions)
+            },
+            valueCustomers: {
+                core: Array.isArray(recap?.valueCustomers?.core) ? recap.valueCustomers.core.map(serializeValueCustomer) : [],
+                potential: Array.isArray(recap?.valueCustomers?.potential) ? recap.valueCustomers.potential.map(serializeValueCustomer) : [],
+                risk: Array.isArray(recap?.valueCustomers?.risk) ? recap.valueCustomers.risk.map(serializeValueCustomer) : []
+            },
+            aiReview: cachedReview
+        });
+    } catch (err) {
+        console.error('[API] session recap error:', err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
+    try {
+        if (!req.user) return res.status(401).json({ error: '请先登录' });
+
+        const roomId = req.params.id;
+        const access = await canAccessRoom(req, roomId);
+        if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
+
+        const featureAccess = await ensureUserPlanFeature(
+            req,
+            ['ai_live_recap', 'aiLiveRecap'],
+            'AI直播复盘为指定套餐权益，请升级套餐后使用',
+            'LIVE_RECAP_NOT_ALLOWED'
+        );
+        if (!featureAccess.allowed) return res.status(featureAccess.status).json(featureAccess.payload);
+
+        const sessionId = String(req.body?.sessionId || '').trim();
+        const force = Boolean(req.body?.force);
+        if (!sessionId) return res.status(400).json({ error: '请选择场次' });
+        if (sessionId === 'live') return res.status(400).json({ error: '请先切到已归档场次，再生成 AI 直播复盘' });
+
+        if (!force) {
+            const cachedReview = await getCachedSessionAiReview(req.user.id, roomId, sessionId);
+            if (cachedReview) {
+                return res.json({ review: cachedReview, cached: true, pointCost: SESSION_RECAP_AI_POINTS, chargedPoints: 0 });
+            }
+        }
+
+        const isAdmin = req.user.role === 'admin';
+        if (!isAdmin) {
+            const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [req.user.id]);
+            const remaining = Number(credits?.aiCreditsRemaining || 0);
+            if (remaining < SESSION_RECAP_AI_POINTS) {
+                return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
+            }
+        }
+
+        const roomFilter = await getUserRoomFilter(req);
+        const recap = await manager.getSessionRecap(roomId, sessionId, roomFilter);
+        const generated = await generateSessionAiReviewFromRecap(roomId, sessionId, recap);
+        const review = {
+            summary: generated.summary,
+            highlights: normalizeAiReviewList(generated.highlights),
+            issues: normalizeAiReviewList(generated.issues),
+            actions: normalizeAiReviewList(generated.actions)
+        };
+        const chargedPoints = isAdmin || generated.usedFallback ? 0 : SESSION_RECAP_AI_POINTS;
+
+        const saveResult = await saveSessionAiReviewRecord(
+            req.user.id,
+            roomId,
+            sessionId,
+            review,
+            generated.modelName,
+            chargedPoints
+        );
+
+        if (!saveResult.success) {
+            if (saveResult.insufficient) {
+                return res.status(409).json({ error: 'AI 点数不足，请稍后重试', code: 'AI_CREDITS_EXHAUSTED' });
+            }
+            throw new Error(saveResult.error || '保存 AI 复盘失败');
+        }
+
+        res.json({
+            review: {
+                ...review,
+                generatedAt: new Date().toISOString(),
+                creditsUsed: chargedPoints
+            },
+            cached: false,
+            pointCost: SESSION_RECAP_AI_POINTS,
+            chargedPoints,
+            fallback: Boolean(generated.usedFallback)
+        });
+    } catch (err) {
+        console.error('[AI] Session recap error:', err);
+        res.status(500).json({ error: '生成老板摘要失败，请稍后重试' });
+    }
+});
+
 // All-Time TOP30 Leaderboards API (for room detail sidebar)
 app.get('/api/rooms/:id/alltime-leaderboards', optionalAuth, async (req, res) => {
     try {
@@ -795,7 +1004,7 @@ app.get('/api/history', optionalAuth, async (req, res) => {
             const access = await canAccessRoom(req, roomId);
             if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
         }
-        const stats = await manager.getTimeStats(roomId);
+        const stats = await manager.getTimeStats(roomId, req.query.sessionId || null);
         res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -849,21 +1058,16 @@ app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
 // Export API - fetch user list with full details for export
 app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
     try {
-        // Check export permission: admin or paid plan with export feature
-        if (!req.user) return res.status(401).json({ error: '请先登录' });
-        if (req.user.role !== 'admin') {
-            const sub = await db.get(
-                `SELECT sp.feature_flags FROM user_subscriptions us
-                 JOIN subscription_plans sp ON us.plan_id = sp.id
-                 WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
-                 ORDER BY us.end_date DESC LIMIT 1`,
-                [req.user.id]
-            );
-            const flags = sub?.featureFlags || {};
-            if (!flags.export) {
-                return res.status(403).json({ error: '数据导出为付费功能，请升级套餐后使用', code: 'EXPORT_NOT_ALLOWED' });
-            }
+        const exportAccess = await ensureUserPlanFeature(
+            req,
+            ['export', 'data_export'],
+            '数据导出为付费功能，请升级套餐后使用',
+            'EXPORT_NOT_ALLOWED'
+        );
+        if (!exportAccess.allowed) {
+            return res.status(exportAccess.status).json(exportAccess.payload);
         }
+
         const filters = {
             lang: req.query.lang || '',
             languageFilter: req.query.languageFilter || '',
@@ -981,6 +1185,361 @@ async function getLatestMemberAnalysisMap(memberId, targetUserIds = []) {
     return new Map(rows.map(row => [row.targetUserId, row]));
 }
 
+const SESSION_RECAP_AI_POINTS = 10;
+
+function normalizeAiReviewList(value, limit = 3) {
+    if (!Array.isArray(value)) return [];
+    return value.map(item => String(item || '').trim()).filter(Boolean).slice(0, limit);
+}
+
+function buildFallbackSessionAiReview(recap) {
+    const overview = recap?.overview || {};
+    const firstMoment = Array.isArray(recap?.keyMoments) ? recap.keyMoments[0] : null;
+    const summary = overview.score
+        ? `本场复盘评分 ${overview.score}/100，${overview.gradeLabel || '整体表现稳定'}。${firstMoment ? `重点关注 ${firstMoment.timeRange} 的${firstMoment.title}。` : ''}`
+        : '本场数据量有限，建议先积累更多单场内容后再生成 AI 摘要。';
+
+    return {
+        summary,
+        highlights: normalizeAiReviewList(recap?.insights?.highlights),
+        issues: normalizeAiReviewList(recap?.insights?.issues),
+        actions: normalizeAiReviewList(recap?.insights?.actions)
+    };
+}
+
+function extractFirstJsonObject(text = '') {
+    const raw = String(text || '').trim();
+    if (!raw) return null;
+    const start = raw.indexOf('{');
+    const end = raw.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) return null;
+    return raw.slice(start, end + 1);
+}
+
+function parseSessionAiReview(rawReview, fallbackRecap = null) {
+    if (!rawReview) return fallbackRecap ? buildFallbackSessionAiReview(fallbackRecap) : null;
+
+    try {
+        const parsed = typeof rawReview === 'string' ? JSON.parse(rawReview) : rawReview;
+        const fallback = fallbackRecap ? buildFallbackSessionAiReview(fallbackRecap) : { summary: '', highlights: [], issues: [], actions: [] };
+        return {
+            summary: String(parsed?.summary || fallback.summary || '').trim(),
+            highlights: normalizeAiReviewList(parsed?.highlights || fallback.highlights),
+            issues: normalizeAiReviewList(parsed?.issues || fallback.issues),
+            actions: normalizeAiReviewList(parsed?.actions || fallback.actions)
+        };
+    } catch {
+        return fallbackRecap ? buildFallbackSessionAiReview(fallbackRecap) : null;
+    }
+}
+
+async function getCachedSessionAiReview(userId, roomId, sessionId) {
+    if (!userId || !roomId || !sessionId || sessionId === 'live') return null;
+
+    const row = await db.get(
+        `SELECT review_json, credits_used, model_name, created_at, updated_at
+         FROM session_ai_review
+         WHERE user_id = ? AND room_id = ? AND session_id = ?`,
+        [userId, roomId, sessionId]
+    );
+
+    if (!row) return null;
+    const review = parseSessionAiReview(row.reviewJson);
+    if (!review) return null;
+
+    return {
+        ...review,
+        generatedAt: row.updatedAt || row.createdAt || null,
+        creditsUsed: Number(row.creditsUsed || 0)
+    };
+}
+
+async function saveSessionAiReviewRecord(userId, roomId, sessionId, review, modelName, creditsUsed = 0) {
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+
+        if (creditsUsed > 0) {
+            const balanceResult = await client.query(
+                `UPDATE users
+                 SET ai_credits_remaining = ai_credits_remaining - $1,
+                     ai_credits_used = ai_credits_used + $1,
+                     updated_at = NOW()
+                 WHERE id = $2 AND ai_credits_remaining >= $1
+                 RETURNING ai_credits_remaining`,
+                [creditsUsed, userId]
+            );
+
+            if (balanceResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return { success: false, insufficient: true };
+            }
+
+            await client.query(
+                `INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id)
+                 VALUES ($1, $2, $3, $4)`,
+                [userId, 'session_recap', creditsUsed, `${roomId}:${sessionId}`]
+            );
+        }
+
+        await client.query(
+            `INSERT INTO session_ai_review (user_id, room_id, session_id, review_json, credits_used, model_name, updated_at)
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())
+             ON CONFLICT (user_id, room_id, session_id)
+             DO UPDATE SET review_json = EXCLUDED.review_json,
+                           credits_used = EXCLUDED.credits_used,
+                           model_name = EXCLUDED.model_name,
+                           updated_at = NOW()`,
+            [userId, roomId, sessionId, JSON.stringify(review), creditsUsed, modelName || null]
+        );
+
+        await client.query('COMMIT');
+        return { success: true };
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[AI] Save session recap review error:', err.message);
+        return { success: false, error: err.message };
+    } finally {
+        client.release();
+    }
+}
+
+const AI_MODEL_FAILURE_COOLDOWN_MS = (() => {
+    const raw = parseInt(process.env.AI_MODEL_FAILURE_COOLDOWN_MS || `${5 * 60 * 1000}`, 10);
+    return Number.isFinite(raw) && raw > 0 ? raw : 5 * 60 * 1000;
+})();
+
+function getAiRuntimeCooldownDate(rawValue) {
+    if (!rawValue) return null;
+    const parsed = new Date(rawValue);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function isAiRuntimeCooling(runtime, nowMs = Date.now()) {
+    const cooldownUntil = getAiRuntimeCooldownDate(runtime?.cooldownUntil);
+    return Boolean(cooldownUntil && cooldownUntil.getTime() > nowMs);
+}
+
+async function listAiRuntimeCandidates() {
+    const aiModels = await db.all(
+        `SELECT m.id, m.model_id, m.name AS model_name, m.is_default, m.cooldown_until, m.consecutive_failures,
+                c.api_url, c.api_key
+         FROM ai_models m JOIN ai_channels c ON m.channel_id = c.id
+         WHERE m.is_active = true AND c.is_active = true
+         ORDER BY m.is_default DESC, m.id ASC`
+    );
+
+    if (aiModels.length > 0) {
+        const runtimes = aiModels.map(item => ({
+            apiKey: item.apiKey,
+            modelName: item.modelId,
+            apiUrl: item.apiUrl,
+            aiModelId: item.id,
+            runtimeLabel: item.modelName || item.modelId,
+            isDefault: Boolean(item.isDefault),
+            cooldownUntil: item.cooldownUntil || null,
+            consecutiveFailures: Number(item.consecutiveFailures || 0)
+        }));
+
+        const nowMs = Date.now();
+        const available = runtimes.filter(item => !isAiRuntimeCooling(item, nowMs));
+        const cooling = runtimes.filter(item => isAiRuntimeCooling(item, nowMs));
+
+        if (available.length > 0 && cooling.length > 0) {
+            const cooledDefault = cooling.find(item => item.isDefault);
+            if (cooledDefault) {
+                console.log(`[AI] Default model ${cooledDefault.runtimeLabel} is cooling down, temporarily deprioritized`);
+            }
+            return [...available, ...cooling];
+        }
+
+        return runtimes;
+    }
+
+    const dbSettings = await manager.getAllSettings();
+    const apiKey = dbSettings.ai_api_key || process.env.AI_API_KEY;
+    if (!apiKey) return [];
+
+    return [{
+        apiKey,
+        modelName: dbSettings.ai_model_name || process.env.AI_MODEL_NAME || 'deepseek-ai/DeepSeek-V3.2',
+        apiUrl: dbSettings.ai_api_url || process.env.AI_API_URL || 'https://api-inference.modelscope.cn/v1/',
+        aiModelId: null,
+        runtimeLabel: 'legacy-settings'
+    }];
+}
+
+async function markAiModelSuccess(aiModelId, latencyMs) {
+    if (!aiModelId) return;
+    try {
+        await db.run(
+            `UPDATE ai_models
+             SET call_count = call_count + 1, success_count = success_count + 1,
+                 consecutive_failures = 0, cooldown_until = NULL,
+                 last_status = 'ok', last_error = NULL, last_used_at = NOW(), avg_latency_ms = ?, updated_at = NOW()
+             WHERE id = ?`,
+            [latencyMs, aiModelId]
+        );
+    } catch (err) {
+        console.error('[AI] Update model success status error:', err.message);
+    }
+}
+
+async function markAiModelFailure(aiModelId, errorMessage) {
+    if (!aiModelId) return;
+    try {
+        const cooldownUntil = new Date(Date.now() + AI_MODEL_FAILURE_COOLDOWN_MS).toISOString();
+        await db.run(
+            `UPDATE ai_models
+             SET call_count = call_count + 1, fail_count = fail_count + 1,
+                 consecutive_failures = COALESCE(consecutive_failures, 0) + 1,
+                 cooldown_until = ?, last_status = 'error', last_error = ?,
+                 last_used_at = NOW(), updated_at = NOW()
+             WHERE id = ?`,
+            [cooldownUntil, String(errorMessage || 'Unknown error').slice(0, 200), aiModelId]
+        );
+    } catch (err) {
+        console.error('[AI] Update model failure status error:', err.message);
+    }
+}
+
+function normalizeAiRuntimeError(err) {
+    return err instanceof Error ? err.message : String(err || 'Unknown error');
+}
+
+function getSessionAiFallbackReason(err) {
+    const message = normalizeAiRuntimeError(err).toLowerCase();
+    if (message.includes('high risk') || message.includes('high-risk') || message.includes('considered high risk') || message.includes('风控') || message.includes('风险') || message.includes('safety') || message.includes('moderation')) {
+        return 'high-risk';
+    }
+    if (message.includes('api key not configured')) {
+        return 'config-missing';
+    }
+    return 'upstream-error';
+}
+
+async function requestAiChatCompletion({ messages, requestLabel }) {
+    const runtimes = await listAiRuntimeCandidates();
+    if (runtimes.length === 0) {
+        throw new Error('AI API Key not configured');
+    }
+
+    const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+    const errors = [];
+
+    for (let index = 0; index < runtimes.length; index++) {
+        const runtime = runtimes[index];
+        const startedAt = Date.now();
+
+        try {
+            console.log(`[AI] ${requestLabel} attempt ${index + 1}/${runtimes.length} with ${runtime.runtimeLabel}`);
+            const aiBaseUrl = runtime.apiUrl.endsWith('/') ? runtime.apiUrl : `${runtime.apiUrl}/`;
+            const response = await fetch(`${aiBaseUrl}chat/completions`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${runtime.apiKey}` },
+                body: JSON.stringify({
+                    model: runtime.modelName,
+                    messages,
+                    stream: false
+                })
+            });
+            const latencyMs = Date.now() - startedAt;
+
+            if (!response.ok) {
+                const errText = await response.text().catch(() => '');
+                throw new Error(`HTTP ${response.status}: ${(errText || response.statusText || '请求失败').slice(0, 200)}`);
+            }
+
+            const completion = await response.json();
+            const content = completion?.choices?.[0]?.message?.content;
+            if (typeof content !== 'string' || !content.trim()) {
+                throw new Error('AI 响应内容为空');
+            }
+
+            await markAiModelSuccess(runtime.aiModelId, latencyMs);
+
+            if (index > 0) {
+                console.log(`[AI] ${requestLabel} switched to fallback model ${runtime.runtimeLabel}`);
+            }
+
+            return {
+                completion,
+                modelName: runtime.modelName,
+                latencyMs,
+                aiModelId: runtime.aiModelId
+            };
+        } catch (err) {
+            const errorMessage = normalizeAiRuntimeError(err);
+            await markAiModelFailure(runtime.aiModelId, errorMessage);
+            errors.push(`${runtime.runtimeLabel}: ${errorMessage}`);
+            console.error(`[AI] ${requestLabel} failed for ${runtime.runtimeLabel}: ${errorMessage}`);
+        }
+    }
+
+    throw new Error(`AI API Error: ${errors.join(' | ')}`);
+}
+
+async function generateSessionAiReviewFromRecap(roomId, sessionId, recap) {
+    const promptPayload = {
+        roomId,
+        sessionId,
+        overview: {
+            score: recap?.overview?.score || 0,
+            gradeLabel: recap?.overview?.gradeLabel || '',
+            totalGiftValue: recap?.overview?.totalGiftValue || 0,
+            totalComments: recap?.overview?.totalComments || 0,
+            totalLikes: recap?.overview?.totalLikes || 0,
+            totalVisits: recap?.overview?.totalVisits || 0,
+            duration: recap?.overview?.duration || 0,
+            tags: recap?.overview?.tags || []
+        },
+        keyMoments: Array.isArray(recap?.keyMoments) ? recap.keyMoments.slice(0, 3) : [],
+        insights: recap?.insights || {},
+        valueCustomers: {
+            core: Array.isArray(recap?.valueCustomers?.core) ? recap.valueCustomers.core.slice(0, 3).map(item => ({ nickname: item.nickname, sessionGiftValue: item.sessionGiftValue, historicalValue: item.historicalValue, reason: item.reason })) : [],
+            potential: Array.isArray(recap?.valueCustomers?.potential) ? recap.valueCustomers.potential.slice(0, 3).map(item => ({ nickname: item.nickname, chatCount: item.chatCount, likeCount: item.likeCount, reason: item.reason })) : [],
+            risk: Array.isArray(recap?.valueCustomers?.risk) ? recap.valueCustomers.risk.slice(0, 3).map(item => ({ nickname: item.nickname, historicalValue: item.historicalValue, sessionGiftValue: item.sessionGiftValue, reason: item.reason })) : []
+        }
+    };
+
+    try {
+        const { completion, modelName, latencyMs: aiLatency } = await requestAiChatCompletion({
+            requestLabel: `session recap ${roomId}/${sessionId}`,
+            messages: [
+                {
+                    role: 'system',
+                    content: '你是资深直播运营总监。请根据单场直播结构化数据，输出给老板看的简洁复盘。必须返回严格 JSON，对象结构为 {"summary":"...","highlights":["..."],"issues":["..."],"actions":["..."]}。每个数组最多 3 条，每条一句中文，不要 markdown，不要代码块。'
+                },
+                {
+                    role: 'user',
+                    content: `请基于以下单场复盘数据生成老板摘要：
+${JSON.stringify(promptPayload)}`
+                }
+            ]
+        });
+        const rawContent = completion.choices?.[0]?.message?.content || '';
+
+        const extracted = extractFirstJsonObject(rawContent);
+        const parsed = parseSessionAiReview(extracted || rawContent, recap) || buildFallbackSessionAiReview(recap);
+
+        return {
+            ...parsed,
+            modelName,
+            latencyMs: aiLatency,
+            usedFallback: false
+        };
+    } catch (err) {
+        const fallbackReason = getSessionAiFallbackReason(err);
+        console.warn(`[AI] Session recap ${roomId}/${sessionId} downgraded to fallback (${fallbackReason})`);
+        return {
+            ...buildFallbackSessionAiReview(recap),
+            modelName: `fallback:${fallbackReason}`,
+            latencyMs: 0,
+            usedFallback: true
+        };
+    }
+}
+
 function getSimulatedAiDelayMs() {
     return 2000 + Math.floor(Math.random() * 2001);
 }
@@ -1092,71 +1651,16 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
         }
 
         // 5. Get AI model config
-        let apiKey, modelName, apiUrl, aiModelId;
-        const aiModel = await db.get(
-            `SELECT m.id, m.model_id, m.name AS model_name, c.api_url, c.api_key
-             FROM ai_models m JOIN ai_channels c ON m.channel_id = c.id
-             WHERE m.is_active = true AND c.is_active = true
-             ORDER BY m.is_default DESC, m.id ASC LIMIT 1`
-        );
-        if (aiModel) {
-            apiKey = aiModel.apiKey;
-            modelName = aiModel.modelId;
-            apiUrl = aiModel.apiUrl;
-            aiModelId = aiModel.id;
-        } else {
-            const dbSettings = await manager.getAllSettings();
-            apiKey = dbSettings.ai_api_key || process.env.AI_API_KEY;
-            modelName = dbSettings.ai_model_name || process.env.AI_MODEL_NAME || 'deepseek-ai/DeepSeek-V3.2';
-            apiUrl = dbSettings.ai_api_url || process.env.AI_API_URL || 'https://api-inference.modelscope.cn/v1/';
-        }
-
-        if (!apiKey) {
-            return res.status(500).json({ error: 'AI API Key not configured' });
-        }
-
-        // 6. Call AI API
+        // 5. Call AI API with automatic failover
         const chatText = history.map(h => h.comment).join('\n');
-        const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
-        console.log(`[AI] Requesting analysis for ${userId}, ${chatCount} messages, model ${modelName}`);
-        const aiStartTime = Date.now();
-        const aiBaseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
-        const response = await fetch(`${aiBaseUrl}chat/completions`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
-            body: JSON.stringify({
-                model: modelName,
-                messages: [
-                    { role: 'system', content: '你是一个数十年经验的专业娱乐主播运营总监，并且你的情商非常高。请根据用户的弹幕历史，简要分析该用户的：1、常用语种 2、掌握语种 3、感兴趣的话题 4、 聊天风格。请用简洁的中文回答。5、建议破冰方式。请用简洁的中文回答。' },
-                    { role: 'user', content: `用户弹幕记录：\n${chatText}` }
-                ],
-                stream: false
-            })
+        const { completion, modelName, latencyMs: aiLatency } = await requestAiChatCompletion({
+            requestLabel: `user analysis ${userId}`,
+            messages: [
+                { role: 'system', content: '你是一个数十年经验的专业娱乐主播运营总监，并且你的情商非常高。请根据用户的弹幕历史，简要分析该用户的：1、常用语种 2、掌握语种 3、感兴趣的话题 4、 聊天风格。请用简洁的中文回答。5、建议破冰方式。请用简洁的中文回答。' },
+                { role: 'user', content: `用户弹幕记录：\n${chatText}` }
+            ]
         });
-        const aiLatency = Date.now() - aiStartTime;
-
-        if (!response.ok) {
-            const err = await response.text();
-            if (aiModelId) {
-                await db.run(
-                    `UPDATE ai_models SET call_count = call_count + 1, fail_count = fail_count + 1, last_status = 'error', last_error = ?, last_used_at = NOW(), updated_at = NOW() WHERE id = ?`,
-                    [`HTTP ${response.status}: ${err.slice(0, 200)}`, aiModelId]
-                );
-            }
-            throw new Error(`AI API Error: ${err}`);
-        }
-
-        const completion = await response.json();
-        const result = completion.choices?.[0]?.message?.content || '无法获取分析结果';
-
-        // 7. Track AI model success
-        if (aiModelId) {
-            await db.run(
-                `UPDATE ai_models SET call_count = call_count + 1, success_count = success_count + 1, last_status = 'ok', last_error = NULL, last_used_at = NOW(), avg_latency_ms = ?, updated_at = NOW() WHERE id = ?`,
-                [aiLatency, aiModelId]
-            );
-        }
+        const result = completion.choices?.[0]?.message?.content?.trim() || '无法获取分析结果';
 
         // 8. Save to system-level user table when missing, or always refresh for admin
         let shouldPersistSystemAnalysis = isAdmin;
