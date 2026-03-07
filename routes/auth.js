@@ -4,11 +4,13 @@ const db = require('../db');
 const authService = require('../services/authService');
 const emailService = require('../services/emailService');
 const captchaService = require('../services/captchaService');
+const sliderCaptchaService = require('../services/sliderCaptchaService');
 const { authenticate, optionalAuth } = require('../middleware/auth');
 
 const router = express.Router();
 
 const SUPPORTED_EMAIL_CODE_PURPOSES = ['register', 'reset_password', 'change_email'];
+const SUPPORTED_SLIDER_CAPTCHA_PURPOSES = Array.from(sliderCaptchaService.SLIDER_CAPTCHA_PURPOSES);
 
 function normalizeEmailInput(email) {
     return String(email || '').trim().toLowerCase();
@@ -121,6 +123,95 @@ router.post('/check-code-target', optionalAuth, [
     } catch (err) {
         console.error('[Auth] Check code target error:', err.message);
         return res.status(500).json({ error: '校验邮箱失败，请稍后重试' });
+    }
+});
+
+/**
+ * POST /api/auth/register-availability
+ * Check register username/email availability
+ */
+router.post('/register-availability', [
+    body('username').optional({ values: 'falsy' }).trim().isLength({ min: 3, max: 50 }).withMessage('用户名3-50个字符'),
+    body('email').optional({ values: 'falsy' }).isEmail().withMessage('请输入有效的邮箱地址'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    try {
+        const username = String(req.body.username || '').trim();
+        const normalizedEmail = req.body.email ? normalizeEmailInput(req.body.email) : '';
+
+        if (!username && !normalizedEmail) {
+            return res.status(400).json({ error: '请提供用户名或邮箱' });
+        }
+
+        const result = {};
+
+        if (username) {
+            const existingUser = await db.get('SELECT id FROM users WHERE username = ?', [username]);
+            result.username = {
+                checked: true,
+                available: !existingUser,
+                message: existingUser ? '用户名已被注册' : '用户名可用'
+            };
+        }
+
+        if (normalizedEmail) {
+            const existingEmail = await db.get('SELECT id FROM users WHERE LOWER(email) = LOWER(?)', [normalizedEmail]);
+            result.email = {
+                checked: true,
+                available: !existingEmail,
+                message: existingEmail ? '邮箱已被注册' : '邮箱可用'
+            };
+        }
+
+        return res.json(result);
+    } catch (err) {
+        console.error('[Auth] Register availability error:', err.message);
+        return res.status(500).json({ error: '检查注册信息失败，请稍后重试' });
+    }
+});
+
+/**
+ * POST /api/auth/slider-captcha/verify
+ * Verify slider captcha trail and issue short-lived pass token
+ */
+router.post('/slider-captcha/verify', [
+    body('purpose').optional().isIn(SUPPORTED_SLIDER_CAPTCHA_PURPOSES).withMessage('不支持的滑块验证用途'),
+    body('trail').isArray({ min: 1 }).withMessage('缺少滑块轨迹'),
+    body('trail.*').optional().isInt({ min: -200, max: 200 }).withMessage('滑块轨迹数据无效'),
+    body('durationMs').isInt({ min: 1, max: 30000 }).withMessage('滑块验证时长无效'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    try {
+        const purpose = req.body.purpose || 'login';
+        const trailCheck = sliderCaptchaService.analyzeTrail(req.body.trail, req.body.durationMs);
+        if (!trailCheck.ok) {
+            return res.status(400).json({ error: trailCheck.error });
+        }
+
+        const issued = sliderCaptchaService.issuePassToken({
+            purpose,
+            ip: req.ip,
+            userAgent: req.headers['user-agent'] || ''
+        });
+        if (!issued.ok) {
+            return res.status(400).json({ error: issued.error });
+        }
+
+        return res.json({
+            passToken: issued.passToken,
+            expiresIn: issued.expiresIn
+        });
+    } catch (err) {
+        console.error('[Auth] Slider captcha verify error:', err.message);
+        return res.status(500).json({ error: '滑块验证失败，请稍后重试' });
     }
 });
 
@@ -329,6 +420,7 @@ router.post('/register', [
 router.post('/login', [
     body('username').trim().notEmpty().withMessage('请输入用户名或邮箱'),
     body('password').notEmpty().withMessage('请输入密码'),
+    body('sliderPassToken').trim().notEmpty().withMessage('请先完成滑块验证'),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
@@ -336,12 +428,25 @@ router.post('/login', [
     }
 
     try {
-        const { username, password } = req.body;
+        const { username, password, sliderPassToken } = req.body;
+        const sliderCheck = sliderCaptchaService.consumePassToken({
+            purpose: 'login',
+            passToken: sliderPassToken,
+            ip: req.ip,
+            userAgent: req.headers['user-agent'] || ''
+        });
+        if (!sliderCheck.ok) {
+            return res.status(400).json({ error: sliderCheck.error });
+        }
 
-        // Support login by username or email
+        const loginInput = String(username || '').trim();
+        const normalizedLoginInput = loginInput.toLowerCase();
+
         const result = await db.pool.query(
-            `SELECT id, username, email, nickname, balance, role, status, password_hash FROM users WHERE username = $1 OR email = $1`,
-            [username]
+            `SELECT id, username, email, nickname, balance, role, status, password_hash
+             FROM users
+             WHERE username = $1 OR LOWER(email) = $2`,
+            [loginInput, normalizedLoginInput]
         );
         if (result.rows.length === 0) {
             return res.status(401).json({ error: '用户名或密码错误' });

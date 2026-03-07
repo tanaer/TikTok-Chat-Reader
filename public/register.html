@@ -23,6 +23,9 @@
                 <div class="form-control mb-4">
                     <label class="label"><span class="label-text">用户名 *</span></label>
                     <input type="text" id="username" class="input input-bordered w-full" placeholder="3-50个字符" required autofocus minlength="3" maxlength="50">
+                    <label class="label py-1 min-h-6">
+                        <span id="usernameStatus" class="label-text-alt"></span>
+                    </label>
                 </div>
                 <div class="form-control mb-4">
                     <label class="label"><span class="label-text">昵称</span></label>
@@ -31,6 +34,9 @@
                 <div class="form-control mb-4">
                     <label class="label"><span class="label-text" id="email-label">邮箱</span></label>
                     <input type="email" id="email" class="input input-bordered w-full" placeholder="可选">
+                    <label class="label py-1 min-h-6">
+                        <span id="emailStatus" class="label-text-alt"></span>
+                    </label>
                 </div>
                 <div class="form-control mb-4 hidden" id="code-group">
                     <label class="label"><span class="label-text">邮箱验证码 *</span></label>
@@ -69,6 +75,8 @@
 
         let emailVerificationRequired = false;
         let registerEmailCodeFlow = null;
+        let usernameCheckToken = 0;
+        let emailCheckToken = 0;
 
         function showError(msg) {
             const errorMsg = document.getElementById('errorMsg');
@@ -81,7 +89,124 @@
             document.getElementById('errorMsg').classList.add('hidden');
         }
 
+        function setFieldStatus(field, message = '', tone = 'muted') {
+            const element = document.getElementById(`${field}Status`);
+            if (!element) return;
+            element.textContent = message;
+            element.className = 'label-text-alt';
+            if (!message) return;
+            if (tone === 'success') element.classList.add('text-success');
+            else if (tone === 'error') element.classList.add('text-error');
+            else element.classList.add('text-base-content/55');
+        }
+
+        async function fetchRegisterAvailability(payload) {
+            const res = await fetch('/api/auth/register-availability', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            return { ok: res.ok, data };
+        }
+
+        async function checkUsernameAvailability({ silent = false } = {}) {
+            const username = document.getElementById('username').value.trim();
+            if (!username) {
+                if (!silent) setFieldStatus('username', '请输入用户名', 'error');
+                return false;
+            }
+            if (username.length < 3 || username.length > 50) {
+                if (!silent) setFieldStatus('username', '用户名需为3-50个字符', 'error');
+                return false;
+            }
+
+            const currentToken = ++usernameCheckToken;
+            if (!silent) setFieldStatus('username', '检查中...', 'muted');
+
+            try {
+                const { ok, data } = await fetchRegisterAvailability({ username });
+                if (currentToken !== usernameCheckToken) return false;
+                if (!ok) {
+                    if (!silent) setFieldStatus('username', data.error || '检查失败，请稍后重试', 'error');
+                    return false;
+                }
+                const available = !!data.username?.available;
+                if (!silent) setFieldStatus('username', data.username?.message || (available ? '用户名可用' : '用户名已被注册'), available ? 'success' : 'error');
+                return available;
+            } catch (err) {
+                if (currentToken !== usernameCheckToken) return false;
+                if (!silent) setFieldStatus('username', '检查失败，请稍后重试', 'error');
+                return false;
+            }
+        }
+
+        async function checkEmailAvailability({ silent = false, requireEmail = emailVerificationRequired } = {}) {
+            const email = document.getElementById('email').value.trim();
+            if (!email) {
+                if (requireEmail && !silent) setFieldStatus('email', '请输入邮箱地址', 'error');
+                if (!requireEmail) setFieldStatus('email');
+                return !requireEmail;
+            }
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+                if (!silent) setFieldStatus('email', '请输入有效的邮箱地址', 'error');
+                return false;
+            }
+
+            const currentToken = ++emailCheckToken;
+            if (!silent) setFieldStatus('email', '检查中...', 'muted');
+
+            try {
+                const { ok, data } = await fetchRegisterAvailability({ email });
+                if (currentToken !== emailCheckToken) return false;
+                if (!ok) {
+                    if (!silent) setFieldStatus('email', data.error || '检查失败，请稍后重试', 'error');
+                    return false;
+                }
+                const available = !!data.email?.available;
+                if (!silent) setFieldStatus('email', data.email?.message || (available ? '邮箱可用' : '邮箱已被注册'), available ? 'success' : 'error');
+                return available;
+            } catch (err) {
+                if (currentToken !== emailCheckToken) return false;
+                if (!silent) setFieldStatus('email', '检查失败，请稍后重试', 'error');
+                return false;
+            }
+        }
+
+        function bindAvailabilityChecks() {
+            const usernameInput = document.getElementById('username');
+            const emailInput = document.getElementById('email');
+
+            usernameInput.addEventListener('input', () => {
+                usernameCheckToken += 1;
+                setFieldStatus('username');
+            });
+            usernameInput.addEventListener('blur', () => {
+                if (usernameInput.value.trim()) checkUsernameAvailability();
+            });
+
+            emailInput.addEventListener('input', () => {
+                emailCheckToken += 1;
+                setFieldStatus('email');
+            });
+            emailInput.addEventListener('blur', () => {
+                if (emailInput.value.trim() || emailVerificationRequired) {
+                    checkEmailAvailability({ requireEmail: emailVerificationRequired });
+                }
+            });
+        }
+
+        async function beforeSendRegisterCode() {
+            const emailOk = await checkEmailAvailability({ requireEmail: true });
+            if (!emailOk) {
+                return { ok: false, error: '邮箱不可用，请更换后再发送验证码' };
+            }
+            return true;
+        }
+
         async function initRegisterPage() {
+            bindAvailabilityChecks();
+
             try {
                 const res = await fetch('/api/auth/email-verification-status');
                 const data = await res.json();
@@ -96,6 +221,7 @@
                     emailInput: '#email',
                     sendButton: '#sendCodeBtn',
                     purpose: 'register',
+                    beforeOpen: beforeSendRegisterCode,
                     onError: showError,
                 });
             } catch (err) {
@@ -120,10 +246,19 @@
                 showError('两次输入的密码不一致');
                 return;
             }
-            if (emailVerificationRequired && !email) {
-                showError('请输入邮箱地址');
+
+            const usernameOk = await checkUsernameAvailability();
+            if (!usernameOk) {
+                showError('请更换一个可用的用户名');
                 return;
             }
+
+            const emailOk = await checkEmailAvailability({ requireEmail: emailVerificationRequired });
+            if (!emailOk) {
+                showError(emailVerificationRequired ? '请填写可用的邮箱地址' : '邮箱已被注册或格式不正确');
+                return;
+            }
+
             if (emailVerificationRequired && !emailCode) {
                 showError('请输入邮箱验证码');
                 return;

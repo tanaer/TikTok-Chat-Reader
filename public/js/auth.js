@@ -97,11 +97,14 @@ const Auth = {
     /**
      * Login
      */
-    async login(username, password) {
+    async login(account, password, options = {}) {
+        const body = { username: account, account, password };
+        if (options.sliderPassToken) body.sliderPassToken = options.sliderPassToken;
+
         const res = await fetch('/api/auth/login', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username, password })
+            body: JSON.stringify(body)
         });
         const data = await res.json();
         if (res.ok) {
