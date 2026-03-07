@@ -330,23 +330,26 @@ class Manager {
         return sessionId;
     }
 
-    async getSessions(roomId) {
+    async getSessions(roomId, sinceTime = null) {
         await this.ensureDb();
-        // Use LEFT JOIN with aggregate instead of correlated subquery (much faster)
-        // OPTIMIZED: Use LATERAL join to avoid full table scan on event table
-        // This allows the query to use the idx_event_session_timestamp_desc index
         if (roomId) {
+            let timeFilter = '';
+            const params = [roomId];
+            if (sinceTime) {
+                timeFilter = 'AND s.created_at >= ?';
+                params.push(sinceTime);
+            }
             return await query(`
                 SELECT s.session_id, s.room_id, s.created_at, et.end_time
                 FROM session s
                 LEFT JOIN LATERAL (
-                    SELECT MAX(timestamp) as end_time 
-                    FROM event 
+                    SELECT MAX(timestamp) as end_time
+                    FROM event
                     WHERE event.session_id = s.session_id
                 ) et ON true
-                WHERE s.room_id = ? 
+                WHERE s.room_id = ? ${timeFilter}
                 ORDER BY s.created_at DESC
-            `, [roomId]);
+            `, params);
         }
         return await query(`
             SELECT s.session_id, s.room_id, s.created_at, et.end_time
@@ -826,31 +829,34 @@ class Manager {
     }
 
     // Time Statistics (30-min intervals) - OPTIMIZED: GROUPS BY 30min IN SQL
-    async getTimeStats(roomId) {
+    async getTimeStats(roomId, sinceTime = null) {
         await this.ensureDb();
 
-        // Use PostgreSQL date_bin (if available) or construct 30m buckets using timestamp math
-        // For broad compatibility (Postgres 9+), we can use:
-        // to_timestamp(floor((extract('epoch' from timestamp) / 1800 )) * 1800)
+        let timeFilter = '';
+        const params = [roomId];
+        if (sinceTime) {
+            timeFilter = 'AND timestamp >= ?';
+            params.push(sinceTime);
+        }
 
         const stats = await query(`
-            SELECT 
+            SELECT
                 to_char(
-                    to_timestamp(floor((extract('epoch' from timestamp) / 1800 )) * 1800) AT TIME ZONE 'UTC+8', 
+                    to_timestamp(floor((extract('epoch' from timestamp) / 1800 )) * 1800) AT TIME ZONE 'UTC+8',
                     'HH24:MI'
-                ) || '-' || 
+                ) || '-' ||
                 to_char(
-                    to_timestamp(floor((extract('epoch' from timestamp) / 1800 )) * 1800 + 1800) AT TIME ZONE 'UTC+8', 
+                    to_timestamp(floor((extract('epoch' from timestamp) / 1800 )) * 1800 + 1800) AT TIME ZONE 'UTC+8',
                     'HH24:MI'
                 ) as time_range,
                 SUM(CASE WHEN type = 'chat' THEN 1 ELSE 0 END) as comments,
                 SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as income,
                 MAX(CASE WHEN type = 'roomUser' THEN COALESCE((data_json::json->>'viewerCount')::int, 0) ELSE 0 END) as max_online
-            FROM event 
-            WHERE room_id = ? AND type IN ('gift', 'chat', 'roomUser')
+            FROM event
+            WHERE room_id = ? AND type IN ('gift', 'chat', 'roomUser') ${timeFilter}
             GROUP BY 1
             ORDER BY MIN(timestamp) ASC
-        `, [roomId]);
+        `, params);
 
         // Convert string counts to numbers (Postgres SUM returns string for bigints)
         return stats.map(s => ({
@@ -883,7 +889,7 @@ class Manager {
     async getTopGifters(page = 1, pageSize = 50, filters = {}) {
         await this.ensureDb();
 
-        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '', roomFilter = null } = filters;
+        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '', roomFilter = null, dataStartTimes = null } = filters;
         const offset = (page - 1) * pageSize;
 
         // If roomFilter is empty array, user has no rooms
@@ -892,8 +898,8 @@ class Manager {
         }
 
         // OPTIMIZED: Use pre-aggregated user_stats table instead of expensive event aggregation
-        // Filters that require real-time event data (activeHour) fall back to slow path
-        const needsRealTimeData = (activeHour !== null && activeHour !== '');
+        // Filters that require real-time event data (activeHour, dataStartTimes, roomFilter) fall back to slow path
+        const needsRealTimeData = (activeHour !== null && activeHour !== '') || (dataStartTimes !== null && dataStartTimes !== undefined) || (roomFilter !== null);
 
         if (needsRealTimeData) {
             // Fall back to original slow query for time-based filters
@@ -1011,8 +1017,16 @@ class Manager {
         const userIds = rows.map(r => r.userId);
         const placeholders = userIds.map(() => '?').join(',');
 
+        let topGiftRoomClause = '';
+        const topGiftParams = [...userIds];
+        if (roomFilter && roomFilter.length > 0) {
+            const rfp = roomFilter.map(() => '?').join(',');
+            topGiftRoomClause = `AND room_id IN (${rfp})`;
+            topGiftParams.push(...roomFilter);
+        }
+
         const topGiftStats = await query(`
-            SELECT 
+            SELECT
                 user_id,
                 (data_json::json->>'giftName') as gift_name,
                 (data_json::json->>'giftPictureUrl') as gift_icon,
@@ -1020,10 +1034,10 @@ class Manager {
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL
+            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL ${topGiftRoomClause}
             GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
             ORDER BY user_id, total_value DESC
-        `, userIds);
+        `, topGiftParams);
 
         const topGiftsMap = {};
         for (const g of topGiftStats) {
@@ -1070,11 +1084,30 @@ class Manager {
 
     // Original slow path for time-based filters (activeHour)
     async _getTopGiftersRealtime(page = 1, pageSize = 50, filters = {}) {
-        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '' } = filters;
+        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '', roomFilter = null, dataStartTimes = null } = filters;
         const offset = (page - 1) * pageSize;
 
         let conditions = ["e.type = 'gift'"];
         let params = [];
+
+        // Room filter
+        if (roomFilter && roomFilter.length > 0) {
+            const placeholders = roomFilter.map(() => '?').join(',');
+            conditions.push(`e.room_id IN (${placeholders})`);
+            params.push(...roomFilter);
+        } else if (roomFilter !== null && roomFilter !== undefined && roomFilter.length === 0) {
+            return { users: [], total: 0, page, pageSize };
+        }
+
+        // Data start time filter: use earliest first_added_at across user's rooms
+        if (dataStartTimes && Object.keys(dataStartTimes).length > 0) {
+            const earliest = Object.values(dataStartTimes).reduce((min, t) => {
+                const d = new Date(t);
+                return d < min ? d : min;
+            }, new Date());
+            conditions.push('e.timestamp >= ?');
+            params.push(earliest.toISOString());
+        }
 
         if (langFilter) {
             conditions.push(`(u.common_language = ? OR u.mastered_languages = ? OR u.mastered_languages LIKE ?)`);
@@ -1190,23 +1223,32 @@ class Manager {
         const userIds = rows.map(r => r.userId);
         const placeholders = userIds.map(() => '?').join(',');
 
+        // Build room filter clause for sub-queries
+        let subRoomClause = '';
+        const subRoomParams = [];
+        if (roomFilter && roomFilter.length > 0) {
+            const rfp = roomFilter.map(() => '?').join(',');
+            subRoomClause = `AND room_id IN (${rfp})`;
+            subRoomParams.push(...roomFilter);
+        }
+
         const chatStats = await query(`
             SELECT user_id, COUNT(*) as chatCount
             FROM event
-            WHERE type = 'chat' AND user_id IN (${placeholders})
+            WHERE type = 'chat' AND user_id IN (${placeholders}) ${subRoomClause}
             GROUP BY user_id
-        `, userIds);
+        `, [...userIds, ...subRoomParams]);
         const chatMap = Object.fromEntries(chatStats.map(r => [r.userId, r.chatCount]));
 
         const topRoomStats = await query(`
-            SELECT e.user_id, e.room_id, r.name as room_name, 
+            SELECT e.user_id, e.room_id, r.name as room_name,
                    SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as roomValue
             FROM event e
             LEFT JOIN room r ON e.room_id = r.room_id
-            WHERE e.type = 'gift' AND e.user_id IN (${placeholders})
+            WHERE e.type = 'gift' AND e.user_id IN (${placeholders}) ${subRoomClause ? subRoomClause.replace(/room_id/g, 'e.room_id') : ''}
             GROUP BY e.user_id, e.room_id, r.name
             ORDER BY e.user_id, roomValue DESC
-        `, userIds);
+        `, [...userIds, ...subRoomParams]);
 
         const topRoomMap = {};
         for (const stat of topRoomStats) {
@@ -1219,7 +1261,7 @@ class Manager {
         }
 
         const topGiftStats = await query(`
-            SELECT 
+            SELECT
                 user_id,
                 (data_json::json->>'giftName') as gift_name,
                 (data_json::json->>'giftPictureUrl') as gift_icon,
@@ -1227,10 +1269,10 @@ class Manager {
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL
+            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL ${subRoomClause}
             GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
             ORDER BY user_id, total_value DESC
-        `, userIds);
+        `, [...userIds, ...subRoomParams]);
 
         const topGiftsMap = {};
         for (const g of topGiftStats) {
@@ -1415,18 +1457,27 @@ class Manager {
     }
 
     // Room Entry Analysis
-    async getRoomEntryStats(startDate, endDate, limit = 100, roomFilter = null) {
+    async getRoomEntryStats(startDate, endDate, limit = 100, roomFilter = null, dataStartTimes = null) {
         await this.ensureDb();
 
         if (roomFilter !== null && roomFilter.length === 0) {
             return [];
         }
 
-        const start = startDate ? new Date(startDate) : new Date(Date.now() - 24 * 60 * 60 * 1000);
+        let start = startDate ? new Date(startDate) : new Date(Date.now() - 24 * 60 * 60 * 1000);
         const end = endDate ? new Date(endDate) : new Date();
 
         if (endDate && endDate.length <= 10) {
             end.setHours(23, 59, 59, 999);
+        }
+
+        // Apply data start time constraint for members
+        if (dataStartTimes && Object.keys(dataStartTimes).length > 0) {
+            const earliest = Object.values(dataStartTimes).reduce((min, t) => {
+                const d = new Date(t);
+                return d < min ? d : min;
+            }, new Date());
+            if (earliest > start) start = earliest;
         }
 
         let roomFilterClause = '';
@@ -1464,7 +1515,7 @@ class Manager {
         }));
     }
 
-    async getGlobalStats(roomFilter = null) {
+    async getGlobalStats(roomFilter = null, dataStartTimes = null) {
         await this.ensureDb();
 
         // Use cache only when no room filter (admin/global view)
@@ -1486,8 +1537,18 @@ class Manager {
         // Real-time computation (for filtered view or cache miss)
         console.log('[Manager] Computing stats in real-time...');
 
-        const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
-            .toISOString().replace('T', ' ').slice(0, 19);
+        // Use the earliest data start time across user's rooms, or default to 30 days ago
+        let sinceDate;
+        if (dataStartTimes && Object.keys(dataStartTimes).length > 0) {
+            const earliest = Object.values(dataStartTimes).reduce((min, t) => {
+                const d = new Date(t);
+                return d < min ? d : min;
+            }, new Date());
+            sinceDate = earliest.toISOString().replace('T', ' ').slice(0, 19);
+        } else {
+            sinceDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
+                .toISOString().replace('T', ' ').slice(0, 19);
+        }
 
         const chineseFilter = `(u.common_language = '中文' OR u.mastered_languages = '中文')`;
 
@@ -1507,16 +1568,16 @@ class Manager {
             LEFT JOIN "user" u ON e.user_id = u.user_id
             WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter} ${roomFilterClause}
             GROUP BY hour
-        `, [thirtyDaysAgo, ...extraParams]);
+        `, [sinceDate, ...extraParams]);
 
         const hourGiftRows = await query(`
-            SELECT to_char(e.timestamp, 'HH24') as hour, 
+            SELECT to_char(e.timestamp, 'HH24') as hour,
                    SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
             FROM event e
             LEFT JOIN "user" u ON e.user_id = u.user_id
             WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter} ${roomFilterClause}
             GROUP BY hour
-        `, [thirtyDaysAgo, ...extraParams]);
+        `, [sinceDate, ...extraParams]);
 
         const hourStats = {};
         for (let i = 0; i < 24; i++) hourStats[String(i).padStart(2, '0')] = { gift: 0, chat: 0 };
@@ -1533,7 +1594,7 @@ class Manager {
             LEFT JOIN "user" u ON e.user_id = u.user_id
             WHERE e.type = 'chat' AND e.timestamp >= ? AND ${chineseFilter} ${roomFilterClause}
             GROUP BY day
-        `, [thirtyDaysAgo, ...extraParams]);
+        `, [sinceDate, ...extraParams]);
 
         const dayGiftRows = await query(`
             SELECT EXTRACT(DOW FROM e.timestamp)::int as day,
@@ -1542,7 +1603,7 @@ class Manager {
             LEFT JOIN "user" u ON e.user_id = u.user_id
             WHERE e.type = 'gift' AND e.timestamp >= ? AND ${chineseFilter} ${roomFilterClause}
             GROUP BY day
-        `, [thirtyDaysAgo, ...extraParams]);
+        `, [sinceDate, ...extraParams]);
 
         const dayStats = {};
         for (let i = 0; i < 7; i++) dayStats[i] = { gift: 0, chat: 0 };
@@ -1847,60 +1908,79 @@ class Manager {
     }
 
 
-    async getUserAnalysis(userId) {
+    async getUserAnalysis(userId, roomFilter = null) {
         await this.ensureDb();
+
+        // Build room filter clause for SQL queries
+        let roomFilterClause = '';
+        const roomFilterParams = [];
+        if (roomFilter !== null && roomFilter.length === 0) {
+            // User has no rooms - return empty analysis
+            return {
+                totalValue: 0, activeDays: 0, dailyAvg: 0,
+                giftRooms: [], visitRooms: [], hourStats: [], dayStats: [],
+                isAdmin: 0, isSuperAdmin: 0, isModerator: 0, fanLevel: 0,
+                fanClubName: '', commonLanguage: '', masteredLanguages: '',
+                region: '', aiAnalysis: null, moderatorRooms: []
+            };
+        }
+        if (roomFilter && roomFilter.length > 0) {
+            const placeholders = roomFilter.map(() => '?').join(',');
+            roomFilterClause = `AND room_id IN (${placeholders})`;
+            roomFilterParams.push(...roomFilter);
+        }
 
         // 1. Basic Stats - use direct columns instead of JSON extraction to avoid Unicode errors
         const giftStats = await get(`
-            SELECT 
+            SELECT
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as totalValue,
                 MIN(timestamp) as firstSeen,
                 MAX(timestamp) as lastSeen,
                 COUNT(DISTINCT timestamp::date) as activeDays
-            FROM event 
-            WHERE type = 'gift' AND user_id = ?
-        `, [userId]);
+            FROM event
+            WHERE type = 'gift' AND user_id = ? ${roomFilterClause}
+        `, [userId, ...roomFilterParams]);
 
         // 2. Top Rooms (Gift) - use direct columns
         const giftRooms = await query(`
-            SELECT e.room_id, MAX(r.name) as name, 
+            SELECT e.room_id, MAX(r.name) as name,
                    SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as val
             FROM event e
             LEFT JOIN room r ON e.room_id = r.room_id
-            WHERE e.type = 'gift' AND e.user_id = ?
+            WHERE e.type = 'gift' AND e.user_id = ? ${roomFilterClause ? roomFilterClause.replace(/room_id/g, 'e.room_id') : ''}
             GROUP BY e.room_id
             ORDER BY val DESC
             LIMIT 10
-        `, [userId]);
+        `, [userId, ...roomFilterParams]);
 
         // 3. Top Rooms (Visit - from member events)
         const visitRooms = await query(`
              SELECT e.room_id, MAX(r.name) as name, COUNT(*) as cnt
              FROM event e
              LEFT JOIN room r ON e.room_id = r.room_id
-             WHERE e.type = 'member' AND e.user_id = ?
+             WHERE e.type = 'member' AND e.user_id = ? ${roomFilterClause ? roomFilterClause.replace(/room_id/g, 'e.room_id') : ''}
              GROUP BY e.room_id
              ORDER BY cnt DESC
              LIMIT 10
-        `, [userId]);
+        `, [userId, ...roomFilterParams]);
 
         // 4. Time Distribution (Hour of Day)
         const hourStats = await query(`
             SELECT to_char(timestamp, 'HH24') as hour, COUNT(*) as cnt
             FROM event
-            WHERE type = 'gift' AND user_id = ?
+            WHERE type = 'gift' AND user_id = ? ${roomFilterClause}
             GROUP BY hour
             ORDER BY hour
-        `, [userId]);
+        `, [userId, ...roomFilterParams]);
 
         // 5. Day of Week (0 = Sunday, 6 = Saturday)
         const dayStats = await query(`
             SELECT EXTRACT(DOW FROM timestamp)::int as day, COUNT(*) as cnt
             FROM event
-            WHERE type = 'gift' AND user_id = ?
+            WHERE type = 'gift' AND user_id = ? ${roomFilterClause}
             GROUP BY day
             ORDER BY day
-        `, [userId]);
+        `, [userId, ...roomFilterParams]);
 
         // 6. Role and Fan Badge Info - query user table which stores these values
         const userInfo = await get(`SELECT * FROM "user" WHERE user_id = ?`, [userId]);
@@ -1985,7 +2065,7 @@ class Manager {
         return true;
     }
 
-    async getRoomDetailStats(roomId, sessionId = null) {
+    async getRoomDetailStats(roomId, sessionId = null, sinceTime = null) {
         await this.ensureDb();
 
         // Build WHERE clause based on sessionId
@@ -1995,8 +2075,11 @@ class Manager {
 
         if (sessionId === 'live' || !sessionId) {
             // Live mode: show untagged events (session_id IS NULL)
-            // No fallback - frontend handles empty state
             whereClause += ' AND session_id IS NULL';
+            if (sinceTime) {
+                whereClause += ' AND timestamp >= ?';
+                params.push(sinceTime);
+            }
         } else {
             // Specific session requested
             whereClause += ' AND session_id = ?';
@@ -2108,36 +2191,43 @@ class Manager {
     }
 
     // All-time TOP50 leaderboards (across all sessions)
-    async getAllTimeLeaderboards(roomId) {
+    async getAllTimeLeaderboards(roomId, sinceTime = null) {
         await this.ensureDb();
+
+        let timeFilter = '';
+        const baseParams = [roomId];
+        if (sinceTime) {
+            timeFilter = 'AND timestamp >= ?';
+            baseParams.push(sinceTime);
+        }
 
         // Top 50 Gifters (all time) - include unique_id for clickable search
         const topGifters = await query(`
-            SELECT 
+            SELECT
                 MAX(nickname) as nickname,
                 MAX(unique_id) as unique_id,
                 user_id as userId,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as value
             FROM event
-            WHERE room_id = ? AND type = 'gift' AND user_id IS NOT NULL
+            WHERE room_id = ? AND type = 'gift' AND user_id IS NOT NULL ${timeFilter}
             GROUP BY user_id
             ORDER BY value DESC
             LIMIT 50
-        `, [roomId]);
+        `, [...baseParams]);
 
         // Top 50 Chatters (all time) - include unique_id for clickable search
         const topChatters = await query(`
-            SELECT 
+            SELECT
                 MAX(nickname) as nickname,
                 MAX(unique_id) as unique_id,
                 user_id as userId,
                 COUNT(*) as count
             FROM event
-            WHERE room_id = ? AND type = 'chat' AND user_id IS NOT NULL
+            WHERE room_id = ? AND type = 'chat' AND user_id IS NOT NULL ${timeFilter}
             GROUP BY user_id
             ORDER BY count DESC
             LIMIT 50
-        `, [roomId]);
+        `, [...baseParams]);
 
         // Top 50 Likers (all time) - include unique_id for clickable search
         const topLikers = await query(`

@@ -25,7 +25,7 @@ async function authenticate(req, res, next) {
             return res.status(401).json({ error: '用户不存在' });
         }
         if (user.status !== 'active') {
-            return res.status(403).json({ error: '账户已被禁用' });
+            return res.status(403).json({ error: '账户已被禁用', code: 'ACCOUNT_DISABLED' });
         }
         req.user = user;
         next();

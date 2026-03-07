@@ -326,7 +326,7 @@ function showUserDetails(userId, nickname, uniqueId) {
         </div>
 
         <!-- AI Analysis -->
-        <div class="card bg-base-100 shadow-sm border border-base-200" ${typeof Auth !== 'undefined' && Auth.isAdmin() ? '' : 'style="display:none"'}>
+        <div class="card bg-base-100 shadow-sm border border-base-200" ${typeof Auth !== 'undefined' && Auth.isLoggedIn() ? '' : 'style="display:none"'}>
             <div class="card-body p-4">
                 <div class="flex justify-between items-center mb-2">
                     <h4 class="card-title text-sm m-0">🤖 AI 性格分析</h4>
@@ -335,6 +335,7 @@ function showUserDetails(userId, nickname, uniqueId) {
                 <div id="aiResult" class="text-xs leading-relaxed opacity-80 min-h-[100px] bg-base-200 rounded p-3 whitespace-pre-wrap">
                     点击下方按钮进行分析...
                 </div>
+                <div id="aiMeta" class="text-[10px] opacity-40 mt-1" style="display:none;"></div>
                 <div class="grid grid-cols-2 gap-2 mt-2">
                      <button class="btn btn-sm btn-primary gap-2" onclick="runAiAnalysis('${userId}')">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
@@ -457,23 +458,47 @@ function renderDetailChart(canvasId, labels, data, color) {
 }
 
 function runAiAnalysis(userId, force = false) {
-    $('#aiResult').html('<span class="loading loading-dots loading-sm"></span> Analyzing chat history...');
+    $('#aiResult').html('<span class="loading loading-dots loading-sm"></span> 正在分析弹幕记录...');
     $('#aiCacheStatus').text('');
+    $('#aiMeta').hide().text('');
 
-    $.ajax({
-        url: '/api/analysis/ai',
-        type: 'POST',
-        contentType: 'application/json',
-        data: JSON.stringify({ userId: userId, force: force }),
-        success: (res) => {
+    Auth.apiFetch('/api/analysis/ai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: userId, force: force })
+    })
+    .then(r => {
+        if (!r.ok) return r.json().then(d => { throw d; });
+        return r.json();
+    })
+    .then(res => {
+        if (res.skipped) {
             $('#aiResult').text(res.result);
-            if (res.cached) {
-                $('#aiCacheStatus').text('(本地缓存)');
-            } else {
-                $('#aiCacheStatus').text('(实时分析)');
-            }
-        },
-        error: (err) => $('#aiResult').text('Error: ' + err.statusText)
+            $('#aiCacheStatus').text(`(语料 ${res.chatCount} 条)`);
+            return;
+        }
+        $('#aiResult').text(res.result);
+        // Source label
+        const sourceMap = { member_cache: '个人缓存', system_cache: '系统缓存', api: '实时分析' };
+        const sourceLabel = sourceMap[res.source] || (res.cached ? '缓存' : '实时分析');
+        $('#aiCacheStatus').text(`(${sourceLabel})`);
+        // Meta info
+        const metaParts = [];
+        if (res.chatCount) metaParts.push(`语料 ${res.chatCount} 条`);
+        if (res.latency) metaParts.push(`耗时 ${(res.latency / 1000).toFixed(1)}s`);
+        if (res.model) metaParts.push(`模型 ${res.model}`);
+        if (res.analyzedAt) metaParts.push(`分析于 ${new Date(res.analyzedAt).toLocaleString('zh-CN')}`);
+        if (metaParts.length > 0) {
+            $('#aiMeta').show().text(metaParts.join(' | '));
+        }
+    })
+    .catch(err => {
+        const msg = err.error || err.message || '分析失败';
+        if (err.code === 'AI_CREDITS_EXHAUSTED') {
+            $('#aiResult').html(`<span class="text-warning">${msg}</span>`);
+        } else {
+            $('#aiResult').text('错误: ' + msg);
+        }
     });
 }
 
@@ -698,13 +723,12 @@ async function startBatchAI(forceReanalyze) {
 
     try {
         // Fetch top users
-        const limit = forceReanalyze ? 100 : 100;
+        const limit = 100;
         const response = await $.get(`/api/analysis/users?page=1&pageSize=${limit}&minRooms=1`);
         let users = response.users || [];
 
         // Filter: only unanalyzed if not force mode
         if (!forceReanalyze) {
-            // Need to check which users have ai_analysis
             const needsAnalysis = [];
             for (const u of users) {
                 const detail = await $.get(`/api/analysis/user/${u.userId}`);
@@ -726,21 +750,23 @@ async function startBatchAI(forceReanalyze) {
         const total = users.length;
         let completed = 0;
         let errors = 0;
-        const CONCURRENCY = 3;  // Reduced from 20 to avoid API rate limits
-        const DELAY_MS = 500;    // Delay between requests
+        let skipped = 0;
+        const CONCURRENCY = 3;
+        const DELAY_MS = 500;
 
         // Update progress
         const updateProgress = () => {
             const pct = Math.round((completed / total) * 100);
             $('#batchAIBar').val(pct);
             $('#batchAICount').text(`${completed}/${total}`);
-            $('#batchAIStatus').text(`正在分析... (${errors} 个失败)`);
+            const parts = [];
+            if (skipped > 0) parts.push(`${skipped} 语料不足`);
+            if (errors > 0) parts.push(`${errors} 失败`);
+            $('#batchAIStatus').text(`正在分析... ${parts.length ? '(' + parts.join(', ') + ')' : ''}`);
         };
 
-        // Helper: delay function
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
-        // Process with concurrency limit
         const queue = [...users];
         const workers = [];
 
@@ -750,30 +776,43 @@ async function startBatchAI(forceReanalyze) {
                     const user = queue.shift();
                     if (!user) break;
                     try {
-                        await $.ajax({
-                            url: '/api/analysis/ai',
-                            type: 'POST',
-                            contentType: 'application/json',
-                            data: JSON.stringify({
-                                userId: user.userId,
-                                force: forceReanalyze
-                            }),
-                            timeout: 60000  // 60 second timeout
+                        const res = await Auth.apiFetch('/api/analysis/ai', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ userId: user.userId, force: forceReanalyze })
                         });
+                        if (!res.ok) {
+                            const errData = await res.json().catch(() => ({}));
+                            if (errData.code === 'AI_CREDITS_EXHAUSTED') {
+                                // Stop entire batch - no credits left
+                                queue.length = 0;
+                                errors++;
+                                $('#batchAIErrors').show().text('AI 分析次数已用完，批量分析中止');
+                                break;
+                            }
+                            errors++;
+                        } else {
+                            const data = await res.json();
+                            if (data.skipped) skipped++;
+                        }
                     } catch (e) {
                         errors++;
                         console.error(`AI analysis failed for ${user.userId}:`, e);
                     }
                     completed++;
                     updateProgress();
-                    await delay(DELAY_MS);  // Wait between requests
+                    await delay(DELAY_MS);
                 }
             })());
         }
 
         await Promise.all(workers);
 
-        $('#batchAIStatus').text(`完成！成功 ${completed - errors}/${total}，失败 ${errors}`);
+        const successCount = completed - errors - skipped;
+        const parts = [`成功 ${successCount}`];
+        if (skipped > 0) parts.push(`语料不足跳过 ${skipped}`);
+        if (errors > 0) parts.push(`失败 ${errors}`);
+        $('#batchAIStatus').text(`完成！${parts.join('，')}，共 ${total} 个用户`);
         if (errors > 0) {
             $('#batchAIErrors').show().text(`${errors} 个用户分析失败`);
         }

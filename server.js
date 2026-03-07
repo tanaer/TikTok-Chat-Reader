@@ -13,15 +13,65 @@ const { AutoRecorder } = require('./auto_recorder');
 const recordingManager = require('./recording_manager');
 const ffmpegManager = require('./utils/ffmpeg_manager');
 const { router: userManagementRouter, startPeriodicTasks } = require('./routes/index');
-const { optionalAuth } = require('./middleware/auth');
+const { optionalAuth, authenticate, requireAdmin } = require('./middleware/auth');
+const { checkRoomQuota, getUserQuota } = require('./middleware/quota');
 const db = require('./db');
+const keyManager = require('./utils/keyManager');
 
 // Helper: get user's allowed room IDs (returns null for admin = no filter)
 async function getUserRoomFilter(req) {
-    if (!req.user) return null; // not logged in - show all (legacy)
+    if (!req.user) return []; // not logged in - return empty (no access)
     if (req.user.role === 'admin') return null; // admin - show all
-    const rows = await db.all('SELECT room_id FROM user_room WHERE user_id = ?', [req.user.id]);
+    const rows = await db.all('SELECT room_id FROM user_room WHERE user_id = ? AND deleted_at IS NULL', [req.user.id]);
     return rows.map(r => r.roomId);
+}
+
+// Helper: get user's room data map { roomId -> { alias, firstAddedAt } } for display name & time filter
+async function getUserRoomDataMap(req) {
+    if (!req.user) return {};
+    if (req.user.role === 'admin') return null; // admin sees system names
+    const rows = await db.all('SELECT room_id, alias, first_added_at FROM user_room WHERE user_id = ? AND deleted_at IS NULL', [req.user.id]);
+    const map = {};
+    for (const r of rows) {
+        map[r.roomId] = { alias: r.alias, firstAddedAt: r.firstAddedAt };
+    }
+    return map;
+}
+
+// Helper: get data start time for a specific room (member's first_added_at, null for admin)
+async function getDataStartTime(req, roomId) {
+    if (!req.user || req.user.role === 'admin') return null;
+    const row = await db.get(
+        'SELECT first_added_at FROM user_room WHERE user_id = ? AND room_id = ? AND deleted_at IS NULL',
+        [req.user.id, roomId]
+    );
+    return row ? row.firstAddedAt : null;
+}
+
+// Helper: get data start times map for all user's rooms { roomId: ISO string }
+async function getDataStartTimes(req) {
+    if (!req.user || req.user.role === 'admin') return null;
+    const rows = await db.all('SELECT room_id, first_added_at FROM user_room WHERE user_id = ? AND deleted_at IS NULL', [req.user.id]);
+    const map = {};
+    for (const r of rows) {
+        if (r.firstAddedAt) map[r.roomId] = r.firstAddedAt;
+    }
+    return map;
+}
+
+// Helper: Check if user can access a specific room
+async function canAccessRoom(req, roomId) {
+    if (!req.user) return { allowed: false, reason: 'Not logged in' };
+    if (req.user.role === 'admin') return { allowed: true };
+    const row = await db.get('SELECT room_id FROM user_room WHERE user_id = ? AND room_id = ? AND deleted_at IS NULL', [req.user.id, roomId]);
+    return { allowed: !!row };
+}
+// Helper: check if user owns a specific room
+async function checkRoomOwnership(req, roomId) {
+    if (!req.user) return false; // not logged in
+    if (req.user.role === 'admin') return true; // admin - owns all
+    const row = await db.get('SELECT 1 FROM user_room WHERE user_id = ? AND room_id = ? AND deleted_at IS NULL', [req.user.id, roomId]);
+    return !!row;
 }
 
 
@@ -33,9 +83,10 @@ const autoRecorder = new AutoRecorder();
 autoRecorder.setRecordingManager(recordingManager);
 recordingManager.startMonitoring(); // Start stall detection for recordings
 
-// Enable CORS & JSON parsing
-// Enable CORS & JSON parsing
-app.use(express.json());
+// Enable CORS & request body parsing
+const REQUEST_BODY_LIMIT = '20mb';
+app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
+app.use(express.urlencoded({ extended: true, limit: REQUEST_BODY_LIMIT }));
 app.use(express.static('public')); // Serve static files first for performance
 
 // Mount user management routes (auth, user center, subscription, admin)
@@ -232,32 +283,62 @@ setInterval(() => {
 // REST API - Data Management
 // ========================
 
+// Sensitive setting keys that should NOT be exposed to non-admin users
+const SENSITIVE_SETTING_KEYS = [
+    'euler_keys', 'ai_api_key', 'ai_api_url', 'ai_model_name',
+    'proxy_url', 'dynamic_tunnel_proxy', 'proxy_api_url',
+    'session_id', 'port',
+    'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_pass',
+    'smtp_from', 'smtp_from_name', 'email_verification_enabled'
+];
+
+function filterSensitiveSettings(settings) {
+    const filtered = {};
+    for (const [key, value] of Object.entries(settings)) {
+        if (!SENSITIVE_SETTING_KEYS.includes(key)) {
+            filtered[key] = value;
+        }
+    }
+    return filtered;
+}
+
 // Config API
-app.get('/api/config', async (req, res) => {
+app.get('/api/config', optionalAuth, async (req, res) => {
     try {
         const settings = await manager.getAllSettings();
-        res.json(settings);
+        const isAdmin = req.user && req.user.role === 'admin';
+        res.json(isAdmin ? settings : filterSensitiveSettings(settings));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
 // Settings API - GET to load settings
-app.get('/api/settings', async (req, res) => {
+app.get('/api/settings', optionalAuth, async (req, res) => {
     try {
         const settings = await manager.getAllSettings();
-        res.json(settings);
+        const isAdmin = req.user && req.user.role === 'admin';
+        res.json(isAdmin ? settings : filterSensitiveSettings(settings));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-// Settings API - POST to save settings
-app.post('/api/settings', async (req, res) => {
+// Settings API - POST to save settings (admin only)
+app.post('/api/settings', authenticate, requireAdmin, async (req, res) => {
     try {
         const settings = req.body;
         for (const [key, value] of Object.entries(settings)) {
             await manager.saveSetting(key, typeof value === 'boolean' ? String(value) : value);
+        }
+        // Refresh Euler API keys if they were updated
+        if (settings.euler_keys !== undefined) {
+            const dbSettings = await manager.getAllSettings();
+            keyManager.refreshKeys(dbSettings);
+        }
+        // Reset email transporter if SMTP settings changed
+        if (Object.keys(settings).some(k => k.startsWith('smtp_') || k === 'email_verification_enabled')) {
+            try { require('./services/emailService').resetTransporter(); } catch (e) {}
         }
         res.json({ success: true });
     } catch (err) {
@@ -265,12 +346,21 @@ app.post('/api/settings', async (req, res) => {
     }
 });
 
-// Alias: POST /api/config also saves settings
-app.post('/api/config', async (req, res) => {
+// Alias: POST /api/config also saves settings (admin only)
+app.post('/api/config', authenticate, requireAdmin, async (req, res) => {
     try {
         const settings = req.body;
         for (const [key, value] of Object.entries(settings)) {
             await manager.saveSetting(key, typeof value === 'boolean' ? String(value) : value);
+        }
+        // Refresh Euler API keys if they were updated
+        if (settings.euler_keys !== undefined) {
+            const dbSettings = await manager.getAllSettings();
+            keyManager.refreshKeys(dbSettings);
+        }
+        // Reset email transporter if SMTP settings changed
+        if (Object.keys(settings).some(k => k.startsWith('smtp_') || k === 'email_verification_enabled')) {
+            try { require('./services/emailService').resetTransporter(); } catch (e) {}
         }
         res.json({ success: true });
     } catch (err) {
@@ -299,8 +389,10 @@ app.get('/api/gifts/display-names', async (req, res) => {
 });
 
 // Room Sessions API
-app.get('/api/rooms/:id/sessions', async (req, res) => {
+app.get('/api/rooms/:id/sessions', optionalAuth, async (req, res) => {
     try {
+        const access = await canAccessRoom(req, req.params.id);
+        if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
         const sessions = await manager.getSessions(req.params.id);
         res.json(sessions);
     } catch (err) {
@@ -378,6 +470,36 @@ app.post('/api/price', (req, res) => {
 });
 
 // Room API
+// Get user's room quota info (for add-room modal)
+app.get('/api/rooms/quota', optionalAuth, async (req, res) => {
+    try {
+        if (!req.user) return res.json({ quota: null });
+        if (req.user.role === 'admin') {
+            return res.json({ quota: { isAdmin: true, limit: -1, used: 0, remaining: -1, isUnlimited: true, openRoomLimit: -1, dailyLimit: -1, dailyUsed: 0 } });
+        }
+        const quota = await getUserQuota(req.user.id);
+        // Get daily creation limit
+        const sub = await db.get(
+            `SELECT sp.daily_room_create_limit FROM user_subscriptions us
+             JOIN subscription_plans sp ON us.plan_id = sp.id
+             WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
+             ORDER BY us.end_date DESC LIMIT 1`,
+            [req.user.id]
+        );
+        const dailyLimit = sub ? Number(sub.dailyRoomCreateLimit) : -1;
+        // Count today's creations
+        const todayCount = await db.get(
+            `SELECT COUNT(*) AS count FROM user_room WHERE user_id = ? AND created_at >= CURRENT_DATE AND created_at < CURRENT_DATE + INTERVAL '1 day'`,
+            [req.user.id]
+        );
+        const dailyUsed = Number(todayCount?.count || 0);
+        res.json({ quota: { ...quota, dailyLimit, dailyUsed } });
+    } catch (err) {
+        console.error('[API] Quota error:', err.message);
+        res.status(500).json({ error: '获取配额失败' });
+    }
+});
+
 app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
     try {
         const liveRoomIds = autoRecorder.getLiveRoomIds();
@@ -386,7 +508,24 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
         const search = req.query.search || '';
         const sort = req.query.sort || 'default';
         const roomFilter = await getUserRoomFilter(req);
+        const userRoomData = await getUserRoomDataMap(req);
+
+        console.log(`[API] /api/rooms/stats - user: ${req.user?.username || 'anonymous'}, role: ${req.user?.role || 'none'}, roomFilter: ${roomFilter === null ? 'null(admin)' : roomFilter?.length + ' rooms'}`);
+
         const result = await manager.getRoomStats(liveRoomIds, { page, limit, search, sort, roomFilter });
+
+        // For members: overlay displayName from user_room alias
+        if (userRoomData && result.data) {
+            result.data = result.data.map(room => {
+                const copy = userRoomData[room.roomId];
+                return {
+                    ...room,
+                    displayName: (copy && copy.alias) || room.name || room.roomId,
+                    firstAddedAt: copy ? copy.firstAddedAt : null,
+                };
+            });
+        }
+
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -412,14 +551,20 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
         const limit = parseInt(req.query.limit) || 50;
         const search = req.query.search || '';
         const roomFilter = await getUserRoomFilter(req);
+        const userRoomData = await getUserRoomDataMap(req);
         const result = await manager.getRooms({ page, limit, search, roomFilter });
 
         // Merge isLive status from autoRecorder activeConnections
         const liveRoomIds = autoRecorder.getLiveRoomIds();
-        result.data = result.data.map(room => ({
-            ...room,
-            isLive: liveRoomIds.includes(room.roomId)
-        }));
+        result.data = result.data.map(room => {
+            const copy = userRoomData ? userRoomData[room.roomId] : null;
+            return {
+                ...room,
+                isLive: liveRoomIds.includes(room.roomId),
+                displayName: copy ? (copy.alias || room.name || room.roomId) : room.name,
+                firstAddedAt: copy ? copy.firstAddedAt : null,
+            };
+        });
 
         res.json(result);
     } catch (err) {
@@ -430,30 +575,53 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
 // Room Management API
 
 
-app.delete('/api/rooms/:id', async (req, res) => {
+app.delete('/api/rooms/:id', authenticate, async (req, res) => {
     try {
         const roomId = req.params.id;
-        await manager.deleteRoom(roomId);
+        const isAdmin = req.user.role === 'admin';
+
+        if (isAdmin) {
+            // Admin: hard delete system room + all data
+            await manager.deleteRoom(roomId);
+            return res.json({ success: true });
+        }
+
+        // Member: soft-delete user_room copy only
+        const copy = await db.get('SELECT id FROM user_room WHERE user_id = ? AND room_id = ? AND deleted_at IS NULL', [req.user.id, roomId]);
+        if (!copy) {
+            return res.status(403).json({ error: '无权访问此房间' });
+        }
+
+        await db.run('UPDATE user_room SET deleted_at = NOW(), is_enabled = false, updated_at = NOW() WHERE id = ?', [copy.id]);
+        console.log(`[API] User ${req.user.id} soft-deleted room copy: ${roomId}`);
+
+        // Check if this was the last active copy - if so, disable monitoring to save resources
+        const remainingCopies = await db.get(
+            'SELECT COUNT(*) AS count FROM user_room WHERE room_id = ? AND deleted_at IS NULL',
+            [roomId]
+        );
+        if (Number(remainingCopies?.count || 0) === 0) {
+            console.log(`[API] Room ${roomId} has no active copies left, disabling monitoring`);
+            await db.run('UPDATE room SET is_monitor_enabled = 0, updated_at = NOW() WHERE room_id = ?', [roomId]);
+            await autoRecorder.disconnectRoom(roomId);
+        }
+
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-app.get('/api/rooms/:id/stats_detail', async (req, res) => {
+app.get('/api/rooms/:id/stats_detail', optionalAuth, async (req, res) => {
     try {
         const roomId = req.params.id;
-        const sessionId = req.query.sessionId || null;
+        const access = await canAccessRoom(req, roomId);
+        if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
 
-        console.log(`[API] stats_detail request: room=${roomId}, session=${sessionId}`);
+        const sessionId = req.query.sessionId || null;
 
         // Get stats
         const data = await manager.getRoomDetailStats(roomId, sessionId);
-
-        console.log(`[API] stats_detail data keys:`, data ? Object.keys(data) : 'null');
-        if (data && data.leaderboards) {
-            console.log(`[API] leaderboards.gifters count:`, data.leaderboards.gifters?.length || 0);
-        }
 
         // Get isLive status
         const liveRoomIds = autoRecorder.getLiveRoomIds();
@@ -476,9 +644,12 @@ app.get('/api/rooms/:id/stats_detail', async (req, res) => {
 });
 
 // All-Time TOP30 Leaderboards API (for room detail sidebar)
-app.get('/api/rooms/:id/alltime-leaderboards', async (req, res) => {
+app.get('/api/rooms/:id/alltime-leaderboards', optionalAuth, async (req, res) => {
     try {
         const roomId = req.params.id;
+        const access = await canAccessRoom(req, roomId);
+        if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
+
         const data = await manager.getAllTimeLeaderboards(roomId);
         res.json(data);
     } catch (err) {
@@ -505,9 +676,13 @@ app.post('/api/sessions/end', async (req, res) => {
     }
 });
 
-app.get('/api/sessions', async (req, res) => {
+app.get('/api/sessions', optionalAuth, async (req, res) => {
     try {
         const roomId = req.query.roomId;
+        if (roomId) {
+            const access = await canAccessRoom(req, roomId);
+            if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
+        }
         const sessions = await manager.getSessions(roomId);
         res.json(sessions);
     } catch (err) {
@@ -515,10 +690,13 @@ app.get('/api/sessions', async (req, res) => {
     }
 });
 
-app.get('/api/sessions/:id', async (req, res) => {
+app.get('/api/sessions/:id', optionalAuth, async (req, res) => {
     try {
         const data = await manager.getSession(req.params.id);
         if (data) {
+            // Check room access via session's room_id
+            const access = await canAccessRoom(req, data.roomId);
+            if (!access.allowed) return res.status(403).json({ error: '无权访问' });
             res.json(data);
         } else {
             res.status(404).json({ error: 'Not found' });
@@ -529,9 +707,13 @@ app.get('/api/sessions/:id', async (req, res) => {
 });
 
 // History API
-app.get('/api/history', async (req, res) => {
+app.get('/api/history', optionalAuth, async (req, res) => {
     try {
         const roomId = req.query.roomId;
+        if (roomId) {
+            const access = await canAccessRoom(req, roomId);
+            if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
+        }
         const stats = await manager.getTimeStats(roomId);
         res.json(stats);
     } catch (err) {
@@ -556,6 +738,7 @@ app.get('/api/analysis/users', optionalAuth, async (req, res) => {
         const pageSize = parseInt(req.query.pageSize) || 50;
         const roomFilter = await getUserRoomFilter(req);
         if (roomFilter) filters.roomFilter = roomFilter;
+        console.log(`[API] /api/analysis/users - user: ${req.user?.username || 'anonymous'}, role: ${req.user?.role || 'none'}, roomFilter: ${roomFilter === null ? 'null(admin)' : JSON.stringify(roomFilter)}`);
         const result = await manager.getTopGifters(page, pageSize, filters);
         res.json(result);
     } catch (err) {
@@ -563,9 +746,12 @@ app.get('/api/analysis/users', optionalAuth, async (req, res) => {
     }
 });
 
-app.get('/api/analysis/user/:userId', async (req, res) => {
+app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
     try {
-        const data = await manager.getUserAnalysis(req.params.userId);
+        // This shows a TikTok user's analysis; access requires login
+        if (!req.user) return res.status(401).json({ error: '请先登录' });
+        const roomFilter = await getUserRoomFilter(req);
+        const data = await manager.getUserAnalysis(req.params.userId, roomFilter);
         res.json(data);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -573,8 +759,23 @@ app.get('/api/analysis/user/:userId', async (req, res) => {
 });
 
 // Export API - fetch user list with full details for export
-app.get('/api/analysis/users/export', async (req, res) => {
+app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
     try {
+        // Check export permission: admin or paid plan with export feature
+        if (!req.user) return res.status(401).json({ error: '请先登录' });
+        if (req.user.role !== 'admin') {
+            const sub = await db.get(
+                `SELECT sp.feature_flags FROM user_subscriptions us
+                 JOIN subscription_plans sp ON us.plan_id = sp.id
+                 WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
+                 ORDER BY us.end_date DESC LIMIT 1`,
+                [req.user.id]
+            );
+            const flags = sub?.featureFlags || {};
+            if (!flags.export) {
+                return res.status(403).json({ error: '数据导出为付费功能，请升级套餐后使用', code: 'EXPORT_NOT_ALLOWED' });
+            }
+        }
         const filters = {
             lang: req.query.lang || '',
             languageFilter: req.query.languageFilter || '',
@@ -585,6 +786,8 @@ app.get('/api/analysis/users/export', async (req, res) => {
             giftPreference: req.query.giftPreference || ''
         };
         const limit = parseInt(req.query.limit) || 1000;
+        const roomFilter = await getUserRoomFilter(req);
+        if (roomFilter) filters.roomFilter = roomFilter;
 
         // Get user list first
         const result = await manager.getTopGifters(1, limit, filters);
@@ -592,7 +795,7 @@ app.get('/api/analysis/users/export', async (req, res) => {
         // Fetch details for each user
         const usersWithDetails = [];
         for (const user of result.users) {
-            const details = await manager.getUserAnalysis(user.userId);
+            const details = await manager.getUserAnalysis(user.userId, roomFilter);
             usersWithDetails.push({
                 ...user,
                 ...details,
@@ -635,6 +838,7 @@ function formatPeakDays(dayStats) {
 app.get('/api/analysis/stats', optionalAuth, async (req, res) => {
     try {
         const roomFilter = await getUserRoomFilter(req);
+        console.log(`[API] /api/analysis/stats - user: ${req.user?.username || 'anonymous'}, roomFilter: ${roomFilter === null ? 'null(admin)' : JSON.stringify(roomFilter)}`);
         const stats = await manager.getGlobalStats(roomFilter);
         res.json(stats);
     } catch (err) {
@@ -646,6 +850,7 @@ app.get('/api/analysis/rooms/entry', optionalAuth, async (req, res) => {
     try {
         const { startDate, endDate, limit } = req.query;
         const roomFilter = await getUserRoomFilter(req);
+        console.log(`[API] /api/analysis/rooms/entry - user: ${req.user?.username || 'anonymous'}, roomFilter: ${roomFilter === null ? 'null(admin)' : JSON.stringify(roomFilter)}`);
         const stats = await manager.getRoomEntryStats(startDate, endDate, limit, roomFilter);
         res.json(stats);
     } catch (err) {
@@ -653,48 +858,110 @@ app.get('/api/analysis/rooms/entry', optionalAuth, async (req, res) => {
     }
 });
 
-app.post('/api/analysis/ai', async (req, res) => {
+app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
     try {
         const { userId, force = false } = req.body;
+        const memberId = req.user?.id || null;
+        const isAdmin = req.user?.role === 'admin';
 
-        // Check if analysis already exists
-        if (!force) {
-            const userAnalysis = await manager.getUserAnalysis(userId);
-            if (userAnalysis && userAnalysis.aiAnalysis) {
-                console.log(`[AI] Returning cached analysis for ${userId}`);
-                return res.json({ result: userAnalysis.aiAnalysis, cached: true });
+        // 1. Get chat history and check minimum corpus (10 messages)
+        const history = await manager.getUserChatHistory(userId, 200);
+        const chatCount = history ? history.length : 0;
+        if (chatCount < 10) {
+            return res.json({ result: '待分析语料不足（需至少10条弹幕记录）', chatCount, skipped: true });
+        }
+
+        // 2. For non-admin members: check if already in their personal analysis table
+        if (!force && memberId && !isAdmin) {
+            const memberCache = await db.get(
+                `SELECT result, chat_count, created_at FROM user_ai_analysis
+                 WHERE member_id = ? AND target_user_id = ? ORDER BY created_at DESC LIMIT 1`,
+                [memberId, userId]
+            );
+            if (memberCache) {
+                return res.json({ result: memberCache.result, cached: true, chatCount: memberCache.chatCount, analyzedAt: memberCache.createdAt, source: 'member_cache' });
             }
         }
 
-        // Get user chat history
-        const history = await manager.getUserChatHistory(userId, 100);
+        // 3. Check system-level cache ("user".ai_analysis) - within 3 months
+        if (!force) {
+            const sysUser = await db.get(
+                `SELECT ai_analysis, updated_at FROM "user" WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
+                [userId]
+            );
+            if (sysUser && sysUser.aiAnalysis) {
+                const updatedAt = new Date(sysUser.updatedAt);
+                const threeMonthsAgo = new Date();
+                threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
-        if (!history || history.length === 0) {
-            console.log(`[AI] User ${userId} has no chat history, skipping analysis`);
-            return res.json({ result: "该用户没有足够的弹幕记录进行分析。" });
+                if (updatedAt > threeMonthsAgo) {
+                    // System cache is fresh — use it, write to member table, and charge
+                    if (memberId && !isAdmin) {
+                        // Check credits before charging
+                        const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
+                        const remaining = Number(credits?.aiCreditsRemaining || 0);
+                        if (remaining <= 0) {
+                            return res.status(403).json({ error: 'AI 分析次数已用完，请购买额度包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
+                        }
+                        // Write to member table
+                        await db.run(
+                            `INSERT INTO user_ai_analysis (member_id, target_user_id, result, chat_count, model_name, latency_ms, source)
+                             VALUES (?, ?, ?, ?, 'system_cache', 0, 'cache')`,
+                            [memberId, userId, sysUser.aiAnalysis, chatCount]
+                        );
+                        // Deduct credit
+                        await db.run('UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - 1, 0), ai_credits_used = ai_credits_used + 1 WHERE id = ?', [memberId]);
+                        await db.run('INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, 1, ?)', [memberId, 'analysis', userId]);
+                    }
+                    console.log(`[AI] Using system cache for ${userId} (updated ${updatedAt.toISOString()})`);
+                    return res.json({ result: sysUser.aiAnalysis, cached: true, chatCount, source: 'system_cache' });
+                }
+            }
         }
 
-        const chatText = history.map(h => h.comment).join('\n');
+        // 4. Need fresh AI analysis — check credits for non-admin
+        if (memberId && !isAdmin) {
+            const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
+            const remaining = Number(credits?.aiCreditsRemaining || 0);
+            if (remaining <= 0) {
+                return res.status(403).json({ error: 'AI 分析次数已用完，请购买额度包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
+            }
+        }
 
-        // Call AI API
-        const dbSettings = await manager.getAllSettings();
-        const apiKey = dbSettings.ai_api_key || process.env.AI_API_KEY;
-        const modelName = dbSettings.ai_model_name || process.env.AI_MODEL_NAME || 'deepseek-ai/DeepSeek-V3.2';
-        const apiUrl = dbSettings.ai_api_url || process.env.AI_API_URL || 'https://api-inference.modelscope.cn/v1/';
+        // 5. Get AI model config
+        let apiKey, modelName, apiUrl, aiModelId;
+        const aiModel = await db.get(
+            `SELECT m.id, m.model_id, m.name AS model_name, c.api_url, c.api_key
+             FROM ai_models m JOIN ai_channels c ON m.channel_id = c.id
+             WHERE m.is_active = true AND c.is_active = true
+             ORDER BY m.is_default DESC, m.id ASC LIMIT 1`
+        );
+        if (aiModel) {
+            apiKey = aiModel.apiKey;
+            modelName = aiModel.modelId;
+            apiUrl = aiModel.apiUrl;
+            aiModelId = aiModel.id;
+        } else {
+            const dbSettings = await manager.getAllSettings();
+            apiKey = dbSettings.ai_api_key || process.env.AI_API_KEY;
+            modelName = dbSettings.ai_model_name || process.env.AI_MODEL_NAME || 'deepseek-ai/DeepSeek-V3.2';
+            apiUrl = dbSettings.ai_api_url || process.env.AI_API_URL || 'https://api-inference.modelscope.cn/v1/';
+        }
 
         if (!apiKey) {
-            return res.status(500).json({ error: "AI API Key not configured" });
+            return res.status(500).json({ error: 'AI API Key not configured' });
         }
 
+        // 6. Call AI API
+        const chatText = history.map(h => h.comment).join('\n');
         const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
-        console.log(`[AI] Requesting analysis for ${userId}...`);
-        const response = await fetch(`${apiUrl}chat/completions`, {
+        console.log(`[AI] Requesting analysis for ${userId}, ${chatCount} messages, model ${modelName}`);
+        const aiStartTime = Date.now();
+        const aiBaseUrl = apiUrl.endsWith('/') ? apiUrl : apiUrl + '/';
+        const response = await fetch(`${aiBaseUrl}chat/completions`, {
             method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
             body: JSON.stringify({
                 model: modelName,
                 messages: [
@@ -704,36 +971,48 @@ app.post('/api/analysis/ai', async (req, res) => {
                 stream: false
             })
         });
+        const aiLatency = Date.now() - aiStartTime;
 
         if (!response.ok) {
             const err = await response.text();
+            if (aiModelId) {
+                await db.run(
+                    `UPDATE ai_models SET call_count = call_count + 1, fail_count = fail_count + 1, last_status = 'error', last_error = ?, last_used_at = NOW(), updated_at = NOW() WHERE id = ?`,
+                    [`HTTP ${response.status}: ${err.slice(0, 200)}`, aiModelId]
+                );
+            }
             throw new Error(`AI API Error: ${err}`);
         }
 
         const completion = await response.json();
-        const result = completion.choices?.[0]?.message?.content || "无法获取分析结果";
+        const result = completion.choices?.[0]?.message?.content || '无法获取分析结果';
 
-        // Save full analysis
+        // 7. Track AI model success
+        if (aiModelId) {
+            await db.run(
+                `UPDATE ai_models SET call_count = call_count + 1, success_count = success_count + 1, last_status = 'ok', last_error = NULL, last_used_at = NOW(), avg_latency_ms = ?, updated_at = NOW() WHERE id = ?`,
+                [aiLatency, aiModelId]
+            );
+        }
+
+        // 8. Save to system-level user table
         await manager.updateAIAnalysis(userId, result);
 
-        // Parse result for languages to update searchable fields
-        // let commonLang = '';
-        // let masteredLang = '';
+        // 9. Save to member's personal table & deduct credits
+        if (memberId && !isAdmin) {
+            await db.run(
+                `INSERT INTO user_ai_analysis (member_id, target_user_id, result, chat_count, model_name, latency_ms, source)
+                 VALUES (?, ?, ?, ?, ?, ?, 'api')`,
+                [memberId, userId, result, chatCount, modelName, aiLatency]
+            );
+            await db.run('UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - 1, 0), ai_credits_used = ai_credits_used + 1 WHERE id = ?', [memberId]);
+            await db.run('INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, 1, ?)', [memberId, 'analysis', userId]);
+        }
 
-        // const commonMatch = result.match(/1、常用语种[：:]?\s*([^\n\r]+)/);
-        // if (commonMatch) commonLang = commonMatch[1].replace(/[,，、]/g, ',');
-
-        // const masteredMatch = result.match(/2、掌握语种[：:]?\s*([^\n\r]+)/);
-        // if (masteredMatch) masteredLang = masteredMatch[1].replace(/[,，、]/g, ',');
-
-        // if (commonLang || masteredLang) {
-        //     await manager.updateUserLanguages(userId, commonLang, masteredLang);
-        // }
-
-        res.json({ result: result, cached: false });
+        res.json({ result, cached: false, chatCount, latency: aiLatency, model: modelName, source: 'api' });
 
     } catch (err) {
-        console.error(err);
+        console.error('[AI] Analysis error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -744,72 +1023,166 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
     try {
         let { roomId, name, address, isMonitorEnabled, language, priority, isRecordingEnabled, recordingAccountId } = req.body;
 
-
         // Normalize roomId: remove @ prefix to prevent duplicates (e.g. @blooming1881 vs blooming1881)
         if (roomId && roomId.startsWith('@')) {
             roomId = roomId.substring(1);
             console.log(`[API] Normalized roomId by removing @ prefix: ${roomId}`);
         }
 
-        console.log(`[API] POST /api/rooms - roomId: ${roomId}, isMonitorEnabled: ${isMonitorEnabled} (type: ${typeof isMonitorEnabled}), priority: ${priority}`);
+        if (!roomId) return res.status(400).json({ error: '房间ID不能为空' });
 
-        const room = await manager.updateRoom(roomId, name, address, isMonitorEnabled, language, priority, isRecordingEnabled, recordingAccountId);
-        console.log(`[API] Room updated:`, room);
+        const isAdmin = req.user && req.user.role === 'admin';
 
-        // Create user_room association if authenticated (non-admin users)
-        if (req.user && req.user.role !== 'admin') {
-            const existing = await db.get('SELECT id FROM user_room WHERE user_id = ? AND room_id = ?', [req.user.id, roomId]);
-            if (!existing) {
-                await db.run('INSERT INTO user_room (user_id, room_id) VALUES (?, ?)', [req.user.id, roomId]);
+        // ==================== Admin: direct system-level operation ====================
+        if (isAdmin) {
+            const room = await manager.updateRoom(roomId, name, address, isMonitorEnabled, language, priority, isRecordingEnabled, recordingAccountId);
+            console.log(`[API] Admin updated room:`, room);
+
+            // If monitor was just disabled, disconnect immediately
+            if (isMonitorEnabled === false || isMonitorEnabled === 0 || isMonitorEnabled === '0') {
+                console.log(`[API] Room ${roomId} monitor disabled. Triggering immediate disconnect...`);
+                await autoRecorder.disconnectRoom(roomId);
+            }
+
+            return res.json({ success: true, room });
+        }
+
+        // ==================== Member: user_room copy logic ====================
+        if (!req.user) return res.status(401).json({ error: '请先登录' });
+
+        // Check existing user_room (including soft-deleted)
+        const existingCopy = await db.get(
+            'SELECT id, deleted_at, first_added_at FROM user_room WHERE user_id = ? AND room_id = ?',
+            [req.user.id, roomId]
+        );
+
+        // For NEW room (no existing copy, or soft-deleted copy) - check quota + daily limit
+        const isNewForUser = !existingCopy || existingCopy.deletedAt;
+        if (isNewForUser) {
+            const quota = await getUserQuota(req.user.id);
+            if (!quota.hasSubscription && quota.limit === 0) {
+                return res.status(403).json({
+                    error: '您还没有有效的订阅套餐，请前往用户中心购买套餐后再使用',
+                    code: 'NO_SUBSCRIPTION',
+                    quota
+                });
+            }
+            if (quota.limit !== -1 && quota.remaining <= 0) {
+                return res.status(403).json({
+                    error: '房间配额已满，请升级套餐或购买扩容包',
+                    code: 'QUOTA_EXCEEDED',
+                    quota
+                });
+            }
+            // Check open room limit (simultaneously monitored rooms)
+            if (quota.openRoomLimit !== -1 && quota.openRemaining <= 0) {
+                return res.status(403).json({
+                    error: `同时打开的房间数已达上限（${quota.openRoomLimit}个），请关闭其他房间后再试`,
+                    code: 'OPEN_ROOM_LIMIT',
+                    quota
+                });
+            }
+
+            // Check daily room creation limit from subscription plan
+            const sub = await db.get(
+                `SELECT sp.daily_room_create_limit FROM user_subscriptions us
+                 JOIN subscription_plans sp ON us.plan_id = sp.id
+                 WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
+                 ORDER BY us.end_date DESC LIMIT 1`,
+                [req.user.id]
+            );
+            const dailyLimit = sub ? Number(sub.dailyRoomCreateLimit) : -1;
+            if (dailyLimit !== -1) {
+                // Count today's creations (using created_at, exclude soft-deleted restores by checking deleted_at IS NULL or created today)
+                const todayCount = await db.get(
+                    `SELECT COUNT(*) AS count FROM user_room
+                     WHERE user_id = ? AND created_at >= CURRENT_DATE AND created_at < CURRENT_DATE + INTERVAL '1 day'`,
+                    [req.user.id]
+                );
+                const createdToday = Number(todayCount?.count || 0);
+                if (createdToday >= dailyLimit) {
+                    return res.status(403).json({
+                        error: `今日新建房间次数已达上限（${dailyLimit}次/天），请明天再试`,
+                        code: 'DAILY_LIMIT_EXCEEDED',
+                        dailyLimit,
+                        createdToday
+                    });
+                }
             }
         }
 
-        // If monitor was just disabled, disconnect immediately and save session
-        if (isMonitorEnabled === false || isMonitorEnabled === 0 || isMonitorEnabled === '0') {
-            console.log(`[API] Room ${roomId} monitor disabled. Triggering immediate disconnect...`);
-            await autoRecorder.disconnectRoom(roomId);
+        // Ensure system-level room record exists (INSERT only, never update existing)
+        const existingRoom = await db.get('SELECT room_id FROM room WHERE room_id = ?', [roomId]);
+        if (!existingRoom) {
+            // New room created by user - mark user_id, enable monitoring
+            await db.run(
+                `INSERT INTO room (room_id, name, is_monitor_enabled, user_id, updated_at) VALUES (?, ?, 1, ?, NOW())`,
+                [roomId, roomId, req.user.id]
+            );
+            console.log(`[API] User ${req.user.id} created new system room: ${roomId}`);
+        } else {
+            // Room exists but might have monitoring disabled (was orphaned before)
+            // Re-enable monitoring when a user adds it
+            await db.run('UPDATE room SET is_monitor_enabled = 1, updated_at = NOW() WHERE room_id = ? AND is_monitor_enabled = 0', [roomId]);
         }
 
-        res.json({ success: true, room });
+        // Upsert user_room copy
+        const alias = name || null;
+        if (existingCopy && existingCopy.deletedAt) {
+            // Restoring a soft-deleted copy
+            // Check if first_added_at is within 7 days - if so, keep it; otherwise reset
+            const firstAdded = existingCopy.firstAddedAt ? new Date(existingCopy.firstAddedAt) : null;
+            const daysSinceFirst = firstAdded ? (Date.now() - firstAdded.getTime()) / (1000 * 60 * 60 * 24) : 999;
+            const newFirstAdded = daysSinceFirst <= 7 ? existingCopy.firstAddedAt : new Date();
+
+            await db.run(
+                `UPDATE user_room SET alias = ?, deleted_at = NULL, is_enabled = true, first_added_at = ?, updated_at = NOW() WHERE id = ?`,
+                [alias, newFirstAdded, existingCopy.id]
+            );
+            console.log(`[API] User ${req.user.id} restored room copy: ${roomId} (data from ${daysSinceFirst <= 7 ? 'previous' : 'now'})`);
+        } else if (existingCopy) {
+            // Update existing active copy (user editing alias)
+            await db.run(
+                'UPDATE user_room SET alias = ?, updated_at = NOW() WHERE id = ?',
+                [alias, existingCopy.id]
+            );
+            console.log(`[API] User ${req.user.id} updated room alias: ${roomId} -> ${alias}`);
+        } else {
+            // Brand new copy
+            await db.run(
+                'INSERT INTO user_room (user_id, room_id, alias, first_added_at) VALUES (?, ?, ?, NOW())',
+                [req.user.id, roomId, alias]
+            );
+            console.log(`[API] User ${req.user.id} added new room copy: ${roomId}`);
+        }
+
+        res.json({ success: true, room: { room_id: roomId, name: alias || roomId } });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
 // Rename room (Migrate ID)
-app.post('/api/rooms/:id/rename', async (req, res) => {
+app.post('/api/rooms/:id/rename', optionalAuth, async (req, res) => {
     try {
+        const roomId = req.params.id;
         const { newRoomId } = req.body;
         if (!newRoomId) return res.status(400).json({ error: 'New Room ID is required' });
 
-        await manager.migrateRoomId(req.params.id, newRoomId);
-        res.json({ success: true, oldRoomId: req.params.id, newRoomId });
+        // Check ownership
+        const accessCheck = await canAccessRoom(req, roomId);
+        if (!accessCheck.allowed) {
+            return res.status(403).json({ error: '无权访问此房间' });
+        }
+
+        await manager.migrateRoomId(roomId, newRoomId);
+        res.json({ success: true, oldRoomId: roomId, newRoomId });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
-app.delete('/api/rooms/:id', async (req, res) => {
-    try {
-        await manager.deleteRoom(req.params.id);
-        res.json({ success: true });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.get('/api/rooms/:id/stats_detail', async (req, res) => {
-    try {
-        const roomId = req.params.id;
-        const sessionId = req.query.sessionId || null;
-        const data = await manager.getRoomDetailStats(roomId, sessionId);
-        res.json(data);
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.post('/api/rooms/:id/stop', async (req, res) => {
+app.post('/api/rooms/:id/stop', authenticate, requireAdmin, async (req, res) => {
     try {
         const roomId = req.params.id;
         // Stop monitoring
@@ -1304,12 +1677,6 @@ app.post('/api/socks5_proxies/:id/test', async (req, res) => {
 });
 
 
-// Debug API - View all active connections
-app.get('/api/debug/connections', (req, res) => {
-    const connections = autoRecorder.getLiveRoomIds();
-    res.json({ activeConnections: connections });
-});
-
 // Debug API - Force clear a stale connection (for testing)
 app.delete('/api/debug/connections/:id', async (req, res) => {
     const roomId = req.params.id;
@@ -1353,34 +1720,6 @@ app.post('/api/rebuild-missing-sessions', async (req, res) => {
     try {
         const result = await manager.rebuildMissingSessions();
         res.json({ success: true, ...result });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-// Session API
-app.post('/api/sessions/end', async (req, res) => {
-    try {
-        const { roomId, snapshot, startTime } = req.body;
-
-        // Create session first to get session_id
-        const sessionId = await manager.createSession(roomId, snapshot);
-
-        // Tag all untagged events for this room with the new session_id
-        await manager.tagEventsWithSession(roomId, sessionId, startTime);
-
-        console.log(`[SESSION] Ended session ${sessionId} for room ${roomId}, events tagged`);
-        res.json({ success: true, sessionId });
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
-});
-
-app.get('/api/sessions', async (req, res) => {
-    try {
-        const roomId = req.query.roomId;
-        const sessions = await manager.getSessions(roomId);
-        res.json(sessions);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

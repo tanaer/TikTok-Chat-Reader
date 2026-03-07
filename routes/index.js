@@ -4,6 +4,8 @@ const userRoutes = require('./user');
 const subscriptionRoutes = require('./subscription');
 const roomsRoutes = require('./rooms');
 const adminRoutes = require('./admin');
+const paymentRoutes = require('./payment');
+const paymentAdminRoutes = require('./paymentAdmin');
 const subscriptionService = require('../services/subscriptionService');
 const authService = require('../services/authService');
 
@@ -18,8 +20,14 @@ router.use('/api/user', userRoutes);
 // Subscription routes (mixed public/authenticated)
 router.use('/api/subscription', subscriptionRoutes);
 
+// Payment routes (recharge + callbacks)
+router.use('/api/payment', paymentRoutes);
+
 // User room management (authenticated)
 router.use('/api/user/rooms', roomsRoutes);
+
+// Admin payment routes
+router.use('/api/admin/payment', paymentAdminRoutes);
 
 // Admin routes (admin only)
 router.use('/api/admin', adminRoutes);

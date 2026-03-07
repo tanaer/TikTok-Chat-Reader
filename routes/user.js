@@ -12,7 +12,8 @@ const router = express.Router();
 router.get('/profile', authenticate, async (req, res) => {
     try {
         const user = await db.get(
-            `SELECT id, username, email, nickname, balance, role, status, last_login_at, created_at
+            `SELECT id, username, email, nickname, balance, role, status, last_login_at, created_at,
+                    ai_credits_monthly, ai_credits_remaining, ai_credits_used
              FROM users WHERE id = ?`,
             [req.user.id]
         );
@@ -127,15 +128,24 @@ router.get('/orders', authenticate, async (req, res) => {
         const page = Math.max(1, parseInt(req.query.page) || 1);
         const limit = Math.min(50, Math.max(1, parseInt(req.query.limit) || 20));
         const offset = (page - 1) * limit;
+        const search = (req.query.search || '').trim();
+
+        let whereClause = 'WHERE user_id = ?';
+        const params = [req.user.id];
+
+        if (search) {
+            whereClause += ' AND order_no ILIKE ?';
+            params.push(`%${search}%`);
+        }
 
         const orders = await db.all(
-            `SELECT * FROM payment_records WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-            [req.user.id, limit, offset]
+            `SELECT * FROM payment_records ${whereClause} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
+            [...params, limit, offset]
         );
 
         const countResult = await db.get(
-            'SELECT COUNT(*) AS total FROM payment_records WHERE user_id = ?',
-            [req.user.id]
+            `SELECT COUNT(*) AS total FROM payment_records ${whereClause}`,
+            params
         );
 
         res.json({

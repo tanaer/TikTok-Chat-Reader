@@ -7,85 +7,645 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/js/auth.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
+    <style>
+        :root {
+            color-scheme: dark;
+            --fantasy-bg-1: #0b1220;
+            --fantasy-bg-2: #111827;
+            --fantasy-panel: rgba(15, 23, 42, 0.86);
+            --fantasy-panel-soft: rgba(30, 41, 59, 0.56);
+            --fantasy-panel-strong: rgba(9, 14, 26, 0.94);
+            --fantasy-border: rgba(148, 163, 184, 0.18);
+            --fantasy-border-strong: rgba(96, 165, 250, 0.3);
+            --fantasy-gold: #93c5fd;
+            --fantasy-gold-soft: #e2e8f0;
+            --fantasy-ink: #e5edf8;
+            --fantasy-muted: rgba(226, 232, 240, 0.68);
+            --fantasy-cyan: #60a5fa;
+            --fantasy-shadow: 0 20px 48px rgba(0, 0, 0, 0.28);
+        }
+
+        body, input, textarea, button, select { font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif; }
+        h1, h2, h3, h4, h5, h6,
+        .tab,
+        .navbar .text-xl,
+        .section-title,
+        .plan-selector-name,
+        .plan-title-main,
+        .subscription-nav-item strong,
+        .offer-title {
+            font-family: 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
+            letter-spacing: 0;
+            font-weight: 600;
+        }
+
+        body.fantasy-body {
+            background:
+                radial-gradient(circle at top, rgba(59, 130, 246, 0.16), transparent 24%),
+                linear-gradient(180deg, var(--fantasy-bg-2) 0%, var(--fantasy-bg-1) 72%, #050b16 100%);
+            color: var(--fantasy-ink);
+        }
+        body.fantasy-body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            pointer-events: none;
+            background: linear-gradient(180deg, rgba(255,255,255,0.015), transparent 22%, rgba(0,0,0,0.18));
+            opacity: 0.28;
+        }
+
+        .tab-content { display: block !important; }
+        .tab-content.hidden { display: none !important; }
+        .plan-card { transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease; }
+        .plan-card:hover { transform: translateY(-6px); box-shadow: 0 20px 40px rgba(0,0,0,0.28); border-color: var(--fantasy-border-strong); }
+        .stat-num { font-variant-numeric: tabular-nums; }
+
+        .fantasy-nav {
+            background: rgba(11, 18, 32, 0.82);
+            backdrop-filter: blur(14px);
+            border-bottom: 1px solid var(--fantasy-border);
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+        }
+        .fantasy-nav .btn-ghost,
+        .fantasy-nav .menu a { color: var(--fantasy-ink); }
+
+        .card,
+        .modal-box {
+            background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(10, 15, 28, 0.98));
+            border: 1px solid var(--fantasy-border);
+            box-shadow: var(--fantasy-shadow);
+            border-radius: 20px;
+        }
+        .card::before,
+        .modal-box::before,
+        .plan-detail-wrap::before {
+            content: '';
+            position: absolute;
+            inset: 1px;
+            border-radius: inherit;
+            border: 1px solid rgba(255,255,255,0.04);
+            pointer-events: none;
+        }
+        .card, .modal-box, .plan-detail-wrap { position: relative; overflow: hidden; }
+
+        .tabs.tabs-bordered {
+            border: 0;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .tabs.tabs-bordered .tab {
+            border: 1px solid var(--fantasy-border);
+            background: rgba(18, 17, 17, 0.84);
+            color: rgba(226, 232, 240, 0.68);
+            border-radius: 999px;
+            min-height: 3.1rem;
+            padding: 0 1.35rem;
+            transition: transform 0.2s ease, border-color 0.2s ease, background 0.2s ease;
+        }
+        .tabs.tabs-bordered .tab:hover {
+            transform: translateY(-1px);
+            border-color: rgba(96, 165, 250, 0.34);
+            background: rgba(38, 32, 28, 0.92);
+        }
+        .tabs.tabs-bordered .tab.tab-active {
+            background: linear-gradient(135deg, rgba(96, 165, 250, 0.98), rgba(37, 99, 235, 0.94));
+            color: #17110d;
+            border-color: rgba(191, 219, 254, 0.66);
+            box-shadow: 0 12px 24px rgba(29, 78, 216, 0.3);
+        }
+
+        .subscription-layout { display: grid; gap: 24px; align-items: start; }
+        .subscription-side-shell { align-self: start; }
+        .subscription-side-nav {
+            display: flex;
+            gap: 12px;
+            overflow-x: auto;
+            padding-bottom: 4px;
+            scrollbar-width: none;
+        }
+        .subscription-side-nav::-webkit-scrollbar { display: none; }
+        .subscription-nav-item {
+            min-width: 220px;
+            display: flex;
+            align-items: flex-start;
+            gap: 12px;
+            padding: 12px 14px;
+            border-radius: 16px;
+            border: 1px solid var(--fantasy-border);
+            background: rgba(15, 23, 42, 0.82);
+            color: var(--fantasy-muted);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+            transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+            text-align: left;
+        }
+        .subscription-nav-item:hover {
+            transform: translateY(-3px);
+            border-color: rgba(96, 165, 250, 0.4);
+        }
+        .subscription-nav-item.active {
+            color: var(--fantasy-ink);
+            border-color: var(--fantasy-border-strong);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.24);
+            background: rgba(30, 41, 59, 0.96);
+        }
+        .subscription-nav-index {
+            width: 36px;
+            height: 36px;
+            border-radius: 12px;
+            display: grid;
+            place-items: center;
+            flex-shrink: 0;
+            font-family: inherit;
+            font-size: 0.85rem;
+            background: rgba(96, 165, 250, 0.1);
+            border: 1px solid rgba(96, 165, 250, 0.18);
+            color: var(--fantasy-gold-soft);
+        }
+        .subscription-nav-item strong { display: block; font-size: 0.9rem; }
+        .subscription-nav-item em {
+            display: block;
+            font-style: normal;
+            font-size: 0.8rem;
+            opacity: 0.78;
+            margin-top: 3px;
+        }
+        .subscription-main { display: flex; flex-direction: column; gap: 28px; }
+        .subscription-section { scroll-margin-top: 120px; }
+        .section-kicker {
+            color: var(--fantasy-gold);
+            text-transform: uppercase;
+            letter-spacing: 0.28em;
+            font-size: 0.76rem;
+            margin-bottom: 8px;
+            opacity: 0.86;
+        }
+        .section-title { font-size: 1.55rem; margin-bottom: 8px; }
+        .section-lead {
+            color: var(--fantasy-muted);
+            font-size: 1rem;
+            line-height: 1.55;
+            max-width: 44rem;
+        }
+        .current-sub-card .card-body { padding: 1.6rem; }
+        .current-sub-banner {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            align-items: center;
+            margin-top: 1rem;
+        }
+        .fantasy-pill {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 14px;
+            border-radius: 999px;
+            border: 1px solid var(--fantasy-border);
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--fantasy-ink);
+            font-size: 0.95rem;
+        }
+        .fantasy-pill strong { color: var(--fantasy-gold-soft); }
+
+        .plan-selector-bar {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 16px;
+            background: none;
+            padding: 0;
+            margin-bottom: 22px;
+        }
+        .plan-selector-item {
+            cursor: pointer;
+            position: relative;
+            border-radius: 18px;
+            padding: 18px 16px;
+            min-height: 156px;
+            transition: all 0.22s ease;
+            color: var(--fantasy-muted);
+            font-weight: 500;
+            border: 1px solid var(--fantasy-border);
+            background: rgba(15, 23, 42, 0.82);
+            box-shadow: 0 10px 24px rgba(0, 0, 0, 0.18);
+        }
+        .plan-selector-item:hover:not(.plan-sel-active) {
+            color: var(--fantasy-ink);
+            transform: translateY(-4px);
+            border-color: rgba(96, 165, 250, 0.34);
+            background: linear-gradient(180deg, rgba(52, 44, 37, 0.94), rgba(18, 17, 17, 0.98));
+        }
+        .plan-sel-active {
+            background: rgba(30, 41, 59, 0.96);
+            color: var(--fantasy-ink);
+            box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22);
+            border-color: var(--fantasy-border-strong);
+            font-weight: 700;
+            transform: translateY(-4px);
+        }
+        .plan-selector-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 10px;
+            margin-bottom: 18px;
+        }
+        .plan-selector-crest {
+            width: 44px;
+            height: 44px;
+            border-radius: 14px;
+            display: grid;
+            place-items: center;
+            background: radial-gradient(circle at top, rgba(191, 219, 254, 0.22), rgba(96, 165, 250, 0.05));
+            border: 1px solid rgba(96, 165, 250, 0.18);
+            box-shadow: inset 0 0 12px rgba(191, 219, 254, 0.06);
+            color: var(--fantasy-gold-soft);
+            font-size: 1.3rem;
+        }
+        .plan-selector-name { font-size: 1.12rem; }
+        .plan-selector-note {
+            margin-top: 10px;
+            font-size: 0.92rem;
+            min-height: 2.8em;
+            line-height: 1.35;
+            color: var(--fantasy-muted);
+        }
+        .plan-sel-price { font-size: 0.86rem; margin-top: 16px; color: var(--fantasy-gold-soft); opacity: 0.92; }
+        .plan-sel-active .plan-sel-price { color: var(--fantasy-gold-soft); }
+        .plan-sel-badge { position: absolute; top: 16px; right: 14px; }
+
+        .period-bar {
+            display: flex;
+            gap: 10px;
+            background: rgba(16, 14, 13, 0.9);
+            border-radius: 18px;
+            padding: 6px;
+            border: 1px solid var(--fantasy-border);
+        }
+        .period-item {
+            flex: 1; cursor: pointer; border-radius: 14px; padding: 12px 10px;
+            text-align: center; transition: all 0.2s; position: relative;
+            color: rgba(226, 232, 240, 0.58); font-size: 0.95rem;
+        }
+        .period-item:hover:not(.period-active) { color: rgba(226, 232, 240, 0.88); background: rgba(255,255,255,0.03); }
+        .period-active {
+            background: linear-gradient(135deg, rgba(96, 165, 250, 0.96), rgba(59, 130, 246, 0.94));
+            color: #1d130d;
+            font-weight: 600;
+            box-shadow: 0 10px 20px rgba(131, 85, 20, 0.28);
+        }
+        .period-active .period-save { color: rgba(29, 19, 13, 0.84); opacity: 0.88; }
+        .period-save { font-size: 0.72rem; display: block; margin-top: 2px; }
+
+        .plan-detail-wrap {
+            background: linear-gradient(180deg, rgba(17, 24, 39, 0.96), rgba(10, 15, 28, 0.99));
+            border-radius: 20px;
+            border: 1px solid var(--fantasy-border-strong);
+            overflow: hidden;
+            box-shadow: var(--fantasy-shadow);
+        }
+        .plan-detail-header {
+            padding: 26px 28px 22px;
+            border-bottom: 1px solid var(--fantasy-border);
+            display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px;
+            background: linear-gradient(135deg, rgba(115, 91, 54, 0.34), rgba(33, 26, 23, 0.2));
+        }
+        .plan-detail-body { padding: 28px; }
+        .plan-detail-title { max-width: 42rem; }
+        .plan-kicker {
+            font-size: 0.76rem;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--fantasy-gold);
+            opacity: 0.88;
+        }
+        .plan-title-row {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-top: 10px;
+        }
+        .plan-crest {
+            width: 52px;
+            height: 52px;
+            border-radius: 18px;
+            display: grid;
+            place-items: center;
+            font-size: 1.55rem;
+            color: var(--fantasy-gold-soft);
+            background: radial-gradient(circle at top, rgba(191, 219, 254, 0.2), rgba(96, 165, 250, 0.06));
+            border: 1px solid rgba(96, 165, 250, 0.2);
+        }
+        .plan-title-main { font-size: 1.7rem; }
+        .plan-narrative { margin-top: 12px; color: var(--fantasy-muted); line-height: 1.55; }
+        .plan-room-pill {
+            display: inline-flex;
+            align-items: center;
+            padding: 10px 16px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid var(--fantasy-border);
+            color: var(--fantasy-gold-soft);
+        }
+        .plan-overview-grid {
+            display: grid;
+            gap: 18px;
+            margin-bottom: 24px;
+        }
+        .plan-price-hero {
+            text-align: left;
+            padding: 24px;
+            border-radius: 24px;
+            border: 1px solid rgba(96, 165, 250, 0.14);
+            background: linear-gradient(150deg, rgba(45, 37, 31, 0.92), rgba(12, 12, 12, 0.98));
+        }
+        .plan-price-hero .price-num {
+            font-size: 3.45rem;
+            font-weight: 800;
+            line-height: 1;
+            color: var(--fantasy-gold-soft);
+            text-shadow: 0 0 24px rgba(96, 165, 250, 0.12);
+        }
+        .plan-price-hero .price-unit { font-size: 1rem; color: var(--fantasy-muted); margin-left: 2px; }
+        .plan-price-hero .price-total { font-size: 0.9rem; color: rgba(226, 232, 240, 0.6); margin-top: 8px; }
+        .plan-intro-card {
+            border-radius: 24px;
+            border: 1px solid rgba(96, 165, 250, 0.12);
+            background: linear-gradient(180deg, rgba(31, 27, 25, 0.82), rgba(12, 11, 11, 0.95));
+            padding: 24px;
+        }
+        .mini-label {
+            color: var(--fantasy-gold);
+            font-size: 0.76rem;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            opacity: 0.86;
+        }
+        .plan-intro-card h4 { font-size: 1.08rem; margin-top: 10px; }
+        .plan-intro-card p { color: var(--fantasy-muted); line-height: 1.55; margin-top: 8px; }
+        .plan-intro-tags { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+        .plan-intro-tags span {
+            padding: 6px 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(96, 165, 250, 0.14);
+            background: rgba(255,255,255,0.03);
+            color: var(--fantasy-gold-soft);
+            font-size: 0.82rem;
+        }
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+            gap: 12px 16px;
+        }
+        .feature-grid li {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-size: 0.94rem;
+            padding: 10px 12px;
+            border-radius: 16px;
+            background: rgba(255,255,255,0.02);
+            border: 1px solid rgba(96, 165, 250, 0.08);
+        }
+        .feature-grid .feat-on { color: var(--fantasy-cyan); }
+        .feature-grid .feat-off { color: rgba(226, 232, 240, 0.22); }
+
+        .fantasy-cta {
+            background: linear-gradient(135deg, rgba(236, 215, 174, 0.98), rgba(171, 126, 60, 0.94));
+            color: #17110d;
+            border: none;
+            box-shadow: 0 16px 26px rgba(120, 84, 28, 0.24);
+        }
+        .fantasy-cta:hover { transform: translateY(-1px); box-shadow: 0 20px 30px rgba(120, 84, 28, 0.28); }
+        .fantasy-disabled {
+            background: rgba(255,255,255,0.08) !important;
+            color: rgba(226, 232, 240, 0.48) !important;
+            border: 1px solid rgba(255,255,255,0.08) !important;
+            box-shadow: none !important;
+        }
+
+        .offer-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
+        .fantasy-offer-card {
+            position: relative;
+            overflow: hidden;
+            min-height: 100%;
+        }
+        .fantasy-offer-card::after {
+            content: '';
+            position: absolute;
+            inset: auto -18% 60% 48%;
+            height: 120px;
+            border-radius: 999px;
+            background: radial-gradient(circle, rgba(96, 165, 250, 0.18), transparent 68%);
+            pointer-events: none;
+        }
+        .offer-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 12px;
+        }
+        .offer-title { font-size: 1.02rem; }
+        .offer-subtitle { color: var(--fantasy-muted); margin-top: 6px; line-height: 1.45; }
+        .offer-price {
+            font-family: inherit;
+            font-size: 2rem;
+            color: var(--fantasy-gold-soft);
+            margin-top: 18px;
+        }
+        .offer-price small { font-size: 0.85rem; color: var(--fantasy-muted); margin-left: 4px; }
+        .offer-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
+        .offer-chip {
+            padding: 6px 11px;
+            border-radius: 999px;
+            background: rgba(255,255,255,0.04);
+            border: 1px solid rgba(96, 165, 250, 0.12);
+            color: var(--fantasy-ink);
+            font-size: 0.82rem;
+        }
+        .offer-description { color: rgba(226, 232, 240, 0.62); font-size: 0.88rem; margin-top: 12px; min-height: 2.8em; }
+        .offer-cta { margin-top: 20px; }
+
+        .text-base-content\/50, .text-base-content\/40, .text-base-content\/60 { color: var(--fantasy-muted) !important; }
+
+        @media (min-width: 1024px) {
+            .subscription-layout { grid-template-columns: 220px minmax(0, 1fr); gap: 32px; }
+            .subscription-side-shell { position: sticky; top: 104px; height: fit-content; }
+            .subscription-side-nav { flex-direction: column; overflow: visible; }
+            .subscription-nav-item { min-width: 0; }
+            .plan-overview-grid { grid-template-columns: minmax(0, 1.08fr) minmax(300px, 0.92fr); }
+        }
+
+        @media (max-width: 767px) {
+            .plan-detail-header,
+            .plan-detail-body { padding: 20px; }
+            .plan-price-hero .price-num { font-size: 2.7rem; }
+            .section-title { font-size: 1.3rem; }
+        }
+    </style>
 </head>
-<body class="bg-base-300 min-h-screen">
+<body class="fantasy-body min-h-screen">
     <!-- Navbar -->
-    <div class="navbar bg-base-100 shadow-lg">
+    <div class="navbar fantasy-nav sticky top-0 z-50">
         <div class="flex-1">
             <a class="btn btn-ghost text-xl text-primary font-bold" href="/">TikTok Monitor</a>
-            <ul id="global-top-nav" class="menu menu-horizontal gap-1 ml-2">
-                <!-- Populated by Auth.updateNavbar() -->
-            </ul>
+            <ul id="global-top-nav" class="menu menu-horizontal gap-1 ml-2"></ul>
         </div>
         <div class="flex-none">
             <ul id="auth-nav-area" class="menu menu-horizontal gap-1"></ul>
         </div>
     </div>
 
-    <div class="max-w-6xl mx-auto px-4 py-6">
-        <h1 class="text-2xl font-bold mb-6">用户中心</h1>
+    <div class="max-w-6xl mx-auto px-4 py-8">
+        <!-- Header -->
+        <div class="flex items-center justify-between mb-8">
+            <h1 class="text-2xl font-bold">用户中心</h1>
+            <a href="/monitor.html" class="btn btn-ghost btn-sm gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" /></svg>
+                返回监控中心
+            </a>
+        </div>
 
         <!-- Tabs -->
-        <div class="tabs tabs-boxed mb-6">
-            <a class="tab tab-active" onclick="switchTab('overview')">概览</a>
-            <a class="tab" onclick="switchTab('subscription')">我的订阅</a>
-            <a class="tab" onclick="switchTab('orders')">订单记录</a>
-            <a class="tab" onclick="switchTab('balance')">余额明细</a>
-            <a class="tab" onclick="switchTab('settings')">账号设置</a>
+        <div class="tabs tabs-bordered mb-8">
+            <a class="tab tab-lg tab-active" onclick="switchTab('overview', this)">概览</a>
+            <a id="main-tab-subscription" class="tab tab-lg" onclick="switchTab('subscription', this)">会员计划</a>
+            <a class="tab tab-lg" onclick="switchTab('orders', this)">订单记录</a>
+            <a class="tab tab-lg" onclick="switchTab('balance', this)">余额明细</a>
+            <a class="tab tab-lg" onclick="switchTab('settings', this)">账号设置</a>
         </div>
 
         <!-- Tab: Overview -->
         <div id="tab-overview" class="tab-content">
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-                <div class="stat bg-base-100 rounded-box shadow">
-                    <div class="stat-title">账户余额</div>
-                    <div class="stat-value text-primary" id="ov-balance">--</div>
-                    <div class="stat-actions">
-                        <button class="btn btn-sm btn-primary" onclick="showRechargeModal()">充值</button>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body p-5">
+                        <p class="text-sm text-base-content/50 mb-1">账户余额</p>
+                        <p class="text-3xl font-bold text-primary stat-num" id="ov-balance">--</p>
+                        <div class="mt-3">
+                            <button class="btn btn-primary btn-sm" onclick="showRechargeModal()">充值</button>
+                        </div>
                     </div>
                 </div>
-                <div class="stat bg-base-100 rounded-box shadow">
-                    <div class="stat-title">当前套餐</div>
-                    <div class="stat-value text-secondary" id="ov-plan">--</div>
-                    <div class="stat-desc" id="ov-plan-expire"></div>
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body p-5">
+                        <p class="text-sm text-base-content/50 mb-1">当前套餐</p>
+                        <p class="text-3xl font-bold text-secondary" id="ov-plan">--</p>
+                        <p class="text-sm text-base-content/40 mt-1" id="ov-plan-expire"></p>
+                    </div>
                 </div>
-                <div class="stat bg-base-100 rounded-box shadow">
-                    <div class="stat-title">房间配额</div>
-                    <div class="stat-value" id="ov-rooms">--</div>
-                    <div class="stat-desc" id="ov-rooms-detail"></div>
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body p-5">
+                        <p class="text-sm text-base-content/50 mb-1">房间配额</p>
+                        <p class="text-3xl font-bold stat-num" id="ov-rooms">--</p>
+                        <p class="text-sm text-base-content/40 mt-1" id="ov-rooms-detail"></p>
+                    </div>
+                </div>
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body p-5">
+                        <p class="text-sm text-base-content/50 mb-1">AI 分析额度</p>
+                        <p class="text-3xl font-bold text-accent stat-num" id="ov-ai-credits">--</p>
+                        <p class="text-sm text-base-content/40 mt-1" id="ov-ai-detail"></p>
+                    </div>
                 </div>
             </div>
         </div>
 
         <!-- Tab: Subscription -->
         <div id="tab-subscription" class="tab-content hidden">
-            <!-- Current subscription -->
-            <div class="card bg-base-100 shadow mb-6">
-                <div class="card-body">
-                    <h3 class="card-title">当前订阅</h3>
-                    <div id="current-sub-info">加载中...</div>
+            <div class="subscription-layout">
+                <aside class="subscription-side-shell">
+                    <div class="subscription-side-nav">
+                        <button class="subscription-nav-item active" data-section="subscription-current" onclick="scrollToSubscriptionSection('subscription-current')">
+                            <span class="subscription-nav-index">01</span>
+                            <div>
+                                <strong>当前套餐</strong>
+                                <em>查看当前状态</em>
+                            </div>
+                        </button>
+                        <button class="subscription-nav-item" data-section="subscription-plans" onclick="scrollToSubscriptionSection('subscription-plans')">
+                            <span class="subscription-nav-index">02</span>
+                            <div>
+                                <strong>会员计划</strong>
+                                <em>基础版、专业版、企业版</em>
+                            </div>
+                        </button>
+                        <button class="subscription-nav-item" data-section="subscription-addons" onclick="scrollToSubscriptionSection('subscription-addons')">
+                            <span class="subscription-nav-index">03</span>
+                            <div>
+                                <strong>房间扩容包</strong>
+                                <em>按需增加房间数</em>
+                            </div>
+                        </button>
+                        <button class="subscription-nav-item" data-section="subscription-ai-credits" onclick="scrollToSubscriptionSection('subscription-ai-credits')">
+                            <span class="subscription-nav-index">04</span>
+                            <div>
+                                <strong>AI 分析额度包</strong>
+                                <em>按需补充分析次数</em>
+                            </div>
+                        </button>
+                    </div>
+                </aside>
+
+                <div class="subscription-main">
+                    <section id="subscription-current" class="subscription-section">
+                        <div class="card current-sub-card">
+                            <div class="card-body p-5">
+                                <p class="section-kicker">Current</p>
+                                <h3 class="section-title">当前订阅</h3>
+                                <p class="section-lead">查看当前套餐、到期时间和额度。</p>
+                                <div id="current-sub-info" class="text-base-content/60 mt-4">加载中...</div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <section id="subscription-plans" class="subscription-section">
+                        <p class="section-kicker">Plans</p>
+                        <h3 class="section-title">会员计划</h3>
+
+                        <div id="plan-tabs" class="plan-selector-bar"></div>
+                        <div id="plan-detail" class="plan-detail-wrap">
+                            <div class="text-center py-12 text-base-content/40">加载中...</div>
+                        </div>
+                    </section>
+
+                    <section id="subscription-addons" class="subscription-section">
+                        <p class="section-kicker">Add-ons</p>
+                        <h3 class="section-title">房间扩容包</h3>
+
+                        <div id="addons-grid" class="offer-grid">加载中...</div>
+                    </section>
+
+                    <section id="subscription-ai-credits" class="subscription-section">
+                        <p class="section-kicker">AI Credits</p>
+                        <h3 class="section-title">AI 分析额度包</h3>
+
+                        <div id="ai-credits-grid" class="offer-grid">加载中...</div>
+                    </section>
                 </div>
             </div>
-            <!-- Available plans -->
-            <h3 class="text-lg font-bold mb-4">可用套餐</h3>
-            <div id="plans-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">加载中...</div>
-            <!-- Addon packages -->
-            <h3 class="text-lg font-bold mb-4">房间扩容包</h3>
-            <div id="addons-grid" class="grid grid-cols-1 md:grid-cols-3 gap-6">加载中...</div>
         </div>
 
         <!-- Tab: Orders -->
         <div id="tab-orders" class="tab-content hidden">
             <div class="card bg-base-100 shadow">
-                <div class="card-body">
-                    <h3 class="card-title">订单记录</h3>
+                <div class="card-body p-5">
+                    <div class="flex items-center justify-between mb-4">
+                        <h3 class="font-bold text-lg">订单记录</h3>
+                        <div class="join">
+                            <input type="text" id="order-search" class="input input-bordered input-sm join-item w-48" placeholder="搜索订单号..." onkeyup="if(event.key==='Enter') searchOrders()">
+                            <button class="btn btn-sm btn-primary join-item" onclick="searchOrders()">搜索</button>
+                            <button class="btn btn-sm btn-ghost join-item" onclick="clearOrderSearch()">清除</button>
+                        </div>
+                    </div>
                     <div class="overflow-x-auto">
-                        <table class="table table-zebra">
-                            <thead><tr><th>订单号</th><th>类型</th><th>内容</th><th>金额</th><th>状态</th><th>时间</th></tr></thead>
+                        <table class="table table-sm">
+                            <thead><tr class="bg-base-200"><th>订单号</th><th>类型</th><th>内容</th><th>金额</th><th>状态</th><th>时间</th></tr></thead>
                             <tbody id="orders-tbody"></tbody>
                         </table>
                     </div>
-                    <div id="orders-pagination" class="flex justify-center mt-4"></div>
+                    <div id="orders-pagination" class="flex justify-center items-center gap-2 mt-4"></div>
                 </div>
             </div>
         </div>
@@ -93,15 +653,15 @@
         <!-- Tab: Balance -->
         <div id="tab-balance" class="tab-content hidden">
             <div class="card bg-base-100 shadow">
-                <div class="card-body">
-                    <h3 class="card-title">余额明细</h3>
+                <div class="card-body p-5">
+                    <h3 class="font-bold text-lg mb-4">余额明细</h3>
                     <div class="overflow-x-auto">
-                        <table class="table table-zebra">
-                            <thead><tr><th>类型</th><th>变动金额</th><th>变动前</th><th>变动后</th><th>备注</th><th>时间</th></tr></thead>
+                        <table class="table table-sm">
+                            <thead><tr class="bg-base-200"><th>类型</th><th>变动金额</th><th>变动前</th><th>变动后</th><th>备注</th><th>时间</th></tr></thead>
                             <tbody id="balance-tbody"></tbody>
                         </table>
                     </div>
-                    <div id="balance-pagination" class="flex justify-center mt-4"></div>
+                    <div id="balance-pagination" class="flex justify-center items-center gap-2 mt-4"></div>
                 </div>
             </div>
         </div>
@@ -109,42 +669,40 @@
         <!-- Tab: Settings -->
         <div id="tab-settings" class="tab-content hidden">
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <!-- Profile -->
                 <div class="card bg-base-100 shadow">
-                    <div class="card-body">
-                        <h3 class="card-title">个人信息</h3>
+                    <div class="card-body p-5">
+                        <h3 class="font-bold text-lg mb-4">个人信息</h3>
                         <div class="form-control mb-3">
-                            <label class="label"><span class="label-text">用户名</span></label>
-                            <input type="text" id="set-username" class="input input-bordered" disabled>
+                            <label class="label py-1"><span class="label-text">用户名</span></label>
+                            <input type="text" id="set-username" class="input input-bordered input-sm" disabled>
                         </div>
                         <div class="form-control mb-3">
-                            <label class="label"><span class="label-text">昵称</span></label>
-                            <input type="text" id="set-nickname" class="input input-bordered">
+                            <label class="label py-1"><span class="label-text">昵称</span></label>
+                            <input type="text" id="set-nickname" class="input input-bordered input-sm">
                         </div>
                         <div class="form-control mb-4">
-                            <label class="label"><span class="label-text">邮箱</span></label>
-                            <input type="email" id="set-email" class="input input-bordered" placeholder="选填">
+                            <label class="label py-1"><span class="label-text">邮箱 (选填)</span></label>
+                            <input type="email" id="set-email" class="input input-bordered input-sm" placeholder="选填">
                         </div>
-                        <button class="btn btn-primary" onclick="saveProfile()">保存修改</button>
+                        <button class="btn btn-primary btn-sm" onclick="saveProfile()">保存修改</button>
                     </div>
                 </div>
-                <!-- Password -->
                 <div class="card bg-base-100 shadow">
-                    <div class="card-body">
-                        <h3 class="card-title">修改密码</h3>
+                    <div class="card-body p-5">
+                        <h3 class="font-bold text-lg mb-4">修改密码</h3>
                         <div class="form-control mb-3">
-                            <label class="label"><span class="label-text">旧密码</span></label>
-                            <input type="password" id="old-password" class="input input-bordered">
+                            <label class="label py-1"><span class="label-text">旧密码</span></label>
+                            <input type="password" id="old-password" class="input input-bordered input-sm">
                         </div>
                         <div class="form-control mb-3">
-                            <label class="label"><span class="label-text">新密码</span></label>
-                            <input type="password" id="new-password" class="input input-bordered" minlength="6">
+                            <label class="label py-1"><span class="label-text">新密码</span></label>
+                            <input type="password" id="new-password" class="input input-bordered input-sm" minlength="6">
                         </div>
                         <div class="form-control mb-4">
-                            <label class="label"><span class="label-text">确认新密码</span></label>
-                            <input type="password" id="confirm-new-password" class="input input-bordered">
+                            <label class="label py-1"><span class="label-text">确认新密码</span></label>
+                            <input type="password" id="confirm-new-password" class="input input-bordered input-sm">
                         </div>
-                        <button class="btn btn-warning" onclick="changePassword()">修改密码</button>
+                        <button class="btn btn-warning btn-sm" onclick="changePassword()">修改密码</button>
                     </div>
                 </div>
             </div>
@@ -157,17 +715,17 @@
             <h3 class="font-bold text-lg" id="purchase-title">确认购买</h3>
             <p class="py-4" id="purchase-detail"></p>
             <div class="modal-action">
-                <button class="btn" onclick="document.getElementById('purchaseModal').close()">取消</button>
-                <button class="btn btn-primary" id="purchase-confirm-btn" onclick="confirmPurchase()">确认支付</button>
+                <button class="btn btn-sm" onclick="document.getElementById('purchaseModal').close()">取消</button>
+                <button class="btn btn-sm btn-primary" id="purchase-confirm-btn" onclick="confirmPurchase()">确认支付</button>
             </div>
         </div>
     </dialog>
 
     <!-- Recharge modal -->
     <dialog id="rechargeModal" class="modal">
-        <div class="modal-box">
+        <div class="modal-box max-w-3xl">
             <h3 class="font-bold text-lg">余额充值</h3>
-            <p class="text-sm text-base-content/60 mt-2">请联系管理员进行充值操作，或使用以下充值码：</p>
+            <p class="text-sm text-base-content/60 mt-2" id="recharge-modal-desc">请选择充值金额与支付方式</p>
             <div class="form-control w-full mt-4">
                 <label class="label"><span class="label-text">充值金额</span></label>
                 <div class="grid grid-cols-3 gap-2">
@@ -176,14 +734,53 @@
                     <button class="btn btn-outline btn-sm" onclick="setRechargeAmount(200)">¥200</button>
                     <button class="btn btn-outline btn-sm" onclick="setRechargeAmount(500)">¥500</button>
                     <button class="btn btn-outline btn-sm" onclick="setRechargeAmount(1000)">¥1000</button>
-                    <input type="number" id="recharge-amount" class="input input-bordered input-sm" placeholder="自定义" min="1">
+                    <input type="number" id="recharge-amount" class="input input-bordered input-sm" placeholder="自定义" min="1" step="1">
+                </div>
+                <label class="label"><span class="label-text-alt text-base-content/50" id="recharge-min-tip">不同通道金额范围可能不同，请以下方说明为准</span></label>
+            </div>
+            <div id="recharge-loading" class="py-8 text-center hidden">
+                <span class="loading loading-spinner loading-lg"></span>
+                <p class="mt-3 text-sm text-base-content/60">正在加载支付通道...</p>
+            </div>
+            <div id="recharge-empty-state" class="alert alert-info mt-4 text-sm hidden">
+                <span>目前仅支持联系管理员人工充值。请将充值金额和您的用户名告知管理员。</span>
+            </div>
+            <div id="recharge-options-wrap" class="mt-4 hidden">
+                <div class="divider text-xs opacity-60">可用支付通道</div>
+                <div id="recharge-options" class="grid grid-cols-1 md:grid-cols-2 gap-3"></div>
+            </div>
+            <div id="recharge-result" class="mt-4 hidden">
+                <div class="divider text-xs opacity-60">支付信息</div>
+                <div class="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-4">
+                    <div class="flex flex-col items-center gap-3">
+                        <div class="w-56 h-56 rounded-box border border-base-300 bg-base-200 flex items-center justify-center overflow-hidden">
+                            <img id="recharge-qr-image" class="w-full h-full object-contain hidden" alt="支付二维码">
+                            <canvas id="recharge-qr-canvas" class="hidden"></canvas>
+                            <div id="recharge-qr-empty" class="text-sm text-base-content/40">暂无二维码</div>
+                        </div>
+                        <a id="recharge-open-link" class="btn btn-outline btn-sm hidden" href="#" target="_blank" rel="noopener noreferrer">打开支付页</a>
+                    </div>
+                    <div class="space-y-3">
+                        <div class="stats stats-vertical lg:stats-horizontal shadow bg-base-200 w-full">
+                            <div class="stat p-3"><div class="stat-title">订单号</div><div class="stat-value text-sm break-all" id="recharge-order-no">-</div></div>
+                            <div class="stat p-3"><div class="stat-title">金额</div><div class="stat-value text-lg" id="recharge-order-amount">-</div></div>
+                            <div class="stat p-3"><div class="stat-title">状态</div><div class="stat-value text-lg" id="recharge-order-status">-</div></div>
+                        </div>
+                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+                            <div class="rounded-box border border-base-300 p-3"><span class="text-base-content/50">通道类型</span><div class="font-medium mt-1" id="recharge-order-label">-</div></div>
+                            <div class="rounded-box border border-base-300 p-3"><span class="text-base-content/50">附加金额</span><div class="font-medium mt-1" id="recharge-order-extra">-</div></div>
+                        </div>
+                        <div class="alert alert-info text-sm" id="recharge-instruction"><span>请按照页面指引完成支付。</span></div>
+                        <div class="flex gap-2 flex-wrap">
+                            <button class="btn btn-sm btn-primary" onclick="checkRechargeOrderStatus()">查询状态</button>
+                            <button class="btn btn-sm btn-ghost" onclick="copyRechargeOrderNo()">复制订单号</button>
+                            <button class="btn btn-sm btn-ghost" onclick="resetRechargeSelection()">重新选择</button>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div class="alert alert-info mt-4">
-                <span class="text-sm">目前仅支持联系管理员人工充值。请将充值金额和您的用户名告知管理员。</span>
-            </div>
             <div class="modal-action">
-                <button class="btn" onclick="document.getElementById('rechargeModal').close()">关闭</button>
+                <button class="btn btn-sm" onclick="document.getElementById('rechargeModal').close()">关闭</button>
             </div>
         </div>
     </dialog>
@@ -191,31 +788,41 @@
     <script>
     let currentTab = 'overview';
     let pendingPurchase = null;
+    let planPeriod = 'monthly';
+    let plansCache = null;
+    let currentSubCache = null;
+    let orderSearchQuery = '';
+    let rechargeOptionsCache = [];
+    let currentRechargeOrder = null;
 
-    function showRechargeModal() {
+    async function showRechargeModal() {
+        resetRechargeSelection(true);
         document.getElementById('rechargeModal').showModal();
+        await loadRechargeOptions();
     }
+    function setRechargeAmount(amount) { document.getElementById('recharge-amount').value = amount; }
 
-    function setRechargeAmount(amount) {
-        document.getElementById('recharge-amount').value = amount;
-    }
-
-    // Init
     document.addEventListener('DOMContentLoaded', () => {
         if (!Auth.requireAuth()) return;
         Auth.updateNavbar();
         loadOverview();
+        window.addEventListener('scroll', updateSubscriptionSideNav, { passive: true });
+        window.addEventListener('resize', updateSubscriptionSideNav);
+        document.getElementById('rechargeModal')?.addEventListener('close', () => resetRechargeSelection(true));
     });
 
-    function switchTab(tab) {
+    function switchTab(tab, el) {
         currentTab = tab;
         document.querySelectorAll('.tab-content').forEach(el => el.classList.add('hidden'));
         document.getElementById(`tab-${tab}`).classList.remove('hidden');
         document.querySelectorAll('.tabs .tab').forEach(el => el.classList.remove('tab-active'));
-        event.target.classList.add('tab-active');
+        if (el) el.classList.add('tab-active');
 
         if (tab === 'overview') loadOverview();
-        else if (tab === 'subscription') loadSubscription();
+        else if (tab === 'subscription') {
+            loadSubscription();
+            requestAnimationFrame(updateSubscriptionSideNav);
+        }
         else if (tab === 'orders') loadOrders(1);
         else if (tab === 'balance') loadBalanceLogs(1);
         else if (tab === 'settings') loadSettings();
@@ -232,99 +839,464 @@
 
             if (quota.subscription) {
                 document.getElementById('ov-plan').textContent = quota.subscription.planName;
-                const endAt = new Date(quota.subscription.endAt);
-                document.getElementById('ov-plan-expire').textContent = `有效期至 ${endAt.toLocaleDateString('zh-CN')}`;
+                document.getElementById('ov-plan-expire').textContent = `有效期至 ${new Date(quota.subscription.endDate).toLocaleDateString('zh-CN')}`;
             } else {
                 document.getElementById('ov-plan').textContent = '未订阅';
                 document.getElementById('ov-plan-expire').textContent = '购买套餐以开始使用';
             }
 
-            document.getElementById('ov-rooms').textContent = `${quota.used} / ${quota.totalLimit}`;
-            document.getElementById('ov-rooms-detail').textContent =
-                `套餐${quota.subRooms} + 扩容${quota.addonRooms} + 默认${quota.defaultRooms}`;
+            const roomsText = quota.isUnlimited ? `${quota.used} / 无限` : `${quota.used} / ${quota.totalLimit}`;
+            document.getElementById('ov-rooms').textContent = roomsText;
+            if (quota.isUnlimited) {
+                document.getElementById('ov-rooms-detail').textContent = '无限房间';
+            } else {
+                const roomParts = [];
+                if (Number(quota.subRooms || 0) > 0) roomParts.push(`套餐${quota.subRooms}`);
+                if (Number(quota.addonRooms || 0) > 0) roomParts.push(`扩容${quota.addonRooms}`);
+                if (Number(quota.defaultRooms || 0) > 0) roomParts.push(`默认${quota.defaultRooms}`);
+                document.getElementById('ov-rooms-detail').textContent = roomParts.join(' + ') || '暂无额度';
+            }
+
+            const aiRemaining = Number(user.aiCreditsRemaining || 0);
+            const aiUsed = Number(user.aiCreditsUsed || 0);
+            const aiMonthly = Number(user.aiCreditsMonthly || 0);
+            document.getElementById('ov-ai-credits').textContent = `${aiRemaining} 次`;
+            document.getElementById('ov-ai-detail').textContent = `已用 ${aiUsed} 次 | 月配额 ${aiMonthly}`;
         } catch (err) {
             console.error('Load overview error:', err);
         }
     }
 
+    let selectedPlanIndex = 0;
+    const SUBSCRIPTION_SECTION_IDS = [
+        'subscription-current',
+        'subscription-plans',
+        'subscription-addons',
+        'subscription-ai-credits'
+    ];
+    const PLAN_LORE_MAP = {
+        basic: {
+            icon: 'B',
+            kicker: 'Basic',
+            tagline: '适合个人或小团队。',
+            introTitle: '基础版',
+            introText: '提供基础房间数量和 AI 分析额度。',
+            audienceTitle: '适用场景',
+            audienceText: '适合起步阶段或轻量使用。',
+            tags: ['入门', '基础']
+        },
+        pro: {
+            icon: 'P',
+            kicker: 'Pro',
+            tagline: '适合常规运营团队。',
+            introTitle: '专业版',
+            introText: '提供更高房间上限和更充足的 AI 分析额度。',
+            audienceTitle: '适用场景',
+            audienceText: '适合稳定运营和多账号对比分析。',
+            tags: ['主力', '均衡']
+        },
+        enterprise: {
+            icon: 'E',
+            kicker: 'Enterprise',
+            tagline: '适合高频和大规模使用。',
+            introTitle: '企业版',
+            introText: '提供更大容量，适合多团队和复杂场景。',
+            audienceTitle: '适用场景',
+            audienceText: '适合品牌、MCN 和多业务线协作。',
+            tags: ['高容量', '团队']
+        }
+    };
+
+    function escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function formatMoney(value) {
+        const amount = Number(value || 0);
+        if (!Number.isFinite(amount)) return '0';
+        return Number.isInteger(amount) ? String(amount) : amount.toFixed(2);
+    }
+
+    function formatDateCN(value) {
+        if (!value) return '--';
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) return '--';
+        return date.toLocaleDateString('zh-CN');
+    }
+
+    function formatRoomLimit(value) {
+        const roomLimit = Number(value);
+        return roomLimit === -1 ? '无限' : String(Number.isFinite(roomLimit) ? roomLimit : 0);
+    }
+
+    function normalizeFlags(rawFlags) {
+        if (!rawFlags) return {};
+        if (typeof rawFlags === 'string') {
+            try {
+                return JSON.parse(rawFlags);
+            } catch (err) {
+                console.warn('Parse feature flags error:', err);
+                return {};
+            }
+        }
+        return rawFlags;
+    }
+
+    function getPlanLore(plan, index = 0) {
+        const key = `${plan?.code || plan?.planCode || plan?.name || ''}`.toLowerCase();
+        if (key.includes('basic') || key.includes('基础')) return PLAN_LORE_MAP.basic;
+        if (key.includes('pro') || key.includes('专业')) return PLAN_LORE_MAP.pro;
+        if (key.includes('enterprise') || key.includes('企业')) return PLAN_LORE_MAP.enterprise;
+        return [PLAN_LORE_MAP.basic, PLAN_LORE_MAP.pro, PLAN_LORE_MAP.enterprise][index % 3];
+    }
+
+    function hasFlag(flags, ...keys) {
+        return keys.some(key => Boolean(flags?.[key]));
+    }
+
+    function scrollToSubscriptionSection(sectionId) {
+        const section = document.getElementById(sectionId);
+        if (!section) return;
+        updateSubscriptionSideNav(sectionId);
+        section.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function updateSubscriptionSideNav(forcedSectionId) {
+        if (currentTab !== 'subscription') return;
+        const items = Array.from(document.querySelectorAll('.subscription-nav-item'));
+        if (!items.length) return;
+
+        let activeSectionId = typeof forcedSectionId === 'string' ? forcedSectionId : null;
+        if (!activeSectionId) {
+            const candidates = SUBSCRIPTION_SECTION_IDS
+                .map(id => document.getElementById(id))
+                .filter(Boolean);
+
+            activeSectionId = candidates[0]?.id || null;
+            const threshold = 180;
+            for (const section of candidates) {
+                const rect = section.getBoundingClientRect();
+                if (rect.top <= threshold) {
+                    activeSectionId = section.id;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        items.forEach(item => {
+            item.classList.toggle('active', item.dataset.section === activeSectionId);
+        });
+    }
+
+    function renderPlanTabs(plans, currentPlanId) {
+        const tabs = document.getElementById('plan-tabs');
+        tabs.innerHTML = plans.map((plan, index) => {
+            const lore = getPlanLore(plan, index);
+            const isCurrent = Number(plan.id) === Number(currentPlanId);
+            const isActive = index === selectedPlanIndex;
+            return `
+                <div class="plan-selector-item ${isActive ? 'plan-sel-active' : ''}" onclick="selectPlanTab(${index})">
+                    ${isCurrent ? '<span class="plan-sel-badge"><span class="badge badge-primary badge-sm">当前</span></span>' : ''}
+                    <div class="plan-selector-top">
+                        <div class="plan-selector-crest">${lore.icon}</div>
+                        <div class="plan-sel-price">¥${formatMoney(plan.priceMonthly)}/月</div>
+                    </div>
+                    <div class="plan-selector-name">${escapeHtml(plan.name)}</div>
+                    <div class="plan-selector-note">${escapeHtml(lore.tagline)}</div>
+                </div>`;
+        }).join('');
+    }
+
+    function renderCurrentSubscription(subData) {
+        const subInfo = document.getElementById('current-sub-info');
+        const cycleNames = { monthly: '月付', quarterly: '季付', yearly: '年付', gift: '赠送' };
+
+        if (subData.subscription) {
+            const subscription = subData.subscription;
+            const endAt = new Date(subscription.endDate);
+            const daysLeft = Math.max(0, Math.ceil((endAt - new Date()) / (24 * 3600 * 1000)));
+            const roomLimitText = formatRoomLimit(subscription.planRoomLimit);
+            const usageText = subData.isUnlimited ? `${Number(subData.used || 0)} / 无限` : `${Number(subData.used || 0)} / ${formatRoomLimit(subData.totalLimit)}`;
+
+            subInfo.innerHTML = `
+                <div class="current-sub-banner">
+                    <span class="fantasy-pill"><strong>${escapeHtml(subscription.planName)}</strong></span>
+                    <span class="fantasy-pill">房间配额 <strong>${usageText}</strong></span>
+                    <span class="fantasy-pill">房间上限 <strong>${roomLimitText}</strong></span>
+                    <span class="fantasy-pill">${escapeHtml(cycleNames[subscription.billingCycle] || subscription.billingCycle)}</span>
+                    <span class="fantasy-pill">${formatDateCN(subscription.endDate)} 到期</span>
+                    <span class="fantasy-pill">剩余 <strong>${daysLeft}</strong> 天</span>
+                </div>`;
+            return;
+        }
+
+        const defaultRoomText = formatRoomLimit(subData.defaultRooms);
+        const totalRoomText = subData.isUnlimited ? '无限' : formatRoomLimit(subData.totalLimit);
+        subInfo.innerHTML = `
+            <div class="current-sub-banner">
+                <span class="fantasy-pill"><strong>未开通会员</strong></span>
+                <span class="fantasy-pill">默认房间 <strong>${defaultRoomText}</strong></span>
+                <span class="fantasy-pill">当前已用 <strong>${Number(subData.used || 0)}</strong></span>
+                <span class="fantasy-pill">总额度 <strong>${totalRoomText}</strong></span>
+            </div>`;
+    }
+
+    function renderAddonOffers(addons) {
+        const addonsGrid = document.getElementById('addons-grid');
+        if (!addons || addons.length === 0) {
+            addonsGrid.innerHTML = '<div class="plan-intro-card"><span class="mini-label">暂无数据</span><h4>当前没有可购买的扩容包</h4><p>如需更多房间，可联系管理员配置。</p></div>';
+            return;
+        }
+
+        addonsGrid.innerHTML = addons.map((addon, index) => {
+            const tierText = Number(addon.roomCount || 0) >= 20
+                ? '适合大规模监控。'
+                : Number(addon.roomCount || 0) >= 10
+                    ? '适合常规扩容。'
+                    : '适合小幅补充。';
+            const altPrices = [
+                Number(addon.priceQuarterly || 0) > 0 ? `<span class="offer-chip">季付 ¥${formatMoney(addon.priceQuarterly)}</span>` : '',
+                Number(addon.priceAnnual || 0) > 0 ? `<span class="offer-chip">年付 ¥${formatMoney(addon.priceAnnual)}</span>` : ''
+            ].filter(Boolean).join('');
+            return `
+                <div class="card fantasy-offer-card plan-card">
+                    <div class="card-body p-5">
+                        <div class="offer-top">
+                            <div>
+                                <div class="mini-label">扩容包</div>
+                                <div class="offer-title">${escapeHtml(addon.name)}</div>
+                                <div class="offer-subtitle">增加 ${Number(addon.roomCount || 0)} 个监控房间</div>
+                            </div>
+                            <span class="offer-chip">+${Number(addon.roomCount || 0)} 房间</span>
+                        </div>
+                        <div class="offer-price">¥${formatMoney(addon.priceMonthly)}<small>/月</small></div>
+                        <div class="offer-meta">
+                            <span class="offer-chip">月付</span>
+                            ${altPrices}
+                        </div>
+                        <div class="offer-description">${escapeHtml(tierText)}</div>
+                        <button class="btn fantasy-cta w-full offer-cta" onclick='initPurchase("addon", ${Number(addon.id)}, ${JSON.stringify(addon.name)}, ${Number(addon.priceMonthly || 0)})'>购买</button>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    function renderAiCreditOffers(packages) {
+        const aiGrid = document.getElementById('ai-credits-grid');
+        if (!packages || packages.length === 0) {
+            aiGrid.innerHTML = '<div class="plan-intro-card"><span class="mini-label">暂无数据</span><h4>当前没有可购买的 AI 额度包</h4><p>如需更多分析次数，可联系管理员配置。</p></div>';
+            return;
+        }
+
+        aiGrid.innerHTML = packages.map((pkg, index) => {
+            const priceYuan = Number(pkg.priceCents || 0) / 100;
+            const defaultDescription = Number(pkg.credits || 0) >= 1000
+                ? '适合高频分析。'
+                : Number(pkg.credits || 0) >= 300
+                    ? '适合活动期间补充。'
+                    : '适合临时补充。';
+            return `
+                <div class="card fantasy-offer-card plan-card">
+                    <div class="card-body p-5">
+                        <div class="offer-top">
+                            <div>
+                                <div class="mini-label">AI 额度包</div>
+                                <div class="offer-title">${escapeHtml(pkg.name)}</div>
+                                <div class="offer-subtitle">${Number(pkg.credits || 0)} 次 AI 分析</div>
+                            </div>
+                            <span class="offer-chip">${Number(pkg.credits || 0)} 次</span>
+                        </div>
+                        <div class="offer-price">¥${formatMoney(priceYuan)}<small>/包</small></div>
+                        <div class="offer-meta">
+                            <span class="offer-chip">即时到账</span>
+                        </div>
+                        <div class="offer-description">${escapeHtml(pkg.description || defaultDescription)}</div>
+                        <button class="btn fantasy-cta w-full offer-cta" onclick='initPurchase("ai_credits", ${Number(pkg.id)}, ${JSON.stringify(pkg.name)}, ${JSON.stringify(formatMoney(priceYuan))})'>购买</button>
+                    </div>
+                </div>`;
+        }).join('');
+    }
+
+    function selectPlanTab(idx) {
+        selectedPlanIndex = idx;
+        renderPlanDetail();
+        updateSubscriptionSideNav('subscription-plans');
+    }
+
+    function setPlanPeriod(period) {
+        planPeriod = period;
+        renderPlanDetail();
+    }
+
     async function loadSubscription() {
         try {
-            // Current subscription
             const subRes = await Auth.apiFetch('/api/user/subscription');
             const subData = await subRes.json();
+            currentSubCache = subData;
+            renderCurrentSubscription(subData);
 
-            const subInfo = document.getElementById('current-sub-info');
-            if (subData.subscription) {
-                const s = subData.subscription;
-                const endAt = new Date(s.endAt);
-                const cycleNames = { monthly: '月付', quarterly: '季付', yearly: '年付' };
-                subInfo.innerHTML = `
-                    <div class="flex gap-4 items-center">
-                        <span class="badge badge-primary badge-lg">${s.planName}</span>
-                        <span>房间上限: ${s.roomLimit}</span>
-                        <span>计费周期: ${cycleNames[s.billingCycle] || s.billingCycle}</span>
-                        <span>到期: ${endAt.toLocaleDateString('zh-CN')}</span>
-                    </div>
-                    <div class="mt-2 text-sm text-base-content/60">
-                        已用 ${subData.used} / ${subData.totalLimit} 房间 (含扩容包 ${subData.addonRooms} 间)
-                    </div>`;
-            } else {
-                subInfo.innerHTML = '<p class="text-base-content/60">暂无有效订阅</p>';
-            }
+            const [plansRes, addonsRes, aiRes] = await Promise.all([
+                Auth.apiFetch('/api/subscription/plans'),
+                Auth.apiFetch('/api/subscription/addons'),
+                Auth.apiFetch('/api/subscription/ai-credit-packages')
+            ]);
+            const [plansData, addonsData, aiData] = await Promise.all([
+                plansRes.json(),
+                addonsRes.json(),
+                aiRes.json()
+            ]);
 
-            // Plans
-            const plansRes = await Auth.apiFetch('/api/subscription/plans');
-            const plansData = await plansRes.json();
-            const plansGrid = document.getElementById('plans-grid');
-            if (plansData.plans && plansData.plans.length > 0) {
-                plansGrid.innerHTML = plansData.plans.map(p => `
-                    <div class="card bg-base-100 border border-base-300">
-                        <div class="card-body">
-                            <h4 class="card-title">${p.name}</h4>
-                            <p class="text-sm text-base-content/60">最多 ${p.roomLimit} 个监控房间</p>
-                            <div class="mt-3 space-y-2">
-                                <button class="btn btn-sm btn-outline btn-block" onclick="initPurchase('plan', ${p.id}, '${p.name} - 月付', ${p.priceMonthly}, 'monthly')">
-                                    月付 ¥${p.priceMonthly}
-                                </button>
-                                <button class="btn btn-sm btn-outline btn-block" onclick="initPurchase('plan', ${p.id}, '${p.name} - 季付', ${p.priceQuarterly}, 'quarterly')">
-                                    季付 ¥${p.priceQuarterly} <span class="badge badge-sm badge-success">省${Math.round((1 - p.priceQuarterly / (p.priceMonthly * 3)) * 100)}%</span>
-                                </button>
-                                <button class="btn btn-sm btn-primary btn-block" onclick="initPurchase('plan', ${p.id}, '${p.name} - 年付', ${p.priceAnnual}, 'yearly')">
-                                    年付 ¥${p.priceAnnual} <span class="badge badge-sm badge-success">省${Math.round((1 - p.priceAnnual / (p.priceMonthly * 12)) * 100)}%</span>
-                                </button>
-                            </div>
-                        </div>
-                    </div>`).join('');
-            } else {
-                plansGrid.innerHTML = '<p class="text-base-content/60">暂无可用套餐</p>';
-            }
-
-            // Addons
-            const addonsRes = await Auth.apiFetch('/api/subscription/addons');
-            const addonsData = await addonsRes.json();
-            const addonsGrid = document.getElementById('addons-grid');
-            if (addonsData.addons && addonsData.addons.length > 0) {
-                addonsGrid.innerHTML = addonsData.addons.map(a => `
-                    <div class="card bg-base-100 border border-base-300">
-                        <div class="card-body">
-                            <h4 class="card-title">${a.name}</h4>
-                            <p class="text-sm text-base-content/60">增加 ${a.roomCount} 个房间</p>
-                            <p class="text-lg font-bold mt-2">¥${a.price}</p>
-                            <button class="btn btn-primary btn-sm mt-2" onclick="initPurchase('addon', ${a.id}, '${a.name}', ${a.price})">购买</button>
-                        </div>
-                    </div>`).join('');
-            } else {
-                addonsGrid.innerHTML = '<p class="text-base-content/60">暂无可用扩容包</p>';
-            }
+            plansCache = plansData.plans || [];
+            renderPlans(plansCache, subData);
+            renderAddonOffers(addonsData.addons || []);
+            renderAiCreditOffers(aiData.packages || []);
+            requestAnimationFrame(updateSubscriptionSideNav);
         } catch (err) {
             console.error('Load subscription error:', err);
         }
     }
 
+    function renderPlans(plans, subData) {
+        if (!plans || plans.length === 0) {
+            document.getElementById('plan-tabs').innerHTML = '';
+            document.getElementById('plan-detail').innerHTML = '<div class="text-center py-12 text-base-content/40">暂无可用计划</div>';
+            return;
+        }
+
+        const currentPlanId = subData?.subscription?.planId ? Number(subData.subscription.planId) : null;
+        if (currentPlanId) {
+            const currentIndex = plans.findIndex(plan => Number(plan.id) === currentPlanId);
+            if (currentIndex >= 0) selectedPlanIndex = currentIndex;
+        } else if (selectedPlanIndex >= plans.length) {
+            selectedPlanIndex = Math.min(1, plans.length - 1);
+        }
+        if (selectedPlanIndex < 0) selectedPlanIndex = 0;
+
+        renderPlanTabs(plans, currentPlanId);
+        renderPlanDetail();
+    }
+
+    function renderPlanDetail() {
+        const plans = plansCache;
+        const subData = currentSubCache;
+        if (!plans || plans.length === 0) return;
+
+        selectedPlanIndex = Math.max(0, Math.min(selectedPlanIndex, plans.length - 1));
+        const plan = plans[selectedPlanIndex];
+        const currentPlanId = subData?.subscription?.planId ? Number(subData.subscription.planId) : null;
+        const currentSortOrder = Number(subData?.subscription?.planSortOrder || 0);
+        const isCurrent = Number(plan.id) === currentPlanId;
+        const isDowngrade = Boolean(currentPlanId) && !isCurrent && Number(plan.sortOrder || 0) < currentSortOrder;
+        const roomText = formatRoomLimit(plan.roomLimit);
+        const dailyRoomCreateLimit = plan.dailyRoomCreateLimit !== undefined && plan.dailyRoomCreateLimit !== null
+            ? Number(plan.dailyRoomCreateLimit)
+            : -1;
+        const dailyCreateText = dailyRoomCreateLimit === -1 ? '不限' : String(dailyRoomCreateLimit);
+        const features = normalizeFlags(plan.featureFlags);
+        const aiCredits = Number(plan.aiCreditsMonthly || 0);
+        const lore = getPlanLore(plan, selectedPlanIndex);
+
+        const periods = [
+            { key: 'monthly', label: '月付', price: Number(plan.priceMonthly || 0), months: 1, cycle: 'monthly' },
+            Number(plan.priceQuarterly || 0) > 0 ? { key: 'quarterly', label: '季付', price: Number(plan.priceQuarterly || 0), months: 3, cycle: 'quarterly' } : null,
+            Number(plan.priceAnnual || 0) > 0 ? { key: 'yearly', label: '年付', price: Number(plan.priceAnnual || 0), months: 12, cycle: 'yearly' } : null
+        ].filter(Boolean).map(period => ({
+            ...period,
+            discount: period.months > 1 && Number(plan.priceMonthly || 0) > 0
+                ? Math.max(0, Math.round((1 - period.price / (Number(plan.priceMonthly || 0) * period.months)) * 100))
+                : 0
+        }));
+
+        if (!periods.some(period => period.key === planPeriod)) {
+            planPeriod = periods[0].key;
+        }
+
+        const activePeriod = periods.find(period => period.key === planPeriod) || periods[0];
+        const monthlyEquivalent = activePeriod.price / activePeriod.months;
+        const periodBar = periods.map(period => {
+            const isActive = planPeriod === period.key;
+            return `<div class="period-item ${isActive ? 'period-active' : ''}" onclick="setPlanPeriod('${period.key}')">
+                ${period.label}${period.discount > 0 ? `<span class="period-save">省${period.discount}%</span>` : ''}
+            </div>`;
+        }).join('');
+
+        const feat = (enabled, content) => `<li><span class="${enabled ? 'feat-on' : 'feat-off'}">${enabled ? '&#10003;' : '&#10007;'}</span><span class="${enabled ? '' : 'opacity-30'}">${content}</span></li>`;
+        const featureItems = [
+            feat(true, `<strong>${roomText}</strong> 个监控房间`),
+            feat(true, `每日可添加 <strong>${dailyCreateText}</strong> 次房间`),
+            feat(true, `AI 分析 <strong>${aiCredits}</strong> 次/月`),
+            feat(hasFlag(features, 'export', 'data_export'), '数据导出'),
+            feat(true, 'AI 用户分析'),
+            feat(hasFlag(features, 'priority_support', 'prioritySupport'), '优先支持')
+        ].join('');
+
+        let btnHtml;
+        if (isCurrent) {
+            btnHtml = '<button class="btn btn-lg w-full fantasy-disabled" disabled>当前计划</button>';
+        } else if (isDowngrade) {
+            btnHtml = '<button class="btn btn-lg w-full fantasy-disabled" disabled title="不支持降级，如需降级请联系客服">不可降级</button>';
+        } else {
+            const purchaseTitle = `${plan.name} · ${activePeriod.label}`;
+            btnHtml = `<button class="btn btn-lg w-full fantasy-cta" onclick='initPurchase("plan", ${Number(plan.id)}, ${JSON.stringify(purchaseTitle)}, ${Number(activePeriod.price)}, ${JSON.stringify(activePeriod.cycle)})'>${currentPlanId ? '升级到' : '购买'} ${escapeHtml(plan.name)}</button>`;
+        }
+
+        const planState = isCurrent ? '当前' : isDowngrade ? '不可降级' : currentPlanId ? '可升级' : '可购买';
+        const totalPriceText = activePeriod.months > 1
+            ? `${activePeriod.label} ¥${formatMoney(activePeriod.price)}${activePeriod.discount > 0 ? ` · 省 ${activePeriod.discount}%` : ''}`
+            : `月付 ¥${formatMoney(activePeriod.price)}`;
+
+        document.getElementById('plan-detail').innerHTML = `
+            <div class="plan-detail-header">
+                <div class="plan-detail-title">
+                    <div class="plan-kicker">${escapeHtml(lore.kicker)}</div>
+                    <div class="plan-title-row">
+                        <div class="plan-crest">${lore.icon}</div>
+                        <div>
+                            <div class="plan-title-main">${escapeHtml(plan.name)}</div>
+                            <div class="plan-narrative">${escapeHtml(lore.tagline)}</div>
+                        </div>
+                        ${isCurrent ? '<span class="badge badge-primary badge-sm">当前</span>' : ''}
+                    </div>
+                </div>
+                <span class="plan-room-pill">${roomText} 个房间</span>
+            </div>
+            <div class="plan-detail-body">
+                <div class="period-bar mb-5">${periodBar}</div>
+                <div class="plan-overview-grid">
+                    <div class="plan-price-hero">
+                        <div class="mini-label">价格</div>
+                        <div><span class="price-num stat-num">¥${formatMoney(monthlyEquivalent)}</span><span class="price-unit">/月</span></div>
+                        <div class="price-total">${totalPriceText}</div>
+                        <div class="offer-meta">
+                            <span class="offer-chip">${escapeHtml(planState)}</span>
+                            <span class="offer-chip">AI ${aiCredits} 次/月</span>
+                            <span class="offer-chip">每日可添加 ${dailyCreateText} 次房间</span>
+                        </div>
+                    </div>
+                    <div class="plan-intro-card">
+                        <span class="mini-label">说明</span>
+                        <h4>${escapeHtml(lore.introTitle)}</h4>
+                        <p>${escapeHtml(lore.introText)}</p>
+                        <div class="plan-intro-tags">${lore.tags.map(tag => `<span>${escapeHtml(tag)}</span>`).join('')}</div>
+                    </div>
+                </div>
+                <ul class="feature-grid mb-6">${featureItems}</ul>
+                ${btnHtml}
+            </div>`;
+
+        renderPlanTabs(plans, currentPlanId);
+    }
+
     function initPurchase(type, id, name, price, cycle) {
         pendingPurchase = { type, id, name, price, cycle };
         document.getElementById('purchase-title').textContent = `确认购买 - ${name}`;
-        document.getElementById('purchase-detail').textContent = `将从余额中扣除 ¥${price}`;
+        document.getElementById('purchase-detail').textContent = `将从余额中扣除 ¥${formatMoney(price)}`;
         document.getElementById('purchaseModal').showModal();
     }
 
@@ -332,41 +1304,36 @@
         if (!pendingPurchase) return;
         const btn = document.getElementById('purchase-confirm-btn');
         btn.classList.add('loading');
-
         try {
             let url, body;
             if (pendingPurchase.type === 'plan') {
                 url = '/api/subscription/purchase';
                 body = { planId: pendingPurchase.id, billingCycle: pendingPurchase.cycle };
+            } else if (pendingPurchase.type === 'ai_credits') {
+                url = '/api/subscription/purchase-ai-credits';
+                body = { packageId: pendingPurchase.id };
             } else {
                 url = '/api/subscription/purchase-addon';
                 body = { addonId: pendingPurchase.id };
             }
-
-            const res = await Auth.apiFetch(url, {
-                method: 'POST',
-                body: JSON.stringify(body)
-            });
+            const res = await Auth.apiFetch(url, { method: 'POST', body: JSON.stringify(body) });
             const data = await res.json();
             btn.classList.remove('loading');
             document.getElementById('purchaseModal').close();
-
             if (res.ok) {
-                alert('购买成功！');
-                loadSubscription();
-                // Refresh user data
-                const meRes = await Auth.apiFetch('/api/auth/me');
-                if (meRes.ok) {
-                    const meData = await meRes.json();
-                    Auth.setTokens(Auth.getAccessToken(), Auth.getRefreshToken(), meData.user);
+                if (data.upgrade) {
+                    alert(`升级成功！\n\n旧套餐: ${data.upgrade.oldPlan}\n新套餐: ${data.upgrade.newPlan}\n剩余天数抵扣: ¥${data.upgrade.remainingValue}\n实付: ¥${data.subscription?.price || pendingPurchase.price}`);
+                } else {
+                    alert('购买成功！');
                 }
+                loadSubscription();
+                loadOverview();
+                const meRes = await Auth.apiFetch('/api/auth/me');
+                if (meRes.ok) { const meData = await meRes.json(); Auth.setTokens(Auth.getAccessToken(), Auth.getRefreshToken(), meData.user); }
             } else {
                 alert(data.error || '购买失败');
             }
-        } catch (err) {
-            btn.classList.remove('loading');
-            alert('操作失败: ' + err.message);
-        }
+        } catch (err) { btn.classList.remove('loading'); alert('操作失败: ' + err.message); }
         pendingPurchase = null;
     }
 
@@ -374,31 +1341,43 @@
     const statusLabels = { paid: '已支付', pending: '待支付', cancelled: '已取消', refunded: '已退款' };
     const balanceTypeLabels = { recharge: '充值', purchase: '消费', refund: '退款', admin_adjust: '管理员调整' };
 
+    function searchOrders() {
+        orderSearchQuery = document.getElementById('order-search').value.trim();
+        loadOrders(1);
+    }
+
+    function clearOrderSearch() {
+        orderSearchQuery = '';
+        document.getElementById('order-search').value = '';
+        loadOrders(1);
+    }
+
     async function loadOrders(page) {
         try {
-            const res = await Auth.apiFetch(`/api/user/orders?page=${page}&limit=15`);
+            let url = `/api/user/orders?page=${page}&limit=15`;
+            if (orderSearchQuery) url += `&search=${encodeURIComponent(orderSearchQuery)}`;
+            const res = await Auth.apiFetch(url);
             const data = await res.json();
             const tbody = document.getElementById('orders-tbody');
 
             if (!data.orders || data.orders.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/60">暂无订单</td></tr>';
+                tbody.innerHTML = `<tr><td colspan="6" class="text-center text-base-content/50 py-8">${orderSearchQuery ? '未找到匹配的订单' : '暂无订单'}</td></tr>`;
+                document.getElementById('orders-pagination').innerHTML = '';
                 return;
             }
 
             tbody.innerHTML = data.orders.map(o => `
                 <tr>
-                    <td class="text-xs">${o.orderNo}</td>
-                    <td>${typeLabels[o.type] || o.type}</td>
-                    <td>${o.itemName || '-'}</td>
-                    <td class="font-mono">¥${parseFloat(o.amount).toFixed(2)}</td>
+                    <td class="text-xs font-mono">${o.orderNo}</td>
+                    <td><span class="badge badge-ghost badge-sm">${typeLabels[o.type] || o.type}</span></td>
+                    <td class="text-sm">${o.itemName || '-'}</td>
+                    <td class="font-mono stat-num">¥${parseFloat(o.amount).toFixed(2)}</td>
                     <td><span class="badge badge-sm ${o.status === 'paid' ? 'badge-success' : 'badge-ghost'}">${statusLabels[o.status] || o.status}</span></td>
-                    <td class="text-xs">${new Date(o.createdAt).toLocaleString('zh-CN')}</td>
+                    <td class="text-xs text-base-content/50">${new Date(o.createdAt).toLocaleString('zh-CN')}</td>
                 </tr>`).join('');
 
             renderPagination('orders-pagination', data.pagination, loadOrders);
-        } catch (err) {
-            console.error('Load orders error:', err);
-        }
+        } catch (err) { console.error('Load orders error:', err); }
     }
 
     async function loadBalanceLogs(page) {
@@ -408,39 +1387,312 @@
             const tbody = document.getElementById('balance-tbody');
 
             if (!data.logs || data.logs.length === 0) {
-                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/60">暂无记录</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/50 py-8">暂无记录</td></tr>';
+                document.getElementById('balance-pagination').innerHTML = '';
                 return;
             }
 
             tbody.innerHTML = data.logs.map(l => `
                 <tr>
-                    <td>${balanceTypeLabels[l.type] || l.type}</td>
-                    <td class="font-mono ${parseFloat(l.amount) >= 0 ? 'text-success' : 'text-error'}">${parseFloat(l.amount) >= 0 ? '+' : ''}${parseFloat(l.amount).toFixed(2)}</td>
-                    <td class="font-mono">¥${parseFloat(l.balanceBefore).toFixed(2)}</td>
-                    <td class="font-mono">¥${parseFloat(l.balanceAfter).toFixed(2)}</td>
+                    <td><span class="badge badge-ghost badge-sm">${balanceTypeLabels[l.type] || l.type}</span></td>
+                    <td class="font-mono stat-num ${parseFloat(l.amount) >= 0 ? 'text-success' : 'text-error'}">${parseFloat(l.amount) >= 0 ? '+' : ''}${parseFloat(l.amount).toFixed(2)}</td>
+                    <td class="font-mono stat-num text-sm">¥${parseFloat(l.balanceBefore).toFixed(2)}</td>
+                    <td class="font-mono stat-num text-sm">¥${parseFloat(l.balanceAfter).toFixed(2)}</td>
                     <td class="text-sm">${l.description || '-'}</td>
-                    <td class="text-xs">${new Date(l.createdAt).toLocaleString('zh-CN')}</td>
+                    <td class="text-xs text-base-content/50">${new Date(l.createdAt).toLocaleString('zh-CN')}</td>
                 </tr>`).join('');
 
             renderPagination('balance-pagination', data.pagination, loadBalanceLogs);
-        } catch (err) {
-            console.error('Load balance logs error:', err);
-        }
+        } catch (err) { console.error('Load balance logs error:', err); }
     }
 
     function renderPagination(containerId, pagination, loadFn) {
         const container = document.getElementById(containerId);
-        if (!pagination || pagination.total <= pagination.limit) {
-            container.innerHTML = '';
+        if (!pagination) { container.innerHTML = ''; return; }
+        const totalPages = Math.ceil(pagination.total / pagination.limit);
+        if (totalPages <= 1) {
+            container.innerHTML = `<span class="text-sm text-base-content/40">共 ${pagination.total} 条记录</span>`;
             return;
         }
-        const totalPages = Math.ceil(pagination.total / pagination.limit);
-        let html = '<div class="join">';
-        for (let i = 1; i <= totalPages && i <= 10; i++) {
-            html += `<button class="join-item btn btn-sm ${i === pagination.page ? 'btn-active' : ''}" onclick="(${loadFn.name})(${i})">${i}</button>`;
+        const p = pagination.page;
+        let html = `<span class="text-sm text-base-content/40 mr-2">共 ${pagination.total} 条</span><div class="join">`;
+        html += `<button class="join-item btn btn-xs" onclick="${loadFn.name}(1)" ${p <= 1 ? 'disabled' : ''}>«</button>`;
+        html += `<button class="join-item btn btn-xs" onclick="${loadFn.name}(${p-1})" ${p <= 1 ? 'disabled' : ''}>‹</button>`;
+
+        // Show page numbers with ellipsis
+        const start = Math.max(1, p - 2);
+        const end = Math.min(totalPages, p + 2);
+        if (start > 1) html += `<button class="join-item btn btn-xs" onclick="${loadFn.name}(1)">1</button>`;
+        if (start > 2) html += `<button class="join-item btn btn-xs btn-disabled">...</button>`;
+        for (let i = start; i <= end; i++) {
+            html += `<button class="join-item btn btn-xs ${i === p ? 'btn-active' : ''}" onclick="${loadFn.name}(${i})">${i}</button>`;
         }
+        if (end < totalPages - 1) html += `<button class="join-item btn btn-xs btn-disabled">...</button>`;
+        if (end < totalPages) html += `<button class="join-item btn btn-xs" onclick="${loadFn.name}(${totalPages})">${totalPages}</button>`;
+
+        html += `<button class="join-item btn btn-xs" onclick="${loadFn.name}(${p+1})" ${p >= totalPages ? 'disabled' : ''}>›</button>`;
+        html += `<button class="join-item btn btn-xs" onclick="${loadFn.name}(${totalPages})" ${p >= totalPages ? 'disabled' : ''}>»</button>`;
         html += '</div>';
         container.innerHTML = html;
+    }
+
+
+
+    function setRechargeLoading(loading, text = '正在加载支付通道...') {
+        const loadingEl = document.getElementById('recharge-loading');
+        const emptyEl = document.getElementById('recharge-empty-state');
+        const optionsWrap = document.getElementById('recharge-options-wrap');
+        if (loadingEl) {
+            loadingEl.classList.toggle('hidden', !loading);
+            const tip = loadingEl.querySelector('p');
+            if (tip) tip.textContent = text;
+        }
+        if (loading) {
+            emptyEl.classList.add('hidden');
+            optionsWrap.classList.add('hidden');
+        }
+    }
+
+    function getRechargeStatusMeta(status) {
+        const map = {
+            pending: { text: '待支付', cls: 'text-warning' },
+            paid: { text: '已支付', cls: 'text-success' },
+            cancelled: { text: '已取消', cls: 'text-base-content/50' },
+            failed: { text: '失败', cls: 'text-error' }
+        };
+        return map[status] || { text: status || '-', cls: 'text-base-content' };
+    }
+
+    function buildRechargeOptionLabel(option) {
+        if (option.label) return option.label;
+        const channelMap = { fixed_qr: '固定码', futong: '三方支付', bepusdt: '虚拟币支付' };
+        const methodMap = { wxpay: '微信', alipay: '支付宝', usdt: 'USDT' };
+        const channel = channelMap[option.channel] || option.channel;
+        const method = methodMap[option.method] || '';
+        return method && option.method !== 'usdt' ? `${channel} · ${method}` : channel;
+    }
+
+    function formatRechargeOptionRange(option) {
+        const minAmount = Number(option?.minAmount || 0);
+        const hasMax = option?.maxAmount !== null && option?.maxAmount !== undefined && option?.maxAmount !== '';
+        const maxAmount = hasMax ? Number(option.maxAmount) : null;
+        if (minAmount > 0 && maxAmount != null && Number.isFinite(maxAmount)) {
+            return `充值范围：¥${minAmount} - ¥${maxAmount}`;
+        }
+        if (minAmount > 0) {
+            return `最低充值金额：¥${minAmount}`;
+        }
+        if (maxAmount != null && Number.isFinite(maxAmount)) {
+            return `最高充值金额：¥${maxAmount}`;
+        }
+        return '金额范围以通道配置为准';
+    }
+
+    function findRechargeOption(optionKey) {
+        return rechargeOptionsCache.find(option => option.key === optionKey) || null;
+    }
+
+    function updateRechargeRangeSummary(options) {
+        const tip = document.getElementById('recharge-min-tip');
+        if (!tip) return;
+        if (!options || options.length === 0) {
+            tip.textContent = '不同通道金额范围可能不同，请以下方说明为准';
+            return;
+        }
+        const uniqueRanges = Array.from(new Set(options.map(option => `${option.minAmount || ''}-${option.maxAmount ?? ''}`)));
+        tip.textContent = uniqueRanges.length === 1
+            ? formatRechargeOptionRange(options[0])
+            : '不同通道金额范围不同，请以下方通道说明为准';
+    }
+
+    function renderRechargeOptions(options) {
+        const wrap = document.getElementById('recharge-options-wrap');
+        const container = document.getElementById('recharge-options');
+        const emptyEl = document.getElementById('recharge-empty-state');
+        if (!options || options.length === 0) {
+            wrap.classList.add('hidden');
+            emptyEl.classList.remove('hidden');
+            return;
+        }
+        emptyEl.classList.add('hidden');
+        wrap.classList.remove('hidden');
+        container.innerHTML = options.map(option => `
+            <button class="btn btn-outline justify-start h-auto py-3 px-4 text-left" onclick="createRechargeOrder('${option.key}')">
+                <span class="flex flex-col items-start">
+                    <span class="font-medium">${buildRechargeOptionLabel(option)}</span>
+                    <span class="text-xs text-base-content/50 mt-1">${formatRechargeOptionRange(option)}</span>
+                </span>
+            </button>
+        `).join('');
+    }
+
+    function getRechargeAmount() {
+        const amount = Math.round(Number(document.getElementById('recharge-amount').value || 0));
+        if (!Number.isFinite(amount) || amount <= 0) return 0;
+        return amount;
+    }
+
+    async function loadRechargeOptions() {
+        setRechargeLoading(true, '正在加载支付通道...');
+        try {
+            const res = await Auth.apiFetch('/api/payment/recharge/options');
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '加载失败');
+            rechargeOptionsCache = data.options || [];
+            updateRechargeRangeSummary(rechargeOptionsCache);
+            renderRechargeOptions(rechargeOptionsCache);
+        } catch (err) {
+            console.error('Load recharge options error:', err);
+            rechargeOptionsCache = [];
+            document.getElementById('recharge-empty-state').classList.remove('hidden');
+            updateRechargeRangeSummary([]);
+        } finally {
+            setRechargeLoading(false);
+        }
+    }
+
+    function resetRechargeQrPreview() {
+        const image = document.getElementById('recharge-qr-image');
+        const canvas = document.getElementById('recharge-qr-canvas');
+        const empty = document.getElementById('recharge-qr-empty');
+        image.classList.add('hidden');
+        image.removeAttribute('src');
+        canvas.classList.add('hidden');
+        empty.classList.remove('hidden');
+        const ctx = canvas.getContext('2d');
+        ctx.clearRect(0, 0, canvas.width || 240, canvas.height || 240);
+    }
+
+    async function renderRechargeQr(order) {
+        resetRechargeQrPreview();
+        const image = document.getElementById('recharge-qr-image');
+        const canvas = document.getElementById('recharge-qr-canvas');
+        const empty = document.getElementById('recharge-qr-empty');
+        const openLink = document.getElementById('recharge-open-link');
+        const directImage = order.qrImageData || '';
+        const qrValue = order.qrCodeUrl || order.paymentUrl || '';
+
+        openLink.classList.toggle('hidden', !order.paymentUrl);
+        openLink.href = order.paymentUrl || '#';
+
+        if (directImage) {
+            image.src = directImage;
+            image.classList.remove('hidden');
+            empty.classList.add('hidden');
+            return;
+        }
+
+        if (!qrValue) return;
+
+        const looksLikeImage = /^data:image\//.test(qrValue) || /\.(png|jpg|jpeg|gif|webp|svg)(\?|$)/i.test(qrValue);
+        if (looksLikeImage) {
+            image.src = qrValue;
+            image.classList.remove('hidden');
+            empty.classList.add('hidden');
+            return;
+        }
+
+        if (window.QRCode && typeof window.QRCode.toCanvas === 'function') {
+            canvas.width = 224;
+            canvas.height = 224;
+            await window.QRCode.toCanvas(canvas, qrValue, { width: 224, margin: 1 });
+            canvas.classList.remove('hidden');
+            empty.classList.add('hidden');
+        }
+    }
+
+    function renderRechargeOrder(order) {
+        currentRechargeOrder = order;
+        document.getElementById('recharge-result').classList.remove('hidden');
+        const statusMeta = getRechargeStatusMeta(order.status);
+        document.getElementById('recharge-order-no').textContent = order.orderNo || '-';
+        document.getElementById('recharge-order-amount').textContent = `¥${Number(order.amount || 0).toFixed(2)}`;
+        document.getElementById('recharge-order-status').textContent = statusMeta.text;
+        document.getElementById('recharge-order-status').className = `stat-value text-lg ${statusMeta.cls}`;
+        document.getElementById('recharge-order-label').textContent = order.label || '-';
+        document.getElementById('recharge-order-extra').textContent = order.actualAmount ? String(order.actualAmount) : (order.tradeType || '-');
+        document.getElementById('recharge-instruction').innerHTML = `<span>${order.instructions || '请完成支付后查询订单状态。'}</span>`;
+        renderRechargeQr(order).catch(err => console.error('Render recharge QR error:', err));
+    }
+
+    function resetRechargeSelection(keepAmount = false) {
+        currentRechargeOrder = null;
+        document.getElementById('recharge-result').classList.add('hidden');
+        document.getElementById('recharge-empty-state').classList.add('hidden');
+        document.getElementById('recharge-options-wrap').classList.add('hidden');
+        resetRechargeQrPreview();
+        document.getElementById('recharge-open-link').classList.add('hidden');
+        if (!keepAmount) document.getElementById('recharge-amount').value = '';
+    }
+
+    async function createRechargeOrder(optionKey) {
+        const amount = getRechargeAmount();
+        const option = findRechargeOption(optionKey);
+        const rangeText = option ? formatRechargeOptionRange(option) : (document.getElementById('recharge-min-tip').textContent || '');
+        if (!amount) {
+            alert(`请先输入充值金额。${rangeText}`);
+            return;
+        }
+        if (!option) {
+            alert('支付通道已更新，请重新打开充值弹层后再试');
+            return;
+        }
+        const minAmount = Number(option.minAmount || 0);
+        const hasMax = option.maxAmount !== null && option.maxAmount !== undefined && option.maxAmount !== '';
+        const maxAmount = hasMax ? Number(option.maxAmount) : null;
+        if ((minAmount > 0 && amount < minAmount) || (maxAmount != null && Number.isFinite(maxAmount) && amount > maxAmount)) {
+            alert(`${buildRechargeOptionLabel(option)}，${formatRechargeOptionRange(option)}`);
+            return;
+        }
+        setRechargeLoading(true, '正在创建充值订单...');
+        try {
+            const res = await Auth.apiFetch('/api/payment/recharge/create', {
+                method: 'POST',
+                body: JSON.stringify({ amount, optionKey })
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '创建订单失败');
+            renderRechargeOrder(data.order);
+            document.getElementById('recharge-options-wrap').classList.remove('hidden');
+            document.getElementById('recharge-empty-state').classList.add('hidden');
+            loadOrders(1);
+        } catch (err) {
+            alert(err.message || '创建订单失败');
+        } finally {
+            setRechargeLoading(false);
+        }
+    }
+
+    async function checkRechargeOrderStatus() {
+        if (!currentRechargeOrder?.orderNo) return;
+        setRechargeLoading(true, '正在查询订单状态...');
+        try {
+            const res = await Auth.apiFetch(`/api/payment/orders/${encodeURIComponent(currentRechargeOrder.orderNo)}`);
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.error || '查询失败');
+            renderRechargeOrder(data.order);
+            if (data.order.status === 'paid') {
+                alert('充值已到账');
+                document.getElementById('rechargeModal').close();
+                loadOverview();
+                loadOrders(1);
+                loadBalanceLogs(1);
+            }
+        } catch (err) {
+            alert(err.message || '查询订单状态失败');
+        } finally {
+            setRechargeLoading(false);
+        }
+    }
+
+    async function copyRechargeOrderNo() {
+        if (!currentRechargeOrder?.orderNo) return;
+        try {
+            await navigator.clipboard.writeText(currentRechargeOrder.orderNo);
+            alert('订单号已复制');
+        } catch (err) {
+            alert('复制失败，请手动复制订单号');
+        }
     }
 
     function loadSettings() {
@@ -455,42 +1707,23 @@
     async function saveProfile() {
         const nickname = document.getElementById('set-nickname').value.trim();
         const email = document.getElementById('set-email').value.trim();
-
-        const res = await Auth.apiFetch('/api/user/profile', {
-            method: 'PUT',
-            body: JSON.stringify({ nickname, email })
-        });
+        const res = await Auth.apiFetch('/api/user/profile', { method: 'PUT', body: JSON.stringify({ nickname, email }) });
         const data = await res.json();
-        if (res.ok) {
-            alert('保存成功');
-            Auth.setTokens(Auth.getAccessToken(), Auth.getRefreshToken(), data.user);
-            Auth.updateNavbar();
-        } else {
-            alert(data.error || '保存失败');
-        }
+        if (res.ok) { alert('保存成功'); Auth.setTokens(Auth.getAccessToken(), Auth.getRefreshToken(), data.user); Auth.updateNavbar(); }
+        else alert(data.error || '保存失败');
     }
 
     async function changePassword() {
         const oldPwd = document.getElementById('old-password').value;
         const newPwd = document.getElementById('new-password').value;
         const confirmPwd = document.getElementById('confirm-new-password').value;
-
         if (!oldPwd || !newPwd) { alert('请填写密码'); return; }
         if (newPwd.length < 6) { alert('新密码至少6个字符'); return; }
         if (newPwd !== confirmPwd) { alert('两次密码不一致'); return; }
-
-        const res = await Auth.apiFetch('/api/auth/change-password', {
-            method: 'PUT',
-            body: JSON.stringify({ oldPassword: oldPwd, newPassword: newPwd })
-        });
+        const res = await Auth.apiFetch('/api/auth/change-password', { method: 'PUT', body: JSON.stringify({ oldPassword: oldPwd, newPassword: newPwd }) });
         const data = await res.json();
-        if (res.ok) {
-            alert('密码修改成功，请重新登录');
-            Auth.clearTokens();
-            window.location.href = '/login.html';
-        } else {
-            alert(data.error || '修改失败');
-        }
+        if (res.ok) { alert('密码修改成功，请重新登录'); Auth.clearTokens(); window.location.href = '/login.html'; }
+        else alert(data.error || '修改失败');
     }
     </script>
 </body>

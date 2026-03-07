@@ -4,9 +4,35 @@ let roomListLimit = 20;
 let roomListSearch = '';
 let roomListSort = 'default';
 let roomListTotal = 0;
+const ROOM_LIST_VIEW_MODE_KEY = 'roomListViewMode';
+const ROOM_LIST_VIEW_MODES = new Set(['card', 'list']);
 let roomListViewMode = 'card'; // 'card' or 'list'
 let roomListRefreshTimer = null; // Timer for auto-refresh
 const ROOM_LIST_REFRESH_INTERVAL = 10000; // 10 seconds for listing is enough
+
+function loadRoomViewModePreference() {
+    if (typeof window === 'undefined') return 'card';
+
+    try {
+        const savedMode = window.localStorage.getItem(ROOM_LIST_VIEW_MODE_KEY);
+        return ROOM_LIST_VIEW_MODES.has(savedMode) ? savedMode : 'card';
+    } catch (error) {
+        console.warn('[RoomList] Failed to load view mode preference:', error);
+        return 'card';
+    }
+}
+
+function saveRoomViewModePreference(mode) {
+    if (typeof window === 'undefined') return;
+
+    try {
+        window.localStorage.setItem(ROOM_LIST_VIEW_MODE_KEY, mode);
+    } catch (error) {
+        console.warn('[RoomList] Failed to save view mode preference:', error);
+    }
+}
+
+roomListViewMode = loadRoomViewModePreference();
 
 // Helper to format monthly total with daily average: "260（10）"
 // Daily average = total / 26 (fixed divisor)
@@ -77,7 +103,7 @@ function renderRoomCard(r, index = 0) {
     const isRecordingEnabled = r.isRecordingEnabled === 1;
     const recordingAccountId = escapeHtml(r.recordingAccountId || '');
     const safeRoomId = escapeHtml(r.roomId);
-    const safeName = escapeHtml(r.name || '');
+    const safeName = escapeHtml(r.displayName || r.name || '');
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin();
 
 
@@ -95,10 +121,10 @@ function renderRoomCard(r, index = 0) {
                 <div>
                     <div class="flex items-center gap-2">
                         <span class="badge badge-neutral badge-sm font-mono">#${index}</span>
-                        <h2 class="card-title text-lg font-bold truncate w-36" title="${r.name}">${r.name || '未命名'}</h2>
+                        <h2 class="card-title text-lg font-bold truncate w-36" title="${r.displayName || r.name}">${r.displayName || r.name || '未命名'}</h2>
                     </div>
                     <div class="flex items-center gap-1 mt-1">
-                        <div class="badge badge-outline badge-sm opacity-70 truncate max-w-[150px] cursor-pointer hover:bg-base-300" 
+                        <div class="badge badge-outline badge-sm opacity-70 truncate max-w-[150px] cursor-pointer hover:bg-base-300"
                              title="点击复制: ${r.roomId}" onclick="copyToClipboard('${safeRoomId}', event)">${r.roomId}</div>
                         ${r.lastSessionTime ? `<span class="text-xs opacity-50">- ${formatTimeAgo(r.lastSessionTime)}</span>` : ''}
                     </div>
@@ -108,12 +134,12 @@ function renderRoomCard(r, index = 0) {
                         <span class="text-xs font-mono opacity-60" title="本场开播时长">⏱️${duration}</span>
                         <div class="badge ${badgeClass} badge-sm">${statusText}</div>
                     </div>
-                    <label class="label cursor-pointer p-0 gap-2">
-                        <span class="label-text text-xs opacity-70">LZ</span> 
-                        <input type="checkbox" class="toggle toggle-xs toggle-success" 
+                    ${isAdmin ? `<label class="label cursor-pointer p-0 gap-2">
+                        <span class="label-text text-xs opacity-70">LZ</span>
+                        <input type="checkbox" class="toggle toggle-xs toggle-success"
                             onchange="toggleMonitor('${safeRoomId}', this.checked, '${safeName}', '${escapeHtml(r.address || '')}')"
                             ${isMonitorOn ? 'checked' : ''} />
-                    </label>
+                    </label>` : ''}
                 </div>
             </div>
             
@@ -182,7 +208,7 @@ function renderRoomRow(r, index = 0) {
     const isRecordingEnabled = r.isRecordingEnabled === 1;
     const recordingAccountId = escapeHtml(r.recordingAccountId || '');
     const safeRoomId = escapeHtml(r.roomId);
-    const safeName = escapeHtml(r.name || '');
+    const safeName = escapeHtml(r.displayName || r.name || '');
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin();
 
     // Recording status
@@ -198,7 +224,7 @@ function renderRoomRow(r, index = 0) {
             <div class="flex items-center gap-2">
                 <span class="text-lg" title="${isLive ? '直播中' : '未开播'}">${statusText}</span>
                 <div>
-                    <div class="font-bold truncate max-w-[120px]" title="${r.name}">${r.name || '未命名'}</div>
+                    <div class="font-bold truncate max-w-[120px]" title="${r.displayName || r.name}">${r.displayName || r.name || '未命名'}</div>
                     <div class="text-xs opacity-50">
                         <span class="cursor-pointer hover:opacity-100" onclick="event.stopPropagation();copyToClipboard('${safeRoomId}', event)" title="点击复制">${r.roomId}</span>${r.lastSessionTime ? ` - ${formatTimeAgo(r.lastSessionTime)}` : ''}
                     </div>
@@ -232,11 +258,11 @@ function renderRoomRow(r, index = 0) {
         <td class="p-2 text-center">
             <span class="badge badge-secondary badge-sm">${r.top30Ratio || 0}%</span>
         </td>
-        <td class="p-2 text-center" onclick="event.stopPropagation()">
-            <input type="checkbox" class="toggle toggle-xs toggle-success" 
+        ${isAdmin ? `<td class="p-2 text-center" onclick="event.stopPropagation()">
+            <input type="checkbox" class="toggle toggle-xs toggle-success"
                 onchange="toggleMonitor('${safeRoomId}', this.checked, '${safeName}', '${escapeHtml(r.address || '')}')"
                 ${isMonitorOn ? 'checked' : ''} />
-        </td>
+        </td>` : ''}
         <td class="p-2 text-center" onclick="event.stopPropagation()">
             <div class="flex gap-1 justify-center">
                 ${isAdmin ? `<button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>` : ''}
@@ -320,6 +346,7 @@ async function renderRoomList() {
             </div>`);
         } else if (roomListViewMode === 'list') {
             // List view - table format
+            const isAdminUser = typeof Auth !== 'undefined' && Auth.isAdmin();
             const tableHtml = `
             <div class="col-span-full overflow-x-auto">
                 <table class="table table-sm w-full">
@@ -340,7 +367,7 @@ async function renderRoomList() {
                             <th class="p-2 text-center">T3</th>
                             <th class="p-2 text-center">T10</th>
                             <th class="p-2 text-center">T30</th>
-                            <th class="p-2 text-center">LZ</th>
+                            ${isAdminUser ? '<th class="p-2 text-center">LZ</th>' : ''}
                             <th class="p-2 text-center">操作</th>
                         </tr>
                     </thead>
@@ -418,7 +445,10 @@ function setRoomSort(sort, btn) {
 }
 
 function setRoomViewMode(mode) {
+    if (!ROOM_LIST_VIEW_MODES.has(mode)) return;
+
     roomListViewMode = mode;
+    saveRoomViewModePreference(mode);
     renderRoomList();
 }
 
@@ -511,30 +541,25 @@ window.fetchAccountsForSelect = async function () {
 };
 
 function openAddRoomModal(id = null, name = null, isMonitorOn = true, language = '中文', priority = 0, isRecordingOn = false, recordingAccount = null) {
-    // Populate account select if not already done (assuming populated on load or demand)
-    // We should probably trigger a refresh of accounts here just in case? Or rely on periodic?
-    // Let's assume fetchAccounts() or similar is available or just call the API.
-    // For now, let's just populate the fields.
-
-    // Reload accounts (from global cache or fetch new)
-    // We'll rely on a global function or direct call.
     if (window.fetchAccountsForSelect) {
         window.fetchAccountsForSelect();
     }
 
-    if (id && id !== 'undefined' && id !== 'null') { // check string 'null' if called from template
+    const isEdit = id && id !== 'undefined' && id !== 'null';
+    const modalTitleEl = document.getElementById('roomModalTitle');
+
+    if (modalTitleEl) {
+        modalTitleEl.textContent = isEdit ? '编辑房间' : '添加房间';
+    }
+
+    if (isEdit) {
         $('#editRoomIdRaw').val(id);
         $('#roomUniqueId').val(id).prop('disabled', true);
         $('#roomNameInput').val(name);
         $('#roomMonitorToggle').prop('checked', isMonitorOn);
         if (language) $('#roomLanguage').val(language);
         $('#roomPriority').val(priority || 0);
-
-        // Recording settings
         $('#roomAutoRecordToggle').prop('checked', isRecordingOn);
-        // We'll set the value after the select is populated, but since fetch is async, 
-        // we might need a small delay or better architectural approach.
-        // For simplicity, we set it and hope options are there or will be set.
         setTimeout(() => {
             $('#roomRecordingAccount').val(recordingAccount || '');
         }, 100);
@@ -545,11 +570,37 @@ function openAddRoomModal(id = null, name = null, isMonitorOn = true, language =
         $('#roomMonitorToggle').prop('checked', true);
         $('#roomLanguage').val('中文');
         $('#roomPriority').val(0);
-
         $('#roomAutoRecordToggle').prop('checked', false);
         $('#roomRecordingAccount').val('');
     }
+
+    // Load and display quota info
+    const quotaEl = document.getElementById('roomQuotaInfo');
+    quotaEl.style.display = 'none';
+    if (typeof Auth !== 'undefined' && Auth.isLoggedIn() && !Auth.isAdmin()) {
+        Auth.apiFetch('/api/rooms/quota').then(r => r.json()).then(data => {
+            if (!data.quota) return;
+            const q = data.quota;
+            const items = [];
+            const dailyLimit = Number.isFinite(Number(q.dailyLimit)) ? Number(q.dailyLimit) : -1;
+            const dailyUsed = Number(q.dailyUsed || 0);
+            // Room quota
+            const roomLimitText = q.isUnlimited ? '无限' : q.limit;
+            items.push(`<span>房间额度 <strong>${q.used}</strong> / ${roomLimitText}</span>`);
+            // Daily limit - always show, -1 means unlimited
+            const dailyLimitText = dailyLimit === -1 ? '不限' : dailyLimit;
+            items.push(`<span>每日可添加次数 <strong>${dailyUsed}</strong> / ${dailyLimitText}</span>`);
+
+            // Alert style based on remaining
+            const isLow = (!q.isUnlimited && q.remaining <= 0) || (dailyLimit !== -1 && dailyUsed >= dailyLimit);
+            quotaEl.className = `mb-4 alert ${isLow ? 'alert-warning' : 'alert-info'} py-2 text-sm`;
+            quotaEl.innerHTML = `<div class="flex flex-wrap gap-x-4 gap-y-1">${items.join('<span class="opacity-30">|</span>')}</div>`;
+            quotaEl.style.display = '';
+        }).catch(() => {});
+    }
+
     document.getElementById('roomModal').showModal();
+    if (typeof Auth !== 'undefined') Auth.applyAdminVisibility();
 }
 
 
@@ -570,39 +621,45 @@ window.openAddRoomModal = openAddRoomModal;
 window.closeRoomModal = closeRoomModal;
 window.enterRoom = enterRoom;
 window.deleteRoom = async function (id) {
-    if (!confirm('确定要删除该房间吗？\n\n注意：房间数据将保留7天，超过7天后将被自动清理。')) return;
+    const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin();
+    const msg = isAdmin
+        ? '确定要删除该房间吗？\n\n此操作将永久删除房间及所有关联数据，不可恢复。'
+        : '确定要移除该房间吗？\n\n如在 7 天内重新添加，可恢复之前的数据查看范围；超过 7 天则仅能查看重新添加后的数据。';
+    if (!confirm(msg)) return;
     try {
         // URL-encode room ID to handle special characters like @
         await $.ajax({ url: `/api/rooms/${encodeURIComponent(id)}`, type: 'DELETE' });
         // Remove the DOM element instead of refreshing the entire list
         $(`[data-room-id="${escapeHtml(id)}"]`).fadeOut(300, function () { $(this).remove(); });
-    } catch (e) { alert(e.statusText); }
+    } catch (e) {
+        console.error('Delete room error:', e);
+        alert('删除失败: ' + (e.responseJSON?.error || e.statusText));
+    }
 };
 window.saveRoom = async function () {
     const id = $('#roomUniqueId').val().trim();
     const name = $('#roomNameInput').val().trim();
-    const isMonitor = $('#roomMonitorToggle').is(':checked');
-    const isRecording = $('#roomAutoRecordToggle').is(':checked');
-    const recAccount = $('#roomRecordingAccount').val() || null;
-    const language = $('#roomLanguage').val();
-    const priority = parseInt($('#roomPriority').val()) || 0;
+    const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin();
     const isEdit = $('#editRoomIdRaw').val().trim() !== '';
 
-    if (!id) return alert('ID required');
+    if (!id) return alert('请输入房间ID');
+
+    // Build request body: admin sends all fields, member only sends roomId + name (alias)
+    const body = { roomId: id, name: name };
+    if (isAdmin) {
+        body.isMonitorEnabled = $('#roomMonitorToggle').is(':checked');
+        body.isRecordingEnabled = $('#roomAutoRecordToggle').is(':checked');
+        body.recordingAccountId = $('#roomRecordingAccount').val() || null;
+        body.language = $('#roomLanguage').val();
+        body.priority = parseInt($('#roomPriority').val()) || 0;
+    }
+
     try {
         await $.ajax({
             url: '/api/rooms',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({
-                roomId: id,
-                name: name,
-                isMonitorEnabled: isMonitor,
-                language: language,
-                priority: priority,
-                isRecordingEnabled: isRecording,
-                recordingAccountId: recAccount
-            })
+            data: JSON.stringify(body)
         });
         closeRoomModal();
 
@@ -613,8 +670,10 @@ window.saveRoom = async function () {
             el.find('.card-title').text(name || '未命名').attr('title', name);
             // Update name in list view
             el.find('.font-bold.truncate').text(name || '未命名').attr('title', name);
-            // Update monitor toggle
-            el.find('.toggle-success').prop('checked', isMonitor);
+            // Update monitor toggle (admin only)
+            if (isAdmin) {
+                el.find('.toggle-success').prop('checked', body.isMonitorEnabled);
+            }
             // Flash the element to indicate success
             el.addClass('ring-2 ring-primary');
             setTimeout(() => el.removeClass('ring-2 ring-primary'), 1000);
@@ -622,7 +681,23 @@ window.saveRoom = async function () {
             // New room - need to refresh to show it
             renderRoomList();
         }
-    } catch (e) { alert('Save failed: ' + e.statusText); }
+    } catch (e) {
+        console.error('Save room error:', e);
+        let errorMsg = '保存失败';
+        if (e.responseJSON) {
+            const err = e.responseJSON;
+            if (err.code === 'NO_SUBSCRIPTION') {
+                errorMsg = err.error + '\n\n请前往用户中心购买套餐后再使用。';
+                if (confirm(err.error + '\n\n是否立即跳转到用户中心?')) {
+                    window.location.href = '/user-center.html';
+                    return;
+                }
+            } else if (err.error) {
+                errorMsg = err.error;
+            }
+        }
+        alert(errorMsg);
+    }
 };
 
 window.renameRoom = async function (oldRoomId) {

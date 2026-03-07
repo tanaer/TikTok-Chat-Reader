@@ -17,6 +17,12 @@ async function loadConfig() {
         $('#cfg_proxyApiUrl').val(cfg.proxy_api_url || '');
     } catch (err) {
         console.error('Config load error', err);
+        if (err.status === 401 || err.status === 403) {
+            alert('您没有权限访问系统配置');
+            if (typeof switchSection === 'function') {
+                switchSection('roomList');
+            }
+        }
     }
 }
 
@@ -42,19 +48,37 @@ async function saveConfig() {
             contentType: 'application/json',
             data: JSON.stringify(data)
         });
-        alert('Configuration saved! (Port change requires restart)');
+        alert('配置已保存！(端口更改需要重启服务)');
     } catch (err) {
-        alert('Error saving config: ' + (err.responseJSON ? err.responseJSON.error : err.statusText));
+        let errorMsg = '保存配置失败';
+        if (err.status === 401) {
+            errorMsg = '您需要登录后才能保存配置';
+        } else if (err.status === 403) {
+            errorMsg = '您没有管理员权限，无法保存配置';
+        } else if (err.responseJSON && err.responseJSON.error) {
+            errorMsg = err.responseJSON.error;
+        }
+        alert(errorMsg);
     }
 }
 
 async function restartServer() {
-    if (!confirm('This will stop the Node.js process. You may need to manually start it again if not running with pm2/supervisor. Continue?')) return;
+    if (!confirm('这将停止 Node.js 进程。如果没有使用 pm2/supervisor 等进程管理器，您需要手动重新启动服务。确定继续吗？')) return;
 
     try {
         await $.post('/api/action/restart');
-        alert('Restart command sent.');
+        alert('重启命令已发送。');
     } catch (e) {
-        alert('Error sending restart command');
+        let errorMsg = '发送重启命令失败';
+        if (e.status === 401) {
+            errorMsg = '您需要登录后才能重启服务';
+        } else if (e.status === 403) {
+            errorMsg = '您没有管理员权限，无法重启服务';
+        }
+        alert(errorMsg);
     }
 }
+
+window.loadConfig = loadConfig;
+window.saveConfig = saveConfig;
+window.restartServer = restartServer;

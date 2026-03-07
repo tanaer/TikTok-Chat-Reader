@@ -2,7 +2,7 @@
 let roomAnalysisChart = null;
 
 function initRoomAnalysis() {
-    // Set default dates: Last 7 days
+    // 默认日期：最近7天
     const endDate = new Date();
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - 7);
@@ -10,7 +10,7 @@ function initRoomAnalysis() {
     document.getElementById('ra_endDate').valueAsDate = endDate;
     document.getElementById('ra_startDate').valueAsDate = startDate;
 
-    // Initial load
+    // 初始加载
     fetchAndRenderRoomStats();
 }
 
@@ -20,23 +20,25 @@ async function fetchAndRenderRoomStats() {
     const limit = document.getElementById('ra_limit').value || 100;
 
     if (!start || !end) {
-        alert('Please select both start and end dates');
+        alert('请选择开始和结束日期');
         return;
     }
 
     try {
-        const response = await fetch(`/api/analysis/rooms/entry?startDate=${start}&endDate=${end}&limit=${limit}`);
+        const response = await fetch(`/api/analysis/rooms/entry?startDate=${start}&endDate=${end}&limit=${limit}`, {
+            headers: { 'Authorization': 'Bearer ' + (Auth.getAccessToken() || '') }
+        });
         const data = await response.json();
 
         if (data.error) {
-            alert('Error fetching data: ' + data.error);
+            alert('获取数据失败: ' + data.error);
             return;
         }
 
         renderRoomAnalysisChart(data);
     } catch (e) {
-        console.error('Fetch error:', e);
-        alert('Failed to fetch data');
+        console.error('请求失败:', e);
+        alert('获取数据失败');
     }
 }
 
@@ -44,16 +46,13 @@ function renderRoomAnalysisChart(data) {
     const ctx = document.getElementById('roomAnalysisChart');
     if (!ctx) return;
 
-    // Destroy existing chart if any
     if (roomAnalysisChart) {
         roomAnalysisChart.destroy();
     }
 
-    // Adjust container height based on data length
     const newHeight = Math.max(600, data.length * 30 + 100);
     ctx.parentElement.style.height = `${newHeight}px`;
 
-    // Prepare data
     const labels = data.map(item => `${item.roomName} (${item.roomId})`);
     const counts = data.map(item => item.count);
     const dailyRevenues = data.map(item => item.dailyAvg);
@@ -64,7 +63,7 @@ function renderRoomAnalysisChart(data) {
             labels: labels,
             datasets: [
                 {
-                    label: 'Total Entries (Members)',
+                    label: '总进场人次',
                     data: counts,
                     backgroundColor: 'rgba(54, 162, 235, 0.7)',
                     borderColor: 'rgba(54, 162, 235, 1)',
@@ -73,7 +72,7 @@ function renderRoomAnalysisChart(data) {
                     order: 2
                 },
                 {
-                    label: 'Daily Avg Revenue (Diamonds)',
+                    label: '日均礼物收入(钻石)',
                     data: dailyRevenues,
                     backgroundColor: 'rgba(255, 99, 132, 0.7)',
                     borderColor: 'rgba(255, 99, 132, 1)',
@@ -84,7 +83,7 @@ function renderRoomAnalysisChart(data) {
             ]
         },
         options: {
-            indexAxis: 'y', // Horizontal bar chart
+            indexAxis: 'y',
             responsive: true,
             maintainAspectRatio: false,
             interaction: {
@@ -95,7 +94,7 @@ function renderRoomAnalysisChart(data) {
                 legend: { position: 'top' },
                 title: {
                     display: true,
-                    text: `Room Entry Analysis & Revenue (Top ${data.length})`
+                    text: `房间进场分析与收入对比 (Top ${data.length})`
                 },
                 tooltip: {
                     callbacks: {
@@ -117,15 +116,15 @@ function renderRoomAnalysisChart(data) {
                     type: 'linear',
                     display: true,
                     position: 'bottom',
-                    title: { display: true, text: 'Entries' },
+                    title: { display: true, text: '进场人次' },
                     grid: { drawOnChartArea: true }
                 },
                 x1: {
                     type: 'linear',
                     display: true,
                     position: 'top',
-                    title: { display: true, text: 'Revenue (Diamonds)' },
-                    grid: { drawOnChartArea: false }, // Avoid grid clutter
+                    title: { display: true, text: '日均收入(钻石)' },
+                    grid: { drawOnChartArea: false },
                     ticks: { color: 'rgba(255, 99, 132, 1)' }
                 },
                 y: {
@@ -136,7 +135,5 @@ function renderRoomAnalysisChart(data) {
     });
 }
 
-// Hook into app initialization if needed, or call initRoomAnalysis when section is shown
-// For now, we can expose it globally
 window.initRoomAnalysis = initRoomAnalysis;
 window.fetchAndRenderRoomStats = fetchAndRenderRoomStats;

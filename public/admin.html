@@ -19,8 +19,11 @@
             <li><a class="active" onclick="showSection('overview')">系统概览</a></li>
             <li><a onclick="showSection('users')">用户管理</a></li>
             <li><a onclick="showSection('orders')">订单管理</a></li>
+            <li><a onclick="showSection('payment')">支付管理</a></li>
             <li><a onclick="showSection('plans')">套餐设置</a></li>
             <li><a onclick="showSection('gifts')">礼物配置</a></li>
+            <li><a onclick="showSection('eulerKeys')">Euler API Keys</a></li>
+            <li><a onclick="showSection('aiModels')">AI 通道配置</a></li>
             <li><a onclick="showSection('settings')">系统设置</a></li>
             <li class="mt-4"><a href="/" class="text-base-content/60">← 返回前台</a></li>
         </ul>
@@ -88,18 +91,130 @@
                     <div class="card-body p-4">
                         <div class="overflow-x-auto">
                             <table class="table table-zebra table-sm">
-                                <thead><tr><th>订单号</th><th>用户</th><th>类型</th><th>内容</th><th>金额</th><th>状态</th><th>时间</th></tr></thead>
+                                <thead><tr><th>订单号</th><th>用户</th><th>类型</th><th>内容</th><th>金额</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
                                 <tbody id="admin-orders-tbody"></tbody>
                             </table>
                         </div>
                         <div id="admin-orders-pagination" class="flex justify-center mt-4"></div>
                     </div>
                 </div>
+
+            </section>
+
+            <!-- Payment Section -->
+            <section id="sec-payment" class="hidden">
+                <div class="space-y-6 max-w-6xl">
+                    <div class="card bg-base-100 shadow">
+                        <div class="card-body">
+                            <div class="flex justify-between items-start gap-4 flex-wrap">
+                                <div>
+                                    <h3 class="card-title">支付管理</h3>
+                                    <p class="text-sm text-base-content/60">配置固定码、三方支付和虚拟币支付。前台只显示通道类型，不显示后台备注名。</p>
+                                </div>
+                                <div class="form-control w-full sm:w-80">
+                                    <label class="label"><span class="label-text">默认最低充值金额</span></label>
+                                    <input type="number" id="pay-min-recharge" class="input input-bordered" min="1" step="1" value="1">
+                                    <label class="label"><span class="label-text-alt text-base-content/50">未单独设置通道范围时，按此金额兜底；最高金额留空表示不限。</span></label>
+                                </div>
+                            </div>
+                            <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-4">
+                                <div class="card bg-base-200 border border-base-300">
+                                    <div class="card-body p-4">
+                                        <div class="flex items-center justify-between">
+                                            <h4 class="font-bold">固定码</h4>
+                                            <span class="badge badge-ghost">微信 / 支付宝</span>
+                                        </div>
+                                        <div class="space-y-4 mt-2">
+                                            <div class="rounded-box border border-base-300 p-3">
+                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-fixed-wechat-enabled" class="checkbox checkbox-sm"><span class="label-text">启用微信固定码</span></label>
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                                                    <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-fixed-wechat-min" class="input input-bordered input-sm" min="1" step="1"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-fixed-wechat-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                                </div>
+                                                <input type="hidden" id="pay-fixed-wechat-data">
+                                                <input type="file" id="pay-fixed-wechat-file" class="file-input file-input-bordered file-input-sm w-full" accept="image/*" onchange="handlePaymentImageUpload(this, 'pay-fixed-wechat-data', 'pay-fixed-wechat-preview', 'pay-fixed-wechat-empty')">
+                                                <div class="mt-2 flex items-center gap-3">
+                                                    <img id="pay-fixed-wechat-preview" class="w-24 h-24 object-contain rounded border border-base-300 hidden" alt="微信固定码预览">
+                                                    <span id="pay-fixed-wechat-empty" class="text-xs text-base-content/50">未上传图片</span>
+                                                    <button class="btn btn-ghost btn-xs" type="button" onclick="clearPaymentImage('pay-fixed-wechat-file', 'pay-fixed-wechat-data', 'pay-fixed-wechat-preview', 'pay-fixed-wechat-empty')">清空</button>
+                                                </div>
+                                            </div>
+                                            <div class="rounded-box border border-base-300 p-3">
+                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-fixed-alipay-enabled" class="checkbox checkbox-sm"><span class="label-text">启用支付宝固定码</span></label>
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-3">
+                                                    <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-fixed-alipay-min" class="input input-bordered input-sm" min="1" step="1"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-fixed-alipay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                                </div>
+                                                <input type="hidden" id="pay-fixed-alipay-data">
+                                                <input type="file" id="pay-fixed-alipay-file" class="file-input file-input-bordered file-input-sm w-full" accept="image/*" onchange="handlePaymentImageUpload(this, 'pay-fixed-alipay-data', 'pay-fixed-alipay-preview', 'pay-fixed-alipay-empty')">
+                                                <div class="mt-2 flex items-center gap-3">
+                                                    <img id="pay-fixed-alipay-preview" class="w-24 h-24 object-contain rounded border border-base-300 hidden" alt="支付宝固定码预览">
+                                                    <span id="pay-fixed-alipay-empty" class="text-xs text-base-content/50">未上传图片</span>
+                                                    <button class="btn btn-ghost btn-xs" type="button" onclick="clearPaymentImage('pay-fixed-alipay-file', 'pay-fixed-alipay-data', 'pay-fixed-alipay-preview', 'pay-fixed-alipay-empty')">清空</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card bg-base-200 border border-base-300">
+                                    <div class="card-body p-4">
+                                        <div class="flex items-center justify-between">
+                                            <h4 class="font-bold">三方支付</h4>
+                                            <label class="label cursor-pointer gap-3"><span class="label-text">启用</span><input type="checkbox" id="pay-futong-enabled" class="toggle toggle-primary toggle-sm"></label>
+                                        </div>
+                                        <div class="space-y-3 mt-2">
+                                            <div class="form-control"><label class="label"><span class="label-text">API 地址</span></label><input type="text" id="pay-futong-api-url" class="input input-bordered input-sm" placeholder="https://xxx.com"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">商户号 PID</span></label><input type="text" id="pay-futong-pid" class="input input-bordered input-sm"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">签名密钥</span></label><input type="text" id="pay-futong-secret" class="input input-bordered input-sm"></div>
+                                            <div class="rounded-box border border-base-300 p-3">
+                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-futong-alipay-enabled" class="checkbox checkbox-sm"><span class="label-text">支付宝</span></label>
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-futong-alipay-min" class="input input-bordered input-sm" min="1" step="1"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-futong-alipay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                                </div>
+                                            </div>
+                                            <div class="rounded-box border border-base-300 p-3">
+                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-futong-wxpay-enabled" class="checkbox checkbox-sm"><span class="label-text">微信</span></label>
+                                                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-futong-wxpay-min" class="input input-bordered input-sm" min="1" step="1"></div>
+                                                    <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-futong-wxpay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                                </div>
+                                            </div>
+                                            <div class="form-control"><label class="label"><span class="label-text">回调地址</span></label><input type="text" id="pay-futong-notify-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前站点域名"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="card bg-base-200 border border-base-300">
+                                    <div class="card-body p-4">
+                                        <div class="flex items-center justify-between">
+                                            <h4 class="font-bold">虚拟币支付</h4>
+                                            <label class="label cursor-pointer gap-3"><span class="label-text">启用</span><input type="checkbox" id="pay-bepusdt-enabled" class="toggle toggle-primary toggle-sm"></label>
+                                        </div>
+                                        <div class="space-y-3 mt-2">
+                                            <div class="form-control"><label class="label"><span class="label-text">API 地址</span></label><input type="text" id="pay-bepusdt-api-url" class="input input-bordered input-sm" placeholder="https://xxx.com"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">Auth Token</span></label><input type="text" id="pay-bepusdt-token" class="input input-bordered input-sm"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">签名密钥（可空）</span></label><input type="text" id="pay-bepusdt-secret" class="input input-bordered input-sm" placeholder="留空则使用 Auth Token"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">Trade Type</span></label><input type="text" id="pay-bepusdt-trade-type" class="input input-bordered input-sm" placeholder="usdt.bep20"></div>
+                                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-bepusdt-min" class="input input-bordered input-sm" min="1" step="1"></div>
+                                                <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-bepusdt-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
+                                            </div>
+                                            <div class="form-control"><label class="label"><span class="label-text">回调地址</span></label><input type="text" id="pay-bepusdt-notify-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前站点域名"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="flex justify-end mt-6">
+                                <button class="btn btn-primary" onclick="savePaymentConfig()">保存支付配置</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- Plans Section -->
             <section id="sec-plans" class="hidden">
-                <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div class="space-y-6">
                     <!-- Plans -->
                     <div>
                         <div class="flex justify-between items-center mb-4">
@@ -108,13 +223,23 @@
                         </div>
                         <div id="plans-list" class="space-y-3"></div>
                     </div>
-                    <!-- Addons -->
-                    <div>
-                        <div class="flex justify-between items-center mb-4">
-                            <h3 class="text-lg font-bold">扩容包管理</h3>
-                            <button class="btn btn-primary btn-sm" onclick="showAddonForm()">新增扩容包</button>
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                        <!-- Addons -->
+                        <div>
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-bold">房间扩容包</h3>
+                                <button class="btn btn-primary btn-sm" onclick="showAddonForm()">新增扩容包</button>
+                            </div>
+                            <div id="addons-list" class="space-y-3"></div>
                         </div>
-                        <div id="addons-list" class="space-y-3"></div>
+                        <!-- AI Credit Packages -->
+                        <div>
+                            <div class="flex justify-between items-center mb-4">
+                                <h3 class="text-lg font-bold">AI 分析额度包</h3>
+                                <button class="btn btn-primary btn-sm" onclick="showAiCreditForm()">新增额度包</button>
+                            </div>
+                            <div id="ai-credits-list" class="space-y-3"></div>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -129,6 +254,34 @@
                             <button class="btn btn-primary" onclick="saveSettings()">保存设置</button>
                         </div>
                     </div>
+                </div>
+            </section>
+
+            <!-- Euler API Keys Section -->
+            <section id="sec-eulerKeys" class="hidden">
+                <div class="max-w-4xl">
+                    <div class="flex justify-between items-center mb-4">
+                        <div>
+                            <h3 class="text-lg font-bold">Euler API Keys 管理</h3>
+                            <p class="text-sm text-base-content/60">管理用于连接 TikTok 直播的 EulerStream API Keys，支持多 Key 轮换</p>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="showAddEulerKey()">添加 Key</button>
+                    </div>
+                    <div id="euler-keys-list" class="space-y-3"></div>
+                </div>
+            </section>
+
+            <!-- AI Models Section -->
+            <section id="sec-aiModels" class="hidden">
+                <div class="max-w-4xl">
+                    <div class="flex justify-between items-center mb-4">
+                        <div>
+                            <h3 class="text-lg font-bold">AI 通道配置</h3>
+                            <p class="text-sm text-base-content/60">配置 AI 通道（API提供商）及其下属模型。系统使用默认模型（或第一个启用的模型）进行分析。</p>
+                        </div>
+                        <button class="btn btn-primary btn-sm" onclick="showAddAiModel()">添加模型</button>
+                    </div>
+                    <div id="ai-models-list" class="space-y-3"></div>
                 </div>
             </section>
 
@@ -199,7 +352,10 @@
             <input type="hidden" id="pf-id">
             <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input type="text" id="pf-name" class="input input-bordered"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">代码 (英文)</span></label><input type="text" id="pf-code" class="input input-bordered"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">房间上限</span></label><input type="number" id="pf-room" class="input input-bordered" min="1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">房间上限 (-1=无限)</span></label><input type="number" id="pf-room" class="input input-bordered" min="-1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">可打开房间数 (-1=不限)</span></label><input type="number" id="pf-open-room" class="input input-bordered" min="-1" value="-1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">每日新建房间上限 (-1=无限)</span></label><input type="number" id="pf-daily" class="input input-bordered" min="-1" value="-1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">每月AI分析次数</span></label><input type="number" id="pf-ai" class="input input-bordered" min="0" value="0"></div>
             <div class="grid grid-cols-3 gap-2 mt-2">
                 <div class="form-control"><label class="label"><span class="label-text">月价</span></label><input type="number" id="pf-pm" class="input input-bordered input-sm" step="0.01"></div>
                 <div class="form-control"><label class="label"><span class="label-text">季价</span></label><input type="number" id="pf-pq" class="input input-bordered input-sm" step="0.01"></div>
@@ -225,6 +381,66 @@
             <div class="modal-action">
                 <button class="btn" onclick="document.getElementById('addonFormModal').close()">取消</button>
                 <button class="btn btn-primary" onclick="submitAddonForm()">保存</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- AI Credit Package form modal -->
+    <dialog id="aiCreditModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg" id="aic-form-title">新增 AI 额度包</h3>
+            <input type="hidden" id="aic-id">
+            <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input type="text" id="aic-name" class="input input-bordered" placeholder="例：基础包"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">AI分析次数</span></label><input type="number" id="aic-credits" class="input input-bordered" min="1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">价格（余额扣除，分）</span></label><input type="number" id="aic-price" class="input input-bordered" min="0" step="1"><p class="text-xs text-base-content/50 mt-1">例：1000 = ¥10.00</p></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input type="text" id="aic-desc" class="input input-bordered" placeholder="可选"></div>
+            <div class="modal-action">
+                <button class="btn" onclick="document.getElementById('aiCreditModal').close()">取消</button>
+                <button class="btn btn-primary" onclick="submitAiCreditForm()">保存</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- Euler Key add modal -->
+    <dialog id="eulerKeyModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">添加 Euler API Key</h3>
+            <div class="form-control mt-3">
+                <label class="label"><span class="label-text">名称（备注）</span></label>
+                <input type="text" id="ek-name" class="input input-bordered" placeholder="例：主账号Key">
+            </div>
+            <div class="form-control mt-2">
+                <label class="label"><span class="label-text">API Key *</span></label>
+                <input type="text" id="ek-key" class="input input-bordered font-mono" placeholder="euler_xxx...">
+            </div>
+            <div class="modal-action">
+                <button class="btn" onclick="document.getElementById('eulerKeyModal').close()">取消</button>
+                <button class="btn btn-primary" onclick="submitEulerKey()">添加</button>
+            </div>
+        </div>
+    </dialog>
+
+    <!-- AI Channel form modal -->
+    <dialog id="aiModelModal" class="modal">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg" id="aim-form-title">添加 AI 通道</h3>
+            <input type="hidden" id="aim-id">
+            <div class="form-control mt-3">
+                <label class="label"><span class="label-text">通道名称 *</span></label>
+                <input type="text" id="aim-name" class="input input-bordered" placeholder="例：ModelScope / OpenAI">
+            </div>
+            <div class="form-control mt-2">
+                <label class="label"><span class="label-text">API 地址 *</span></label>
+                <input type="text" id="aim-url" class="input input-bordered font-mono" placeholder="例：https://api.openai.com/v1/">
+            </div>
+            <div class="form-control mt-2">
+                <label class="label"><span class="label-text">API Key *</span></label>
+                <input type="text" id="aim-key" class="input input-bordered font-mono" placeholder="sk-xxx...">
+            </div>
+            <p class="text-xs text-base-content/50 mt-2">创建通道后，再在通道内添加具体模型</p>
+            <div class="modal-action">
+                <button class="btn" onclick="document.getElementById('aiModelModal').close()">取消</button>
+                <button class="btn btn-primary" onclick="submitAiModel()">保存</button>
             </div>
         </div>
     </dialog>

@@ -12,7 +12,7 @@ const router = express.Router();
 router.get('/plans', async (req, res) => {
     try {
         const plans = await db.all(
-            `SELECT id, name, code, room_limit, price_monthly, price_quarterly, price_annual, feature_flags, sort_order
+            `SELECT id, name, code, room_limit, open_room_limit, price_monthly, price_quarterly, price_annual, feature_flags, sort_order, daily_room_create_limit, ai_credits_monthly
              FROM subscription_plans WHERE is_active = true ORDER BY sort_order`
         );
         res.json({ plans });
@@ -86,6 +86,59 @@ router.post('/purchase-addon', authenticate, [
         res.json(result);
     } catch (err) {
         console.error('[Sub] Addon purchase error:', err.message);
+        res.status(500).json({ error: '购买失败' });
+    }
+});
+
+/**
+ * GET /api/subscription/ai-credit-packages - public list
+ */
+router.get('/ai-credit-packages', async (req, res) => {
+    try {
+        const packages = await db.all(
+            'SELECT id, name, credits, price_cents, description FROM ai_credit_packages WHERE is_active = true ORDER BY credits'
+        );
+        res.json({ packages });
+    } catch (err) {
+        res.status(500).json({ error: '获取AI额度包失败' });
+    }
+});
+
+/**
+ * POST /api/subscription/purchase-ai-credits - buy AI credit package
+ */
+router.post('/purchase-ai-credits', authenticate, [
+    body('packageId').isInt({ min: 1 }).withMessage('请选择额度包'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+    try {
+        const { packageId } = req.body;
+        const pkg = await db.get('SELECT * FROM ai_credit_packages WHERE id = ? AND is_active = true', [packageId]);
+        if (!pkg) return res.status(404).json({ error: '额度包不存在或已下架' });
+
+        const price = Number(pkg.priceCents);
+        const balanceService = require('../services/balanceService');
+        const purchase = await balanceService.purchaseWithBalance(
+            req.user.id, price, 'ai_credits', pkg.name,
+            `AI分析额度: ${pkg.name}, ${pkg.credits}次`
+        );
+        if (!purchase.success) return res.status(400).json(purchase);
+
+        // Add credits to user
+        await db.run(
+            'UPDATE users SET ai_credits_remaining = ai_credits_remaining + ? WHERE id = ?',
+            [pkg.credits, req.user.id]
+        );
+
+        res.json({
+            success: true,
+            credits: pkg.credits,
+            order: purchase.order
+        });
+    } catch (err) {
+        console.error('[Sub] AI credits purchase error:', err.message);
         res.status(500).json({ error: '购买失败' });
     }
 });

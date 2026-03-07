@@ -6,7 +6,8 @@ const balanceService = require('./balanceService');
  */
 async function getActiveSubscription(userId) {
     return db.get(
-        `SELECT us.*, p.name AS plan_name, p.code AS plan_code, p.room_limit AS plan_room_limit
+        `SELECT us.*, p.name AS plan_name, p.code AS plan_code, p.room_limit AS plan_room_limit,
+                p.feature_flags AS plan_feature_flags, p.sort_order AS plan_sort_order
          FROM user_subscriptions us
          JOIN subscription_plans p ON us.plan_id = p.id
          WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
@@ -17,10 +18,13 @@ async function getActiveSubscription(userId) {
 
 /**
  * Get user's room quota info
+ * room_limit = -1 means unlimited
  */
 async function getUserQuota(userId) {
     const sub = await getActiveSubscription(userId);
-    const subLimit = sub ? Number(sub.planRoomLimit) : 0;
+    // -1 means unlimited (data is converted to camelCase by db.get)
+    let subLimit = sub ? Number(sub.planRoomLimit) : 0;
+    const isUnlimited = subLimit === -1;
 
     const addonResult = await db.get(
         `SELECT COALESCE(SUM(rap.room_count), 0) AS total
@@ -29,15 +33,19 @@ async function getUserQuota(userId) {
          WHERE ura.user_id = ? AND ura.status = 'active' AND ura.end_date > NOW()`,
         [userId]
     );
-    const addonRooms = Number(addonResult?.total || 0);
+    const addonRooms = isUnlimited ? 0 : Number(addonResult?.total || 0);
 
     const settings = await db.getSystemSettings();
-    const defaultLimit = Number(settings.default_room_limit || 0);
+    // -1 means unlimited for default too
+    let defaultLimit = Number(settings.defaultRoomLimit || settings.default_room_limit || 0);
+    const isDefaultUnlimited = defaultLimit === -1;
 
-    const totalLimit = subLimit + addonRooms + defaultLimit;
+    // If any source is unlimited, total is unlimited
+    const isTotalUnlimited = isUnlimited || isDefaultUnlimited;
+    const totalLimit = isTotalUnlimited ? -1 : (subLimit + addonRooms + defaultLimit);
 
     const countResult = await db.get(
-        `SELECT COUNT(*) AS count FROM user_room WHERE user_id = ?`,
+        `SELECT COUNT(*) AS count FROM user_room WHERE user_id = ? AND deleted_at IS NULL`,
         [userId]
     );
     const used = Number(countResult?.count || 0);
@@ -49,12 +57,14 @@ async function getUserQuota(userId) {
         defaultRooms: defaultLimit,
         totalLimit,
         used,
-        remaining: totalLimit - used
+        remaining: isTotalUnlimited ? -1 : (totalLimit - used),
+        isUnlimited: isTotalUnlimited
     };
 }
 
 /**
  * Purchase a subscription plan
+ * Supports: 1) Extending same plan 2) Upgrading with prorated difference
  */
 async function purchasePlan(userId, planId, billingCycle) {
     const plan = await db.get(`SELECT * FROM subscription_plans WHERE id = ? AND is_active = true`, [planId]);
@@ -62,18 +72,18 @@ async function purchasePlan(userId, planId, billingCycle) {
         return { success: false, error: '套餐不存在或已下架' };
     }
 
-    let price, durationDays;
+    let newPrice, durationDays;
     switch (billingCycle) {
         case 'monthly':
-            price = Number(plan.priceMonthly);
+            newPrice = Number(plan.priceMonthly);
             durationDays = 30;
             break;
         case 'quarterly':
-            price = Number(plan.priceQuarterly);
+            newPrice = Number(plan.priceQuarterly);
             durationDays = 90;
             break;
         case 'yearly':
-            price = Number(plan.priceAnnual);
+            newPrice = Number(plan.priceAnnual);
             durationDays = 365;
             break;
         default:
@@ -81,35 +91,126 @@ async function purchasePlan(userId, planId, billingCycle) {
     }
 
     const cycleNames = { monthly: '月付', quarterly: '季付', yearly: '年付' };
-    const itemName = `${plan.name} - ${cycleNames[billingCycle]}`;
 
-    // Purchase with balance
-    const purchase = await balanceService.purchaseWithBalance(
-        userId, price, 'plan', itemName, `套餐: ${plan.name}, 周期: ${billingCycle}`
+    // Check for existing active subscription (same or different plan)
+    const existingSub = await db.get(
+        `SELECT us.*, sp.name AS old_plan_name, sp.room_limit AS old_room_limit,
+                sp.price_monthly AS old_price_monthly, sp.price_quarterly AS old_price_quarterly, sp.price_annual AS old_price_annual,
+                sp.sort_order AS old_sort_order
+         FROM user_subscriptions us
+         JOIN subscription_plans sp ON us.plan_id = sp.id
+         WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
+         ORDER BY us.end_date DESC LIMIT 1`,
+        [userId]
     );
-    if (!purchase.success) {
-        return purchase;
+
+    // Block downgrade: if existing plan has higher sort_order than new plan
+    if (existingSub && existingSub.planId !== planId) {
+        const newSortOrder = Number(plan.sortOrder || 0);
+        const oldSortOrder = Number(existingSub.oldSortOrder || 0);
+        if (newSortOrder < oldSortOrder) {
+            return { success: false, error: '不支持降级套餐，如需降级请联系客服' };
+        }
     }
 
-    // Calculate subscription period
-    // If user has active subscription of same plan, extend from end_date
-    const existingSub = await db.get(
-        `SELECT end_date FROM user_subscriptions
-         WHERE user_id = ? AND plan_id = ? AND status = 'active' AND end_date > NOW()`,
-        [userId, planId]
-    );
+    let finalPrice = newPrice;
+    let refundAmount = 0;
+    let startDate = new Date();
+    let upgradeInfo = null;
 
-    const startDate = existingSub ? new Date(existingSub.endDate) : new Date();
-    const endDate = new Date(startDate.getTime() + durationDays * 24 * 3600 * 1000);
+    if (existingSub) {
+        const now = new Date();
+        const endDate = new Date(existingSub.endDate);
+        const remainingDays = Math.max(0, Math.ceil((endDate - now) / (24 * 3600 * 1000)));
+        const totalDays = Math.ceil((endDate - new Date(existingSub.startDate)) / (24 * 3600 * 1000));
 
-    // If upgrading from a different plan, expire old subscriptions
-    if (!existingSub) {
+        // Get old plan price based on billing cycle
+        let oldPrice;
+        switch (existingSub.billingCycle) {
+            case 'monthly': oldPrice = Number(existingSub.oldPriceMonthly); break;
+            case 'quarterly': oldPrice = Number(existingSub.oldPriceQuarterly); break;
+            case 'yearly': oldPrice = Number(existingSub.oldPriceAnnual); break;
+            default: oldPrice = Number(existingSub.oldPriceMonthly);
+        }
+
+        // Calculate prorated value of remaining subscription
+        const dailyRate = totalDays > 0 ? oldPrice / totalDays : 0;
+        const remainingValue = Math.round(dailyRate * remainingDays);
+
+        if (existingSub.planId === planId) {
+            // Same plan - just extend from end date
+            startDate = endDate;
+            finalPrice = newPrice;
+        } else {
+            // Different plan - calculate upgrade/downgrade
+            // Refund remaining value, charge new price
+            finalPrice = newPrice - remainingValue;
+            refundAmount = remainingValue;
+
+            upgradeInfo = {
+                oldPlan: existingSub.oldPlanName,
+                newPlan: plan.name,
+                remainingDays,
+                remainingValue,
+                priceAdjustment: -remainingValue,
+                finalPrice
+            };
+
+            // If finalPrice is negative, user gets refund
+            // If finalPrice is positive, user pays the difference
+        }
+    }
+
+    const itemName = upgradeInfo
+        ? `${plan.name} - ${cycleNames[billingCycle]} (升级自 ${upgradeInfo.oldPlan})`
+        : `${plan.name} - ${cycleNames[billingCycle]}`;
+
+    // Handle the transaction
+    let purchase;
+    if (finalPrice <= 0) {
+        // User gets refund or free upgrade
+        if (finalPrice < 0) {
+            // Refund the difference
+            await balanceService.adjustBalance(
+                userId,
+                Math.abs(finalPrice),
+                'refund',
+                `套餐升级退款: ${upgradeInfo.oldPlan} → ${plan.name}`,
+                null
+            );
+        }
+        purchase = { success: true, order: { orderNo: 'FREE-' + Date.now(), amount: 0, balanceAfter: null } };
+    } else {
+        // User pays the difference or full price
+        purchase = await balanceService.purchaseWithBalance(
+            userId, finalPrice, 'plan', itemName,
+            upgradeInfo
+                ? `套餐升级: ${upgradeInfo.oldPlan} → ${plan.name}, 原价${newPrice}, 抵扣${refundAmount}, 实付${finalPrice}`
+                : `套餐: ${plan.name}, 周期: ${billingCycle}`
+        );
+        if (!purchase.success) {
+            return purchase;
+        }
+    }
+
+    // Cancel old subscription if exists and different plan
+    if (existingSub && existingSub.planId !== planId) {
         await db.run(
-            `UPDATE user_subscriptions SET status = 'cancelled'
-             WHERE user_id = ? AND status = 'active' AND end_date > NOW()`,
-            [userId]
+            `UPDATE user_subscriptions SET status = 'cancelled', updated_at = NOW()
+             WHERE id = ?`,
+            [existingSub.id]
         );
     }
+
+    // Calculate start and end date
+    if (existingSub && existingSub.planId === planId) {
+        // Same plan - extend from end_date
+        startDate = new Date(existingSub.endDate);
+    } else {
+        // New plan or upgrade - start from now
+        startDate = new Date();
+    }
+    const endDate = new Date(startDate.getTime() + durationDays * 24 * 3600 * 1000);
 
     // Create subscription
     await db.run(
@@ -126,8 +227,9 @@ async function purchasePlan(userId, planId, billingCycle) {
             roomLimit: plan.roomLimit,
             startDate,
             endDate,
-            price
+            price: finalPrice
         },
+        upgrade: upgradeInfo,
         order: purchase.order
     };
 }

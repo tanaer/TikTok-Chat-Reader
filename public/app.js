@@ -7,12 +7,62 @@ let currentDetailRoomId = null;
 let currentSessionId = 'live'; // 'live' or session UUID
 let roomIsLive = false;
 let connectedRoomId = null; // Track actually connected room to prevent cross-room event display
+let globalLoadingCount = 0;
+
+function setGlobalLoadingVisible(visible, message = '加载中...') {
+    const overlay = document.getElementById('globalLoadingOverlay');
+    const textEl = document.getElementById('globalLoadingText');
+    if (!overlay || !textEl) return;
+
+    textEl.textContent = message;
+    overlay.classList.toggle('is-visible', visible);
+    overlay.setAttribute('aria-hidden', visible ? 'false' : 'true');
+}
+
+function showGlobalLoading(message = '加载中...') {
+    globalLoadingCount += 1;
+    setGlobalLoadingVisible(true, message);
+}
+
+function hideGlobalLoading() {
+    globalLoadingCount = Math.max(0, globalLoadingCount - 1);
+    if (globalLoadingCount === 0) {
+        setGlobalLoadingVisible(false);
+    }
+}
+
+async function withGlobalLoading(message, task) {
+    showGlobalLoading(message);
+    try {
+        return await task();
+    } finally {
+        hideGlobalLoading();
+    }
+}
+
+window.showGlobalLoading = showGlobalLoading;
+window.hideGlobalLoading = hideGlobalLoading;
+window.withGlobalLoading = withGlobalLoading;
 
 // Initialization
 $(document).ready(() => {
-    // Update auth navbar
+    // Require authentication - redirect to login if not authenticated
     if (typeof Auth !== 'undefined') {
+        if (!Auth.requireAuth()) return; // Redirects to login if not authenticated
         Auth.updateNavbar();
+        // Show export button for admins or users with export feature
+        if (Auth.isAdmin()) {
+            const btn = document.getElementById('btn-export');
+            if (btn) btn.style.display = '';
+        } else {
+            Auth.apiFetch('/api/user/subscription').then(r => r.json()).then(data => {
+                const flags = data.subscription?.featureFlags || data.subscription?.planFeatureFlags || {};
+                if (flags.export) {
+                    const btn = document.getElementById('btn-export');
+                    if (btn) btn.style.display = '';
+                }
+            }).catch(() => {});
+        }
     }
 
     initSocket();
@@ -20,6 +70,12 @@ $(document).ready(() => {
     // Initial Load
     loadConfig(); // from config.js
     renderRoomList(); // from room_list.js
+
+    // Show sub-nav for monitor center by default
+    const subNavContainer = document.getElementById('sub-nav-container');
+    if (subNavContainer) {
+        subNavContainer.classList.remove('hidden');
+    }
 
     // Event Listeners (Global)
     // ...
@@ -83,9 +139,20 @@ function switchSection(sectionId) {
     $('.content-section').hide();
     $(`#section-${sectionId}`).show();
 
-    // Update Nav Active State
-    $('.nav-btn').removeClass('active');
-    $(`.nav-btn[onclick="switchSection('${sectionId}')"]`).addClass('active');
+    // Update sub-nav active state
+    $('.sub-nav-btn').removeClass('active');
+    $(`.sub-nav-btn[onclick="switchSection('${sectionId}')"]`).addClass('active');
+
+    // Show/hide sub-navigation container based on current section
+    const subNavContainer = document.getElementById('sub-nav-container');
+    const monitorSections = ['roomList', 'userAnalysis', 'roomAnalysis', 'recording', 'systemConfig'];
+    if (subNavContainer) {
+        if (monitorSections.includes(sectionId)) {
+            subNavContainer.classList.remove('hidden');
+        } else {
+            subNavContainer.classList.add('hidden');
+        }
+    }
 
     if (sectionId === 'roomList') {
         // Don't auto-refresh - user can click refresh button manually
@@ -116,83 +183,84 @@ async function loadRoom(id) {
     // Show loading state
     showLoadingState();
 
-    try {
-        // First check if room is live and get session list
-        const [statsRes, sessions] = await Promise.all([
-            $.get(`/api/rooms/${id}/stats_detail?sessionId=live`),
-            $.get(`/api/rooms/${id}/sessions`)
-        ]);
+    await withGlobalLoading('加载房间详情中...', async () => {
+        try {
+            // First check if room is live and get session list
+            const [statsRes, sessions] = await Promise.all([
+                $.get(`/api/rooms/${id}/stats_detail?sessionId=live`),
+                $.get(`/api/rooms/${id}/sessions`)
+            ]);
 
-        // Load all-time leaderboards in background (don't block UI)
-        loadAlltimeLeaderboards(id);
+            // Load all-time leaderboards in background (don't block UI)
+            loadAlltimeLeaderboards(id);
 
-        roomIsLive = statsRes.isLive === true;
+            roomIsLive = statsRes.isLive === true;
 
-        // Populate session dropdown
-        const select = $('#sessionSelect');
-        select.empty();
-        select.append('<option value="live">🟢 实时直播 (LIVE)</option>');
+            // Populate session dropdown
+            const select = $('#sessionSelect');
+            select.empty();
+            select.append('<option value="live">🟢 实时直播 (LIVE)</option>');
 
-        if (sessions && sessions.length > 0) {
-            sessions.forEach(s => {
-                // Use createdAt or endTime as display, fallback to session ID if both null
-                const displayTime = s.createdAt || s.endTime;
-                const dateStr = displayTime ? new Date(displayTime).toLocaleString() : `场次 ${s.sessionId}`;
-                select.append(`<option value="${s.sessionId}">${dateStr} (存档)</option>`);
-            });
+            if (sessions && sessions.length > 0) {
+                sessions.forEach(s => {
+                    // Use createdAt or endTime as display, fallback to session ID if both null
+                    const displayTime = s.createdAt || s.endTime;
+                    const dateStr = displayTime ? new Date(displayTime).toLocaleString() : `场次 ${s.sessionId}`;
+                    select.append(`<option value="${s.sessionId}">${dateStr} (存档)</option>`);
+                });
+            }
+
+            if (roomIsLive) {
+                // Room is live - auto-connect and show live data
+                currentSessionId = 'live';
+                select.val('live');
+                hideLoadingState();
+                updateRoomStatusUI(true);
+                addSystemMessage('🟢 房间正在直播中，已自动接入实时数据');
+
+                // Auto-connect to live stream
+                connectToLive(id);
+
+                // Show stats
+                updateRoomHeader(statsRes.summary);
+                updateLeaderboards(statsRes.leaderboards);
+
+            } else if (sessions && sessions.length > 0) {
+                // Not live - auto-select last session
+                const lastSessionId = sessions[0].sessionId;
+                currentSessionId = lastSessionId;
+                select.val(lastSessionId);
+
+                // Load last session stats
+                const lastStats = await $.get(`/api/rooms/${id}/stats_detail?sessionId=${lastSessionId}`);
+                hideLoadingState();
+                updateRoomStatusUI(false);
+                const lastSessionTime = sessions[0].createdAt || sessions[0].endTime;
+                const lastSessionStr = lastSessionTime ? new Date(lastSessionTime).toLocaleString() : `场次 ${lastSessionId}`;
+                addSystemMessage(`📼 房间未开播，已加载最近一场数据 (${lastSessionStr})`);
+
+                updateRoomHeader(lastStats.summary);
+                updateLeaderboards(lastStats.leaderboards);
+
+            } else {
+                // No sessions and not live - show empty state
+                currentSessionId = 'live';
+                select.val('live');
+                hideLoadingState();
+                updateRoomStatusUI(false);
+                addSystemMessage('⚠️ 该房间暂无任何数据');
+
+                // Show empty data
+                updateRoomHeader({ duration: 0, totalVisits: 0, totalComments: 0, totalLikes: 0, totalGiftValue: 0 });
+                updateLeaderboards({ gifters: [], chatters: [], likers: [] });
+            }
+
+        } catch (err) {
+            console.error('loadRoom error:', err);
+            hideLoadingState();
+            addSystemMessage('❌ 加载失败: ' + err.message);
         }
-
-        if (roomIsLive) {
-            // Room is live - auto-connect and show live data
-            currentSessionId = 'live';
-            select.val('live');
-            hideLoadingState();
-            updateRoomStatusUI(true);
-            addSystemMessage('🟢 房间正在直播中，已自动接入实时数据');
-
-            // Auto-connect to live stream
-            connectToLive(id);
-
-            // Show stats
-            updateRoomHeader(statsRes.summary);
-            updateLeaderboards(statsRes.leaderboards);
-
-        } else if (sessions && sessions.length > 0) {
-            // Not live - auto-select last session
-            const lastSessionId = sessions[0].sessionId;
-            currentSessionId = lastSessionId;
-            select.val(lastSessionId);
-
-            // Load last session stats
-            const lastStats = await $.get(`/api/rooms/${id}/stats_detail?sessionId=${lastSessionId}`);
-            hideLoadingState();
-            updateRoomStatusUI(false);
-            const lastSessionTime = sessions[0].createdAt || sessions[0].endTime;
-            const lastSessionStr = lastSessionTime ? new Date(lastSessionTime).toLocaleString() : `场次 ${lastSessionId}`;
-            addSystemMessage(`📼 房间未开播，已加载最近一场数据 (${lastSessionStr})`);
-
-
-            updateRoomHeader(lastStats.summary);
-            updateLeaderboards(lastStats.leaderboards);
-
-        } else {
-            // No sessions and not live - show empty state
-            currentSessionId = 'live';
-            select.val('live');
-            hideLoadingState();
-            updateRoomStatusUI(false);
-            addSystemMessage('⚠️ 该房间暂无任何数据');
-
-            // Show empty data
-            updateRoomHeader({ duration: 0, totalVisits: 0, totalComments: 0, totalLikes: 0, totalGiftValue: 0 });
-            updateLeaderboards({ gifters: [], chatters: [], likers: [] });
-        }
-
-    } catch (err) {
-        console.error('loadRoom error:', err);
-        hideLoadingState();
-        addSystemMessage('❌ 加载失败: ' + err.message);
-    }
+    });
 }
 
 function showLoadingState() {
@@ -215,21 +283,35 @@ async function loadSessionList(roomId) {
     // Now handled in loadRoom for better control
 }
 
-function changeSession(val) {
+async function changeSession(val) {
     currentSessionId = val;
     $('#chatContainer').empty();
+    showLoadingState();
 
-    if (val === 'live') {
-        addSystemMessage('切换到实时视图');
-        if (roomIsLive) {
-            connectToLive(currentDetailRoomId);
+    const loadingText = val === 'live' ? '切换实时数据中...' : '切换场次数据中...';
+
+    await withGlobalLoading(loadingText, async () => {
+        try {
+            if (val === 'live') {
+                addSystemMessage('切换到实时视图');
+                updateRoomStatusUI(roomIsLive);
+                if (roomIsLive) {
+                    connectToLive(currentDetailRoomId);
+                }
+                await loadDetailStats(currentDetailRoomId, 'live');
+            } else {
+                disconnectLive();
+                updateRoomStatusUI(false);
+                await Promise.all([
+                    loadHistoryData(val),
+                    loadDetailStats(currentDetailRoomId, val)
+                ]);
+            }
+        } catch (err) {
+            console.error('changeSession error:', err);
+            addSystemMessage('❌ 切换场次失败: ' + (err.message || '未知错误'));
         }
-        loadDetailStats(currentDetailRoomId, 'live');
-    } else {
-        disconnectLive();
-        loadHistoryData(val);
-        loadDetailStats(currentDetailRoomId, val);
-    }
+    });
 }
 
 async function loadDetailStats(roomId, sessionId) {
@@ -237,7 +319,12 @@ async function loadDetailStats(roomId, sessionId) {
         const res = await $.get(`/api/rooms/${roomId}/stats_detail?sessionId=${sessionId}`);
         updateRoomHeader(res.summary);
         updateLeaderboards(res.leaderboards);
-    } catch (e) { console.error('Stats load error', e); }
+        hideLoadingState();
+        return res;
+    } catch (e) {
+        console.error('Stats load error', e);
+        throw e;
+    }
 }
 
 function updateRoomHeader(summary) {

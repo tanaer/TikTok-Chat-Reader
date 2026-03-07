@@ -329,6 +329,143 @@ async function initDb() {
         // Migration: make users.email nullable (business requirement: email is optional)
         await pool.query(`ALTER TABLE users ALTER COLUMN email DROP NOT NULL`).catch(() => {});
 
+        // Migration: user_room副本机制 - 软删除 + 数据起始时间
+        await pool.query(`ALTER TABLE user_room ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE user_room ADD COLUMN IF NOT EXISTS first_added_at TIMESTAMP DEFAULT NOW()`);
+
+        // Migration: 套餐每日新建房间次数限制
+        await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS daily_room_create_limit INTEGER DEFAULT -1`);
+
+        // Migration: 套餐打开房间数限制 (同时启用监控的房间数, -1=不限)
+        await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS open_room_limit INTEGER DEFAULT -1`);
+
+        // Email verification codes table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS email_verification (
+                email TEXT PRIMARY KEY,
+                code TEXT NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                attempts INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        // Euler API Keys management table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS euler_api_keys (
+                id SERIAL PRIMARY KEY,
+                key_value TEXT NOT NULL,
+                name TEXT DEFAULT '',
+                is_active BOOLEAN DEFAULT true,
+                call_count INTEGER DEFAULT 0,
+                last_used_at TIMESTAMP,
+                last_error TEXT,
+                last_status TEXT DEFAULT 'unknown',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        // AI channels table (provider-level: api_url + api_key)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ai_channels (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                api_url TEXT NOT NULL,
+                api_key TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        // AI models table (belongs to a channel)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ai_models (
+                id SERIAL PRIMARY KEY,
+                channel_id INTEGER REFERENCES ai_channels(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                model_id TEXT NOT NULL,
+                is_active BOOLEAN DEFAULT true,
+                is_default BOOLEAN DEFAULT false,
+                call_count INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                fail_count INTEGER DEFAULT 0,
+                avg_latency_ms INTEGER DEFAULT 0,
+                last_used_at TIMESTAMP,
+                last_error TEXT,
+                last_status TEXT DEFAULT 'unknown',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        // Migration: add channel_id if ai_models existed from previous version (had api_url/api_key inline)
+        try {
+            await pool.query(`ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS channel_id INTEGER REFERENCES ai_channels(id) ON DELETE CASCADE`);
+            await pool.query(`ALTER TABLE ai_models ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT false`);
+            // Make old columns nullable since they're now on ai_channels
+            await pool.query(`ALTER TABLE ai_models ALTER COLUMN api_url DROP NOT NULL`).catch(() => {});
+            await pool.query(`ALTER TABLE ai_models ALTER COLUMN api_key DROP NOT NULL`).catch(() => {});
+
+            const hasOldData = await pool.query(`SELECT id FROM ai_models WHERE api_url IS NOT NULL AND channel_id IS NULL LIMIT 1`);
+            if (hasOldData.rows.length > 0) {
+                // Migrate: move api_url/api_key from ai_models to ai_channels
+                const oldModels = await pool.query(`SELECT DISTINCT api_url, api_key FROM ai_models WHERE api_url IS NOT NULL AND channel_id IS NULL`);
+                for (const row of oldModels.rows) {
+                    const chRes = await pool.query(
+                        `INSERT INTO ai_channels (name, api_url, api_key) VALUES ($1, $2, $3) RETURNING id`,
+                        ['迁移通道', row.api_url, row.api_key]
+                    );
+                    await pool.query(`UPDATE ai_models SET channel_id = $1 WHERE api_url = $2 AND api_key = $3`, [chRes.rows[0].id, row.api_url, row.api_key]);
+                }
+            }
+        } catch (e) { /* ignore migration errors */ }
+
+        // AI credit packages table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ai_credit_packages (
+                id SERIAL PRIMARY KEY,
+                name VARCHAR(100) NOT NULL,
+                credits INTEGER NOT NULL,
+                price_cents INTEGER NOT NULL,
+                description TEXT,
+                is_active BOOLEAN DEFAULT true,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        // AI usage log table
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ai_usage_log (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                usage_type VARCHAR(50),
+                credits_used INTEGER DEFAULT 1,
+                target_id TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        // Member AI analysis results table (independent per member, billable)
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_ai_analysis (
+                id SERIAL PRIMARY KEY,
+                member_id INTEGER NOT NULL,
+                target_user_id TEXT NOT NULL,
+                result TEXT NOT NULL,
+                chat_count INTEGER DEFAULT 0,
+                model_name TEXT,
+                latency_ms INTEGER DEFAULT 0,
+                source TEXT DEFAULT 'api',
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_ai_analysis_member ON user_ai_analysis(member_id, target_user_id)`);
+
+        // Migration: users AI credit columns
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_credits_monthly INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_credits_remaining INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS ai_credits_used INTEGER DEFAULT 0`);
         // Seed default admin and plans (into production tables)
         await seedDefaultData();
 

@@ -34,7 +34,7 @@ function generateAccessToken(user) {
 /**
  * Generate refresh token and store hash in DB
  */
-async function generateRefreshToken(userId) {
+async function generateRefreshToken(userId, executor = db.pool) {
     const token = crypto.randomBytes(40).toString('hex');
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
 
@@ -52,8 +52,8 @@ async function generateRefreshToken(userId) {
 
     const expiresAt = new Date(Date.now() + expiresMs);
 
-    await db.run(
-        `INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES (?, ?, ?)`,
+    await executor.query(
+        `INSERT INTO refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, $3)`,
         [userId, tokenHash, expiresAt.toISOString()]
     );
 

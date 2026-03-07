@@ -4,6 +4,8 @@ const db = require('../db');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const authService = require('../services/authService');
 const balanceService = require('../services/balanceService');
+const emailService = require('../services/emailService');
+const keyManager = require('../utils/keyManager');
 
 const router = express.Router();
 
@@ -177,8 +179,8 @@ router.put('/users/:id', async (req, res) => {
  * POST /api/admin/users/:id/adjust-balance
  */
 router.post('/users/:id/adjust-balance', [
-    body('amount').isFloat({ min: -999999, max: 999999 }).withMessage('金额无效'),
-    body('remark').trim().notEmpty().withMessage('请填写备注'),
+    body('amount').isFloat().withMessage('金额无效'),
+    body('remark').optional().trim(),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
@@ -186,6 +188,11 @@ router.post('/users/:id/adjust-balance', [
     try {
         const { amount, remark } = req.body;
         const userId = parseInt(req.params.id);
+        const finalRemark = remark || '管理员调整余额';
+
+        if (isNaN(amount)) {
+            return res.status(400).json({ error: '金额无效' });
+        }
 
         // Create payment record for recharge
         let refOrderNo = null;
@@ -194,14 +201,14 @@ router.post('/users/:id/adjust-balance', [
             await db.pool.query(
                 `INSERT INTO payment_records (order_no, user_id, type, item_name, amount, status, payment_method, remark)
                  VALUES ($1, $2, 'recharge', '管理员充值', $3, 'paid', 'manual', $4)`,
-                [orderNo, userId, Math.round(Math.abs(amount)), remark]
+                [orderNo, userId, Math.round(Math.abs(amount)), finalRemark]
             );
             refOrderNo = orderNo;
         }
 
         const result = await balanceService.adjustBalance(
             userId, Math.round(parseFloat(amount)), amount > 0 ? 'recharge' : 'admin_adjust',
-            remark, refOrderNo, req.user.id
+            finalRemark, refOrderNo, req.user.id
         );
 
         if (!result.success) {
@@ -333,7 +340,7 @@ router.get('/plans', async (req, res) => {
 router.post('/plans', [
     body('name').trim().notEmpty(),
     body('code').trim().notEmpty(),
-    body('roomLimit').isInt({ min: 1 }),
+    body('roomLimit').isInt({ min: -1 }).withMessage('房间上限必须 >= -1 (-1表示无限)'),
     body('priceMonthly').isFloat({ min: 0 }),
     body('priceQuarterly').isFloat({ min: 0 }),
     body('priceAnnual').isFloat({ min: 0 }),
@@ -342,15 +349,15 @@ router.post('/plans', [
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
     try {
-        const { name, code, roomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder } = req.body;
+        const { name, code, roomLimit, openRoomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, dailyRoomCreateLimit, aiCreditsMonthly } = req.body;
 
         const existing = await db.get('SELECT id FROM subscription_plans WHERE code = ?', [code]);
         if (existing) return res.status(409).json({ error: '套餐代码已存在' });
 
         await db.run(
-            `INSERT INTO subscription_plans (name, code, room_limit, price_monthly, price_quarterly, price_annual, feature_flags, sort_order)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, code, roomLimit, Math.round(priceMonthly), Math.round(priceQuarterly), Math.round(priceAnnual), JSON.stringify(featureFlags || {}), sortOrder || 0]
+            `INSERT INTO subscription_plans (name, code, room_limit, open_room_limit, price_monthly, price_quarterly, price_annual, feature_flags, sort_order, daily_room_create_limit, ai_credits_monthly)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, code, roomLimit, openRoomLimit !== undefined ? openRoomLimit : -1, Math.round(priceMonthly), Math.round(priceQuarterly), Math.round(priceAnnual), JSON.stringify(featureFlags || {}), sortOrder || 0, dailyRoomCreateLimit !== undefined ? dailyRoomCreateLimit : -1, aiCreditsMonthly || 0]
         );
         res.status(201).json({ message: '套餐创建成功' });
     } catch (err) {
@@ -364,7 +371,7 @@ router.post('/plans', [
  */
 router.put('/plans/:id', async (req, res) => {
     try {
-        const { name, roomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, isActive } = req.body;
+        const { name, roomLimit, openRoomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, isActive, dailyRoomCreateLimit } = req.body;
         const planId = req.params.id;
 
         const updates = [];
@@ -373,12 +380,15 @@ router.put('/plans/:id', async (req, res) => {
 
         if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
         if (roomLimit !== undefined) { updates.push(`room_limit = $${++idx}`); params.push(roomLimit); }
+        if (openRoomLimit !== undefined) { updates.push(`open_room_limit = $${++idx}`); params.push(openRoomLimit); }
         if (priceMonthly !== undefined) { updates.push(`price_monthly = $${++idx}`); params.push(Math.round(priceMonthly)); }
         if (priceQuarterly !== undefined) { updates.push(`price_quarterly = $${++idx}`); params.push(Math.round(priceQuarterly)); }
         if (priceAnnual !== undefined) { updates.push(`price_annual = $${++idx}`); params.push(Math.round(priceAnnual)); }
         if (featureFlags !== undefined) { updates.push(`feature_flags = $${++idx}`); params.push(JSON.stringify(featureFlags)); }
         if (sortOrder !== undefined) { updates.push(`sort_order = $${++idx}`); params.push(sortOrder); }
         if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
+        if (dailyRoomCreateLimit !== undefined) { updates.push(`daily_room_create_limit = $${++idx}`); params.push(dailyRoomCreateLimit); }
+        if (req.body.aiCreditsMonthly !== undefined) { updates.push(`ai_credits_monthly = $${++idx}`); params.push(req.body.aiCreditsMonthly); }
 
         if (updates.length === 0) return res.status(400).json({ error: '没有要更新的字段' });
 
@@ -521,6 +531,386 @@ router.put('/settings', async (req, res) => {
     } catch (err) {
         console.error('[Admin] Save settings error:', err.message);
         res.status(500).json({ error: '保存失败' });
+    }
+});
+
+// ==================== Euler API Keys ====================
+
+/**
+ * GET /api/admin/euler-keys
+ */
+router.get('/euler-keys', async (req, res) => {
+    try {
+        const keys = await db.all('SELECT id, name, key_value, is_active, call_count, last_used_at, last_error, last_status, created_at FROM euler_api_keys ORDER BY id');
+        const runtimeStatus = keyManager.getStatus();
+        res.json({ keys, runtimeStatus });
+    } catch (err) {
+        console.error('[Admin] Euler keys error:', err.message);
+        res.status(500).json({ error: '获取 Euler Keys 失败' });
+    }
+});
+
+/**
+ * POST /api/admin/euler-keys
+ */
+router.post('/euler-keys', [
+    body('keyValue').trim().notEmpty().withMessage('API Key 不能为空'),
+    body('name').optional().trim(),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+    try {
+        const { keyValue, name } = req.body;
+        // Check duplicate
+        const existing = await db.get('SELECT id FROM euler_api_keys WHERE key_value = ?', [keyValue.trim()]);
+        if (existing) return res.status(409).json({ error: '该 Key 已存在' });
+
+        await db.run(
+            'INSERT INTO euler_api_keys (key_value, name) VALUES (?, ?)',
+            [keyValue.trim(), name || '']
+        );
+        await keyManager.refreshKeys({});
+        res.status(201).json({ message: 'Key 添加成功' });
+    } catch (err) {
+        console.error('[Admin] Add Euler key error:', err.message);
+        res.status(500).json({ error: '添加失败' });
+    }
+});
+
+/**
+ * PUT /api/admin/euler-keys/:id
+ */
+router.put('/euler-keys/:id', async (req, res) => {
+    try {
+        const { name, isActive } = req.body;
+        const updates = [];
+        const params = [];
+        let idx = 0;
+
+        if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
+        if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
+
+        if (updates.length === 0) return res.status(400).json({ error: '无更新' });
+
+        updates.push('updated_at = NOW()');
+        params.push(req.params.id);
+        await db.pool.query(`UPDATE euler_api_keys SET ${updates.join(', ')} WHERE id = $${idx + 1}`, params);
+        await keyManager.refreshKeys({});
+        res.json({ message: '更新成功' });
+    } catch (err) {
+        res.status(500).json({ error: '更新失败' });
+    }
+});
+
+/**
+ * DELETE /api/admin/euler-keys/:id
+ */
+router.delete('/euler-keys/:id', async (req, res) => {
+    try {
+        await db.run('DELETE FROM euler_api_keys WHERE id = ?', [req.params.id]);
+        await keyManager.refreshKeys({});
+        res.json({ message: '已删除' });
+    } catch (err) {
+        res.status(500).json({ error: '删除失败' });
+    }
+});
+
+/**
+ * POST /api/admin/euler-keys/:id/test - Test a specific key
+ */
+router.post('/euler-keys/:id/test', async (req, res) => {
+    try {
+        const key = await db.get('SELECT * FROM euler_api_keys WHERE id = ?', [req.params.id]);
+        if (!key) return res.status(404).json({ error: 'Key 不存在' });
+
+        // Test: call Euler sign API with a dummy request to verify key validity
+        const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
+        const startTime = Date.now();
+        // Use the actual Euler sign API endpoint (tiktok.eulerstream.com)
+        const response = await fetch('https://tiktok.eulerstream.com/webcast/rate_limits', {
+            headers: { 'apiKey': key.keyValue },
+            signal: AbortSignal.timeout(10000),
+        });
+        const latency = Date.now() - startTime;
+        const bodyText = await response.text().catch(() => '');
+
+        // Euler API returns various status codes:
+        // 200 = key valid, 401/403 = key invalid, others = network issue
+        if (response.status === 200 || response.status === 404) {
+            // 200 or 404 both mean the API server responded, key is accepted
+            await db.run(
+                `UPDATE euler_api_keys SET last_status = 'ok', last_error = NULL, last_used_at = NOW(), updated_at = NOW() WHERE id = ?`,
+                [req.params.id]
+            );
+            res.json({ success: true, latency, status: response.status });
+        } else if (response.status === 401 || response.status === 403) {
+            await db.run(
+                `UPDATE euler_api_keys SET last_status = 'error', last_error = 'Key 无效或已过期', last_used_at = NOW(), updated_at = NOW() WHERE id = ?`,
+                [req.params.id]
+            );
+            res.json({ success: false, latency, status: response.status, error: 'Key 无效或已过期' });
+        } else {
+            await db.run(
+                `UPDATE euler_api_keys SET last_status = 'error', last_error = ?, last_used_at = NOW(), updated_at = NOW() WHERE id = ?`,
+                [`HTTP ${response.status}: ${bodyText.slice(0, 200)}`, req.params.id]
+            );
+            res.json({ success: false, latency, status: response.status, error: `HTTP ${response.status}` });
+        }
+    } catch (err) {
+        await db.run(
+            `UPDATE euler_api_keys SET last_status = 'error', last_error = ?, updated_at = NOW() WHERE id = ?`,
+            [err.message.slice(0, 200), req.params.id]
+        );
+        res.json({ success: false, error: err.message });
+    }
+});
+
+// ==================== AI Channels & Models ====================
+
+/**
+ * GET /api/admin/ai-channels - list channels with their models
+ */
+router.get('/ai-channels', async (req, res) => {
+    try {
+        const channels = await db.all('SELECT * FROM ai_channels ORDER BY id');
+        const models = await db.all('SELECT * FROM ai_models ORDER BY channel_id, id');
+        // Group models under channels
+        const result = channels.map(ch => ({
+            ...ch,
+            models: models.filter(m => m.channelId === ch.id)
+        }));
+        res.json({ channels: result });
+    } catch (err) {
+        console.error('[Admin] AI channels error:', err.message);
+        res.status(500).json({ error: '获取 AI 通道列表失败' });
+    }
+});
+
+/** POST /api/admin/ai-channels - create channel */
+router.post('/ai-channels', [
+    body('name').trim().notEmpty().withMessage('名称不能为空'),
+    body('apiUrl').trim().notEmpty().withMessage('API地址不能为空'),
+    body('apiKey').trim().notEmpty().withMessage('API Key不能为空'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+    try {
+        const { name, apiUrl, apiKey } = req.body;
+        await db.run('INSERT INTO ai_channels (name, api_url, api_key) VALUES (?, ?, ?)', [name, apiUrl, apiKey]);
+        res.status(201).json({ message: '通道创建成功' });
+    } catch (err) {
+        res.status(500).json({ error: '创建失败' });
+    }
+});
+
+/** PUT /api/admin/ai-channels/:id */
+router.put('/ai-channels/:id', async (req, res) => {
+    try {
+        const { name, apiUrl, apiKey, isActive } = req.body;
+        const updates = []; const params = []; let idx = 0;
+        if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
+        if (apiUrl !== undefined) { updates.push(`api_url = $${++idx}`); params.push(apiUrl); }
+        if (apiKey !== undefined) { updates.push(`api_key = $${++idx}`); params.push(apiKey); }
+        if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
+        if (updates.length === 0) return res.status(400).json({ error: '无更新' });
+        updates.push('updated_at = NOW()');
+        params.push(req.params.id);
+        await db.pool.query(`UPDATE ai_channels SET ${updates.join(', ')} WHERE id = $${idx + 1}`, params);
+        res.json({ message: '更新成功' });
+    } catch (err) { res.status(500).json({ error: '更新失败' }); }
+});
+
+/** DELETE /api/admin/ai-channels/:id */
+router.delete('/ai-channels/:id', async (req, res) => {
+    try {
+        await db.run('DELETE FROM ai_channels WHERE id = ?', [req.params.id]);
+        res.json({ message: '通道已删除（包含其下所有模型）' });
+    } catch (err) { res.status(500).json({ error: '删除失败' }); }
+});
+
+/** POST /api/admin/ai-channels/:channelId/models - add model to channel */
+router.post('/ai-channels/:channelId/models', [
+    body('name').trim().notEmpty().withMessage('名称不能为空'),
+    body('modelId').trim().notEmpty().withMessage('模型ID不能为空'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+    try {
+        const { name, modelId, isDefault } = req.body;
+        // If setting as default, unset other defaults
+        if (isDefault) {
+            await db.run('UPDATE ai_models SET is_default = false WHERE is_default = true');
+        }
+        await db.run(
+            'INSERT INTO ai_models (channel_id, name, model_id, is_default) VALUES (?, ?, ?, ?)',
+            [req.params.channelId, name, modelId, isDefault || false]
+        );
+        res.status(201).json({ message: '模型添加成功' });
+    } catch (err) { res.status(500).json({ error: '添加失败' }); }
+});
+
+/** PUT /api/admin/ai-models/:id */
+router.put('/ai-models/:id', async (req, res) => {
+    try {
+        const { name, modelId, isActive, isDefault } = req.body;
+        const updates = []; const params = []; let idx = 0;
+        if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
+        if (modelId !== undefined) { updates.push(`model_id = $${++idx}`); params.push(modelId); }
+        if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
+        if (isDefault !== undefined) {
+            if (isDefault) await db.run('UPDATE ai_models SET is_default = false WHERE is_default = true');
+            updates.push(`is_default = $${++idx}`); params.push(isDefault);
+        }
+        if (updates.length === 0) return res.status(400).json({ error: '无更新' });
+        updates.push('updated_at = NOW()');
+        params.push(req.params.id);
+        await db.pool.query(`UPDATE ai_models SET ${updates.join(', ')} WHERE id = $${idx + 1}`, params);
+        res.json({ message: '更新成功' });
+    } catch (err) { res.status(500).json({ error: '更新失败' }); }
+});
+
+/** DELETE /api/admin/ai-models/:id */
+router.delete('/ai-models/:id', async (req, res) => {
+    try {
+        await db.run('DELETE FROM ai_models WHERE id = ?', [req.params.id]);
+        res.json({ message: '模型已删除' });
+    } catch (err) { res.status(500).json({ error: '删除失败' }); }
+});
+
+/** POST /api/admin/ai-models/:id/test - Test model via its channel */
+router.post('/ai-models/:id/test', async (req, res) => {
+    try {
+        const model = await db.get(
+            `SELECT m.*, c.api_url, c.api_key FROM ai_models m JOIN ai_channels c ON m.channel_id = c.id WHERE m.id = ?`,
+            [req.params.id]
+        );
+        if (!model) return res.status(404).json({ error: '模型不存在' });
+
+        const fetch = (...args) => import('node-fetch').then(({ default: f }) => f(...args));
+        const startTime = Date.now();
+        const baseUrl = model.apiUrl.endsWith('/') ? model.apiUrl : model.apiUrl + '/';
+        const response = await fetch(`${baseUrl}chat/completions`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${model.apiKey}` },
+            body: JSON.stringify({
+                model: model.modelId,
+                messages: [{ role: 'user', content: 'Hi, respond with just "ok".' }],
+                max_tokens: 10, stream: false,
+            }),
+            timeout: 30000,
+        });
+        const latency = Date.now() - startTime;
+
+        if (response.ok) {
+            const data = await response.json();
+            const reply = data.choices?.[0]?.message?.content || '';
+            await db.run(
+                `UPDATE ai_models SET last_status = 'ok', last_error = NULL, last_used_at = NOW(), avg_latency_ms = ?, updated_at = NOW() WHERE id = ?`,
+                [latency, req.params.id]
+            );
+            res.json({ success: true, latency, reply: reply.slice(0, 100) });
+        } else {
+            const errText = await response.text().catch(() => '');
+            await db.run(
+                `UPDATE ai_models SET last_status = 'error', last_error = ?, last_used_at = NOW(), updated_at = NOW() WHERE id = ?`,
+                [`HTTP ${response.status}: ${errText.slice(0, 200)}`, req.params.id]
+            );
+            res.json({ success: false, latency, status: response.status, error: errText.slice(0, 200) });
+        }
+    } catch (err) {
+        await db.run(`UPDATE ai_models SET last_status = 'error', last_error = ?, updated_at = NOW() WHERE id = ?`, [err.message.slice(0, 200), req.params.id]);
+        res.json({ success: false, error: err.message });
+    }
+});
+
+// ==================== AI Credit Packages ====================
+
+/** GET /api/admin/ai-credit-packages */
+router.get('/ai-credit-packages', async (req, res) => {
+    try {
+        const packages = await db.all('SELECT * FROM ai_credit_packages ORDER BY credits');
+        res.json({ packages });
+    } catch (err) { res.status(500).json({ error: '获取失败' }); }
+});
+
+/** POST /api/admin/ai-credit-packages */
+router.post('/ai-credit-packages', [
+    body('name').trim().notEmpty(),
+    body('credits').isInt({ min: 1 }),
+    body('priceCents').isInt({ min: 0 }),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+    try {
+        const { name, credits, priceCents, description } = req.body;
+        await db.run(
+            'INSERT INTO ai_credit_packages (name, credits, price_cents, description) VALUES (?, ?, ?, ?)',
+            [name, credits, priceCents, description || '']
+        );
+        res.status(201).json({ message: '创建成功' });
+    } catch (err) { res.status(500).json({ error: '创建失败' }); }
+});
+
+/** PUT /api/admin/ai-credit-packages/:id */
+router.put('/ai-credit-packages/:id', async (req, res) => {
+    try {
+        const { name, credits, priceCents, description, isActive } = req.body;
+        const updates = []; const params = []; let idx = 0;
+        if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
+        if (credits !== undefined) { updates.push(`credits = $${++idx}`); params.push(credits); }
+        if (priceCents !== undefined) { updates.push(`price_cents = $${++idx}`); params.push(priceCents); }
+        if (description !== undefined) { updates.push(`description = $${++idx}`); params.push(description); }
+        if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
+        if (updates.length === 0) return res.status(400).json({ error: '无更新' });
+        params.push(req.params.id);
+        await db.pool.query(`UPDATE ai_credit_packages SET ${updates.join(', ')} WHERE id = $${idx + 1}`, params);
+        res.json({ message: '更新成功' });
+    } catch (err) { res.status(500).json({ error: '更新失败' }); }
+});
+
+/** DELETE /api/admin/ai-credit-packages/:id */
+router.delete('/ai-credit-packages/:id', async (req, res) => {
+    try {
+        await db.run('UPDATE ai_credit_packages SET is_active = false WHERE id = ?', [req.params.id]);
+        res.json({ message: '已下架' });
+    } catch (err) { res.status(500).json({ error: '操作失败' }); }
+});
+
+// ==================== SMTP Configuration ====================
+
+/**
+ * POST /api/admin/smtp/test - Test SMTP connection
+ */
+router.post('/smtp/test', async (req, res) => {
+    try {
+        emailService.resetTransporter();
+        await emailService.testSmtp();
+        res.json({ success: true, message: 'SMTP 连接成功' });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+/**
+ * POST /api/admin/smtp/test-send - Send a test email
+ */
+router.post('/smtp/test-send', [
+    body('email').isEmail().withMessage('请输入有效的邮箱地址'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+    try {
+        emailService.resetTransporter();
+        await emailService.sendEmail(
+            req.body.email,
+            '测试邮件 - TikTok Monitor',
+            '<h2>SMTP 配置测试成功</h2><p>如果您收到此邮件，说明 SMTP 配置正确。</p>'
+        );
+        res.json({ success: true, message: '测试邮件已发送' });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
     }
 });
 

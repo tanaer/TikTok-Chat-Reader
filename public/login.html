@@ -27,12 +27,17 @@
                     <label class="label"><span class="label-text">密码</span></label>
                     <input type="password" id="password" class="input input-bordered w-full" placeholder="请输入密码" required>
                 </div>
-                <button type="submit" id="loginBtn" class="btn btn-primary w-full">登录</button>
+                <button type="submit" id="loginBtn" class="btn btn-primary w-full">
+                    <span id="loginBtnText">登录</span>
+                </button>
             </form>
 
             <div class="divider">或</div>
             <p class="text-center text-sm">
                 还没有账户？<a href="/register.html" class="link link-primary">立即注册</a>
+            </p>
+            <p class="text-center text-sm mt-2">
+                <a href="/" class="link link-ghost opacity-60">返回首页</a>
             </p>
         </div>
     </div>
@@ -47,22 +52,35 @@
         async function handleLogin(e) {
             e.preventDefault();
             const btn = document.getElementById('loginBtn');
+            const btnText = document.getElementById('loginBtnText');
             const errorMsg = document.getElementById('errorMsg');
             const errorText = document.getElementById('errorText');
-            btn.classList.add('loading');
+
+            // 禁用按钮并显示加载状态
+            btn.disabled = true;
+            btnText.textContent = '登录中...';
             errorMsg.classList.add('hidden');
 
             const username = document.getElementById('username').value.trim();
             const password = document.getElementById('password').value;
 
-            const { ok, data } = await Auth.login(username, password);
-            btn.classList.remove('loading');
+            try {
+                const { ok, data } = await Auth.login(username, password);
 
-            if (ok) {
-                const params = new URLSearchParams(window.location.search);
-                window.location.href = params.get('redirect') || '/';
-            } else {
-                errorText.textContent = data.error || '登录失败';
+                if (ok) {
+                    btnText.textContent = '登录成功';
+                    const params = new URLSearchParams(window.location.search);
+                    window.location.href = params.get('redirect') || '/';
+                } else {
+                    btn.disabled = false;
+                    btnText.textContent = '登录';
+                    errorText.textContent = data.error || '登录失败';
+                    errorMsg.classList.remove('hidden');
+                }
+            } catch (err) {
+                btn.disabled = false;
+                btnText.textContent = '登录';
+                errorText.textContent = '网络错误，请重试';
                 errorMsg.classList.remove('hidden');
             }
         }

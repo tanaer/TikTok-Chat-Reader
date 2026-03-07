@@ -6,6 +6,7 @@
 
 ## 文档列表
 
+- `doc/ai-monetization-roadmap.md`：AI 商业化优先级记录（本轮结论：先做 AI 直播复盘）
 - `doc/architecture.md`：系统架构与模块职责（从后端到前端）
 - `doc/runtime-flows.md`：关键业务流程（自动监控/录制、手动接入、断开与归档、用户分析/AI）
 - `doc/data-model.md`：数据库与数据模型（`data.db`、表结构、字段含义、索引与迁移）
