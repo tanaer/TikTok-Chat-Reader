@@ -22,9 +22,11 @@ const {
     saveSessionMaintenanceConfig,
     getSessionMaintenanceOverview,
     listSessionMaintenanceLogs,
-    runSessionMaintenanceTask,
     SESSION_MAINTENANCE_ACTION_ALIASES,
 } = require('../services/sessionMaintenanceService');
+const {
+    enqueueSessionMaintenanceJob,
+} = require('../services/adminAsyncJobService');
 const {
     ADMIN_PERMISSION_GROUPS,
     ALL_ADMIN_PERMISSION_KEYS,
@@ -1129,18 +1131,25 @@ router.post('/session-maintenance/actions/:action', async (req, res) => {
             return res.status(404).json({ error: '未知的场次运维动作' });
         }
 
-        const task = await runSessionMaintenanceTask(taskKey, {
-            triggerSource: 'admin-panel-manual',
+        const queuedJob = await enqueueSessionMaintenanceJob(taskKey, {
+            source: 'admin-panel-manual',
+            createdByUserId: req.user?.id,
             roomId: req.body?.roomId,
             gapMinutes: req.body?.gapMinutes,
             lookbackHours: req.body?.lookbackHours,
         });
 
-        res.json({
+        return res.status(202).json({
             success: true,
-            taskKey: task.taskKey,
-            logId: task.logId,
-            result: task.result,
+            accepted: true,
+            queued: queuedJob.queued,
+            processing: queuedJob.processing,
+            reused: queuedJob.reused,
+            taskKey,
+            job: queuedJob.job,
+            message: queuedJob.reused
+                ? '已有同类场次运维任务在后台执行，请稍后刷新运维日志查看结果。'
+                : '场次运维任务已加入后台队列，请稍后刷新运维日志查看结果。',
         });
     } catch (err) {
         console.error('[Admin] Run session maintenance action error:', err.message);

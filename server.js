@@ -37,7 +37,6 @@ const {
     claimNextAiWorkJobs,
 } = require('./services/aiWorkService');
 const {
-    runSessionMaintenanceTask,
     isSessionMaintenanceSettingKey,
 } = require('./services/sessionMaintenanceService');
 const notificationService = require('./services/notificationService');
@@ -61,6 +60,11 @@ const {
     runGlobalStatsRefreshJob,
 } = require('./services/statsRefreshService');
 const { runExpiredRoomCleanupJob } = require('./services/maintenanceJobService');
+const {
+    enqueueSessionMaintenanceJob,
+    enqueueStatsRefreshJob,
+    enqueueEventMigrationJob,
+} = require('./services/adminAsyncJobService');
 
 let schemeAConfig = getSchemeAConfig();
 let recordingStorageService = new RecordingStorageService({ schemeAConfig });
@@ -1061,11 +1065,15 @@ app.get('/api/rooms/:id/sessions', optionalAuth, async (req, res) => {
 app.post('/api/rooms/:id/archive_stale', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         console.log(`[API] Archiving stale events for room ${req.params.id}`);
-        const task = await runSessionMaintenanceTask('archive_stale_live_events_room', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('archive_stale_live_events_room', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
             roomId: req.params.id,
         });
-        res.json(task.result);
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'archive_stale_live_events_room',
+            message: buildAcceptedAdminJobMessage('单房间陈旧 LIVE 归档任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         console.error('Error archiving stale events:', err);
         res.status(500).json({ error: err.message });
@@ -1076,10 +1084,14 @@ app.post('/api/rooms/:id/archive_stale', authenticate, requireAdmin, requireAdmi
 app.post('/api/maintenance/rebuild_sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         console.log('[API] Rebuilding missing sessions...');
-        const task = await runSessionMaintenanceTask('rebuild_missing_sessions', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('rebuild_missing_sessions', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
         });
-        res.json(task.result);
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'rebuild_missing_sessions',
+            message: buildAcceptedAdminJobMessage('缺失场次重建任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         console.error('Error rebuilding sessions:', err);
         res.status(500).json({ error: err.message });
@@ -1090,11 +1102,15 @@ app.post('/api/maintenance/rebuild_sessions', authenticate, requireAdmin, requir
 app.post('/api/maintenance/merge_sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         console.log('[API] Merging short sessions...');
-        const task = await runSessionMaintenanceTask('merge_continuity_sessions', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('merge_continuity_sessions', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
             gapMinutes: req.body?.gapMinutes,
         });
-        res.json(task.result);
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'merge_continuity_sessions',
+            message: buildAcceptedAdminJobMessage('同日连续场次合并任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         console.error('Error merging sessions:', err);
         res.status(500).json({ error: err.message });
@@ -3681,8 +3697,13 @@ app.delete('/api/debug/connections/:id', authenticate, requireAdmin, requireAdmi
 // Migrate events from numeric room_id to username room_id
 app.post('/api/migrate-events', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        await manager.migrateEventRoomIds();
-        res.json({ success: true, message: 'Events migrated successfully' });
+        const queuedJob = await enqueueEventMigrationJob({
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
+        });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            message: buildAcceptedAdminJobMessage('事件房间标识迁移任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3691,10 +3712,14 @@ app.post('/api/migrate-events', authenticate, requireAdmin, requireAdminPermissi
 // Fix orphaned events - create sessions for events without session_id
 app.post('/api/fix-orphaned-events', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const task = await runSessionMaintenanceTask('fix_orphaned_events', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('fix_orphaned_events', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
         });
-        res.json({ success: true, ...task.result });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'fix_orphaned_events',
+            message: buildAcceptedAdminJobMessage('孤儿事件修复任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3703,10 +3728,14 @@ app.post('/api/fix-orphaned-events', authenticate, requireAdmin, requireAdminPer
 // Delete empty sessions (sessions with 0 events)
 app.post('/api/delete-empty-sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const task = await runSessionMaintenanceTask('delete_empty_sessions', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('delete_empty_sessions', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
         });
-        res.json({ success: true, ...task.result });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'delete_empty_sessions',
+            message: buildAcceptedAdminJobMessage('空场次清理任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3715,10 +3744,14 @@ app.post('/api/delete-empty-sessions', authenticate, requireAdmin, requireAdminP
 // Rebuild missing session records (for events with session_id but no session record)
 app.post('/api/rebuild-missing-sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const task = await runSessionMaintenanceTask('rebuild_missing_sessions', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('rebuild_missing_sessions', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
         });
-        res.json({ success: true, ...task.result });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'rebuild_missing_sessions',
+            message: buildAcceptedAdminJobMessage('缺失场次重建任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3731,11 +3764,34 @@ function shouldRunStatsJobsInWebProcess() {
     return !schemeAConfig.worker.enableStats;
 }
 
+function buildAcceptedAdminJobMessage(defaultMessage, queuedJob) {
+    return queuedJob?.reused
+        ? `已有同类后台任务正在执行：${defaultMessage}`
+        : defaultMessage;
+}
+
+function sendAcceptedAdminJobResponse(res, queuedJob, payload = {}) {
+    return res.status(202).json({
+        success: true,
+        accepted: true,
+        queued: Boolean(queuedJob?.queued),
+        processing: Boolean(queuedJob?.processing),
+        reused: Boolean(queuedJob?.reused),
+        job: queuedJob?.job || null,
+        ...payload,
+    });
+}
+
 // Manually refresh room_stats cache (for immediate update after changes)
 app.post('/api/maintenance/refresh_room_stats', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const result = await runRoomStatsRefreshJob('manual-api');
-        res.json({ success: true, ...result });
+        const queuedJob = await enqueueStatsRefreshJob('room', {
+            source: 'manual-api',
+            createdByUserId: req.user?.id,
+        });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            message: buildAcceptedAdminJobMessage('房间统计刷新任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3744,8 +3800,13 @@ app.post('/api/maintenance/refresh_room_stats', authenticate, requireAdmin, requ
 // Manually refresh user_stats cache (for immediate update after changes)
 app.post('/api/maintenance/refresh_user_stats', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const result = await runUserStatsRefreshJob('manual-api');
-        res.json({ success: true, ...result });
+        const queuedJob = await enqueueStatsRefreshJob('user', {
+            source: 'manual-api',
+            createdByUserId: req.user?.id,
+        });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            message: buildAcceptedAdminJobMessage('用户统计刷新任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }

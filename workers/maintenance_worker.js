@@ -9,8 +9,13 @@ const {
     runConsolidateRecentSessionsJob,
     runExpiredRoomCleanupJob,
 } = require('../services/maintenanceJobService');
+const {
+    JOB_QUEUE_MAINTENANCE,
+    processAvailableAdminAsyncJobs,
+} = require('../services/adminAsyncJobService');
 
 const EXPIRED_ROOM_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000;
+const ADMIN_ASYNC_JOB_POLL_INTERVAL_MS = 5000;
 const EXPIRED_ROOM_CLEANUP_STARTUP_DELAY_MS = 60 * 1000;
 
 class MaintenanceWorker {
@@ -24,6 +29,8 @@ class MaintenanceWorker {
             consolidation: null,
             expiredRoomInterval: null,
             expiredRoomStartup: null,
+            asyncJobPoll: null,
+            asyncJobStartup: null,
         };
     }
 
@@ -144,6 +151,18 @@ class MaintenanceWorker {
         await this.scheduleSessionTask('staleCleanup', 'startup');
         await this.scheduleSessionTask('consolidation', 'startup');
         this.scheduleExpiredRoomCleanup();
+        this.timers.asyncJobStartup = setTimeout(() => {
+            this.runJobSafely('admin_async_job_poll:startup', () => processAvailableAdminAsyncJobs(JOB_QUEUE_MAINTENANCE, {
+                maxJobs: 2,
+                runner: 'maintenance-worker',
+            }));
+        }, 2000);
+        this.timers.asyncJobPoll = setInterval(() => {
+            this.runJobSafely('admin_async_job_poll:interval', () => processAvailableAdminAsyncJobs(JOB_QUEUE_MAINTENANCE, {
+                maxJobs: 2,
+                runner: 'maintenance-worker',
+            }));
+        }, ADMIN_ASYNC_JOB_POLL_INTERVAL_MS);
 
         this.shutdownPromise = new Promise((resolve) => {
             this.shutdownResolve = resolve;

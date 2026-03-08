@@ -564,6 +564,51 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_work_job_user_room_session ON ai_work_job(user_id, room_id, session_id, created_at DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_work_job_log_job_created ON ai_work_job_log(job_id, created_at ASC)`);
 
+        // Admin async job queue tables
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS admin_async_job (
+                id SERIAL PRIMARY KEY,
+                queue_name TEXT NOT NULL,
+                job_type TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                dedupe_key TEXT NOT NULL DEFAULT '',
+                created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                current_step TEXT DEFAULT '',
+                progress_percent INTEGER DEFAULT 0,
+                attempt_count INTEGER DEFAULT 0,
+                request_payload_json TEXT,
+                result_json TEXT,
+                error_message TEXT DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manual',
+                queued_at TIMESTAMP DEFAULT NOW(),
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS queue_name TEXT DEFAULT 'maintenance'`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS job_type TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS title TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS dedupe_key TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`).catch(() => {});
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'queued'`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS current_step TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS progress_percent INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS request_payload_json TEXT`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS result_json TEXT`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual'`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS queued_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS started_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_async_job_queue_status_created ON admin_async_job(queue_name, status, queued_at ASC, id ASC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_async_job_dedupe_status_created ON admin_async_job(dedupe_key, status, created_at DESC)`);
+
         // Email verification codes table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS email_verification (

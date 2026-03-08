@@ -9,6 +9,12 @@ const {
     runUserStatsRefreshJob,
     runGlobalStatsRefreshJob,
 } = require('../services/statsRefreshService');
+const {
+    JOB_QUEUE_STATS,
+    processAvailableAdminAsyncJobs,
+} = require('../services/adminAsyncJobService');
+
+const ADMIN_ASYNC_JOB_POLL_INTERVAL_MS = 5000;
 
 class StatsWorker {
     constructor(options = {}) {
@@ -78,6 +84,18 @@ class StatsWorker {
         this.scheduleJob('room_stats_refresh', STATS_WORKER_SCHEDULE.room.startupDelayMs, STATS_WORKER_SCHEDULE.room.intervalMs, () => runRoomStatsRefreshJob('stats-worker'));
         this.scheduleJob('user_stats_refresh', STATS_WORKER_SCHEDULE.user.startupDelayMs, STATS_WORKER_SCHEDULE.user.intervalMs, () => runUserStatsRefreshJob('stats-worker'));
         this.scheduleJob('global_stats_refresh', STATS_WORKER_SCHEDULE.global.startupDelayMs, STATS_WORKER_SCHEDULE.global.intervalMs, () => runGlobalStatsRefreshJob('stats-worker'));
+        this.trackTimer(setTimeout(() => {
+            this.runJobSafely('admin_async_job_poll:startup', () => processAvailableAdminAsyncJobs(JOB_QUEUE_STATS, {
+                maxJobs: 2,
+                runner: 'stats-worker',
+            }));
+        }, 2000));
+        this.trackTimer(setInterval(() => {
+            this.runJobSafely('admin_async_job_poll:interval', () => processAvailableAdminAsyncJobs(JOB_QUEUE_STATS, {
+                maxJobs: 2,
+                runner: 'stats-worker',
+            }));
+        }, ADMIN_ASYNC_JOB_POLL_INTERVAL_MS));
 
         this.shutdownPromise = new Promise((resolve) => {
             this.shutdownResolve = resolve;
