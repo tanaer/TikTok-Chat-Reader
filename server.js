@@ -1754,7 +1754,20 @@ app.get('/api/analysis/users', optionalAuth, async (req, res) => {
         const roomFilter = await getUserRoomFilter(req);
         if (roomFilter) filters.roomFilter = roomFilter;
         console.log(`[API] /api/analysis/users - user: ${req.user?.username || 'anonymous'}, role: ${req.user?.role || 'none'}, roomFilter: ${roomFilter === null ? 'null(admin)' : JSON.stringify(roomFilter)}`);
-        const result = await manager.getTopGifters(page, pageSize, filters);
+
+        const cacheKey = buildAnalysisCacheKey('users', req, roomFilter, {
+            page,
+            pageSize,
+            lang: filters.lang,
+            languageFilter: filters.languageFilter,
+            minRooms: filters.minRooms,
+            activeHour: filters.activeHour,
+            activeHourEnd: filters.activeHourEnd,
+            search: filters.search,
+            searchExact: filters.searchExact,
+            giftPreference: filters.giftPreference
+        });
+        const result = await getCachedAnalysisPayload(cacheKey, () => manager.getTopGifters(page, pageSize, filters));
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });

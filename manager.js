@@ -2103,14 +2103,52 @@ class Manager {
             if (earliest > start) start = earliest;
         }
 
+        const normalizedLimit = parseInt(limit) || 100;
         let roomFilterClause = '';
         const params = [start.toISOString(), end.toISOString()];
         if (roomFilter && roomFilter.length > 0) {
             const placeholders = roomFilter.map(() => '?').join(',');
-            roomFilterClause = `AND e.room_id IN (${placeholders})`;
+            roomFilterClause = `AND rms.room_id IN (${placeholders})`;
             params.push(...roomFilter);
         }
-        params.push(parseInt(limit) || 100);
+        params.push(normalizedLimit);
+
+        if (isIncrementalStatsReadEnabled()) {
+            const minuteStats = await query(`
+                SELECT
+                    rms.room_id,
+                    MAX(r.name) as room_name,
+                    SUM(COALESCE(rms.member_count, 0)) as count,
+                    MAX(rs.valid_daily_avg) as daily_avg
+                FROM room_minute_stats rms
+                LEFT JOIN room r ON rms.room_id = r.room_id
+                LEFT JOIN room_stats rs ON rms.room_id = rs.room_id
+                WHERE rms.stat_minute >= ?
+                  AND rms.stat_minute <= ?
+                  ${roomFilterClause}
+                GROUP BY rms.room_id
+                ORDER BY count DESC
+                LIMIT ?
+            `, params);
+
+            if (minuteStats.length > 0) {
+                return minuteStats.map(s => ({
+                    roomId: s.roomId,
+                    roomName: s.roomName || s.roomId,
+                    count: parseInt(s.count) || 0,
+                    dailyAvg: parseInt(s.dailyAvg) || 0
+                }));
+            }
+        }
+
+        let eventRoomFilterClause = '';
+        const eventParams = [start.toISOString(), end.toISOString()];
+        if (roomFilter && roomFilter.length > 0) {
+            const placeholders = roomFilter.map(() => '?').join(',');
+            eventRoomFilterClause = `AND e.room_id IN (${placeholders})`;
+            eventParams.push(...roomFilter);
+        }
+        eventParams.push(normalizedLimit);
 
         const stats = await query(`
             SELECT
@@ -2124,11 +2162,11 @@ class Manager {
             WHERE e.type = 'member'
             AND e.timestamp >= ?
             AND e.timestamp <= ?
-            ${roomFilterClause}
+            ${eventRoomFilterClause}
             GROUP BY e.room_id
             ORDER BY count DESC
             LIMIT ?
-        `, params);
+        `, eventParams);
 
         return stats.map(s => ({
             roomId: s.roomId,
