@@ -2710,7 +2710,7 @@ async function sendAiWorkJobNotification(job, { success = true, errorMessage = '
         const title = success ? 'AI直播复盘已完成' : 'AI直播复盘处理失败';
         const content = success
             ? `${job.title || 'AI直播复盘'} 已处理完成，点击可直达该房间的 AI复盘。`
-            : `${job.title || 'AI直播复盘'} 处理失败${errorMessage ? `：${String(errorMessage).slice(0, 120)}` : ''}，点击可回到该房间的 AI复盘。`;
+            : `${job.title || 'AI直播复盘'} 处理失败，请点击回到该房间查看。`;
         const actionUrl = `/monitor.html?roomId=${encodeURIComponent(job.roomId || '')}&sessionId=${encodeURIComponent(job.sessionId || '')}&detailTab=timeStats`;
 
         await notificationService.createUserNotification({
