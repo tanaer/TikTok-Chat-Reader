@@ -61,6 +61,30 @@ const EVENT_GIFT_NAME_SQL = `COALESCE(NULLIF(gift_name, ''), data_json::json->>'
 const EVENT_GIFT_IMAGE_SQL = `COALESCE(NULLIF(gift_image, ''), data_json::json->>'giftImage', data_json::json->>'giftPictureUrl')`;
 const EVENT_GIFT_TYPE_SQL = `LOWER(COALESCE(NULLIF(gift_name, ''), data_json::json->>'giftName', ''))`;
 
+function buildEventDataJsonFromRow(row = {}) {
+    return safeJsonStringify({
+        userId: row.userId || null,
+        uniqueId: row.uniqueId || null,
+        nickname: row.nickname || null,
+        giftId: row.giftId ?? null,
+        giftName: row.giftName || null,
+        giftImage: row.giftImage || null,
+        groupId: row.groupId || null,
+        diamondCount: row.diamondCount ?? 0,
+        repeatCount: row.repeatCount ?? 1,
+        likeCount: row.likeCount ?? 0,
+        totalLikeCount: row.totalLikeCount ?? 0,
+        comment: row.comment || null,
+        viewerCount: row.viewerCount ?? null,
+        region: row.region || null,
+        isAdmin: Boolean(row.isAdmin),
+        isSuperAdmin: Boolean(row.isSuperAdmin),
+        isModerator: Boolean(row.isModerator),
+        fanLevel: row.fanLevel ?? 0,
+        fanClubName: row.fanClubName || null,
+    });
+}
+
 class Manager {
     constructor() {
         this.prices = this.loadPrices();
@@ -912,8 +936,39 @@ class Manager {
 
     async getSessionEvents(sessionId) {
         await this.ensureDb();
-        return await query('SELECT type, timestamp, data_json FROM event WHERE session_id = ? ORDER BY timestamp ASC',
-            [sessionId]);
+        const rows = await query(`
+            SELECT
+                type,
+                timestamp,
+                user_id,
+                unique_id,
+                nickname,
+                gift_id,
+                gift_name,
+                gift_image,
+                group_id,
+                diamond_count,
+                repeat_count,
+                like_count,
+                total_like_count,
+                comment,
+                viewer_count,
+                region,
+                is_admin,
+                is_super_admin,
+                is_moderator,
+                fan_level,
+                fan_club_name,
+                data_json
+            FROM event
+            WHERE session_id = ?
+            ORDER BY timestamp ASC
+        `, [sessionId]);
+        return rows.map(row => ({
+            type: row.type,
+            timestamp: row.timestamp,
+            dataJson: row.dataJson || buildEventDataJsonFromRow(row),
+        }));
     }
 
     // Time Statistics (30-min intervals) - supports full history or a specific session
@@ -943,7 +998,6 @@ class Manager {
                     diamond_count,
                     repeat_count,
                     viewer_count,
-                    data_json,
                     date_trunc('hour', timestamp)
                         + floor(extract(minute from timestamp) / 30) * interval '30 minute' as bucket_start
                 FROM event
@@ -958,7 +1012,7 @@ class Manager {
                 COUNT(*) FILTER (WHERE type = 'roomUser') as viewer_samples,
                 GREATEST(
                     MAX(CASE
-                        WHEN type = 'roomUser' THEN COALESCE(viewer_count, (data_json::json->>'viewerCount')::int, 0)
+                        WHEN type = 'roomUser' THEN COALESCE(viewer_count, 0)
                         ELSE 0
                     END),
                     COUNT(*) FILTER (WHERE type = 'member')
