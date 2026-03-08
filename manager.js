@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { initDb, query, run, get } = require('./db');
 const metricsService = require('./services/metricsService');
+const { getSchemeAConfig } = require('./services/featureFlagService');
 
 const PRICE_FILE = path.join(__dirname, 'prices.json');
 
@@ -83,6 +84,10 @@ function buildEventDataJsonFromRow(row = {}) {
         fanLevel: row.fanLevel ?? 0,
         fanClubName: row.fanClubName || null,
     });
+}
+
+function isIncrementalStatsReadEnabled() {
+    return Boolean(getSchemeAConfig().event.enableIncrementalStats);
 }
 
 class Manager {
@@ -418,25 +423,35 @@ class Manager {
                 params.push(sinceTime);
             }
             return await query(`
-                SELECT s.session_id, s.room_id, s.created_at, et.end_time
+                SELECT
+                    s.session_id,
+                    s.room_id,
+                    s.created_at,
+                    COALESCE(ss.end_time, et.end_time) as end_time
                 FROM session s
+                LEFT JOIN session_summary ss ON ss.session_id = s.session_id
                 LEFT JOIN LATERAL (
                     SELECT MAX(timestamp) as end_time
                     FROM event
                     WHERE event.session_id = s.session_id
-                ) et ON true
+                ) et ON ss.session_id IS NULL
                 WHERE s.room_id = ? ${timeFilter}
                 ORDER BY s.created_at DESC
             `, params);
         }
         return await query(`
-            SELECT s.session_id, s.room_id, s.created_at, et.end_time
+            SELECT
+                s.session_id,
+                s.room_id,
+                s.created_at,
+                COALESCE(ss.end_time, et.end_time) as end_time
             FROM session s
+            LEFT JOIN session_summary ss ON ss.session_id = s.session_id
             LEFT JOIN LATERAL (
                 SELECT MAX(timestamp) as end_time
                 FROM event
                 WHERE event.session_id = s.session_id
-            ) et ON true
+            ) et ON ss.session_id IS NULL
             ORDER BY s.created_at DESC
         `);
     }
@@ -974,6 +989,52 @@ class Manager {
     // Time Statistics (30-min intervals) - supports full history or a specific session
     async getTimeStats(roomId, sessionId = null, sinceTime = null) {
         await this.ensureDb();
+
+        if (roomId && !sessionId && sinceTime && isIncrementalStatsReadEnabled()) {
+            const minuteParams = [roomId];
+            let minuteWhereClause = 'WHERE room_id = ?';
+            if (sinceTime) {
+                minuteWhereClause += ' AND stat_minute >= ?';
+                minuteParams.push(sinceTime);
+            }
+
+            const minuteStats = await query(`
+                WITH bucketed AS (
+                    SELECT
+                        date_trunc('hour', stat_minute)
+                            + floor(extract(minute from stat_minute) / 30) * interval '30 minute' as bucket_start,
+                        SUM(COALESCE(chat_count, 0)) as comments,
+                        SUM(COALESCE(gift_value, 0)) as income,
+                        SUM(COALESCE(member_count, 0)) as member_entries,
+                        0 as viewer_samples,
+                        MAX(COALESCE(max_viewer_count, 0)) as max_online
+                    FROM room_minute_stats
+                    ${minuteWhereClause}
+                    GROUP BY bucket_start
+                )
+                SELECT
+                    to_char(bucket_start, 'HH24:MI') || '-' ||
+                    to_char(bucket_start + interval '30 minute', 'HH24:MI') as time_range,
+                    comments,
+                    income,
+                    member_entries,
+                    viewer_samples,
+                    max_online
+                FROM bucketed
+                ORDER BY bucket_start ASC
+            `, minuteParams);
+
+            if (minuteStats.length > 0) {
+                return minuteStats.map(s => ({
+                    time_range: s.timeRange,
+                    income: parseInt(s.income) || 0,
+                    comments: parseInt(s.comments) || 0,
+                    member_entries: parseInt(s.memberEntries) || 0,
+                    viewer_samples: parseInt(s.viewerSamples) || 0,
+                    max_online: parseInt(s.maxOnline) || 0
+                }));
+            }
+        }
 
         let whereClause = `WHERE room_id = ? AND type IN ('gift', 'chat', 'roomUser', 'member')`;
         const params = [roomId];
@@ -2681,24 +2742,63 @@ class Manager {
         // For Viewers/Members: COUNT(*) of 'member' events approx unique entries if session-based.
         // For Likes: MAX(likeCount) is best for snapshot.
 
-        const summary = await get(`
-            SELECT
-                SUM(CASE WHEN type='chat' THEN 1 ELSE 0 END) as totalComments,
-                SUM(CASE WHEN type='member' THEN 1 ELSE 0 END) as totalVisits,
-                MAX(CASE WHEN type='like' THEN COALESCE(total_like_count, 0) ELSE 0 END) as maxLikes,
-                SUM(CASE WHEN type='gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as totalGiftValue
-            FROM event
-            ${whereClause}
-        `, params);
-
-        // Duration calculation
-        // Min/Max timestamp
-        const timeRange = await get(`SELECT MIN(timestamp) as start, MAX(timestamp) as end FROM event ${whereClause}`, params);
+        let summary = null;
+        let timeRange = { start: null, end: null };
         let duration = 0;
-        if (timeRange.start && timeRange.end) {
-            const start = new Date(timeRange.start);
-            const end = new Date(timeRange.end);
-            duration = Math.floor((end - start) / 1000); // seconds
+
+        if (sessionId && sessionId !== 'live' && isIncrementalStatsReadEnabled()) {
+            const sessionSummary = await get(`
+                SELECT
+                    session_id,
+                    room_id,
+                    start_time,
+                    end_time,
+                    duration_secs,
+                    chat_count,
+                    gift_value,
+                    member_count
+                FROM session_summary
+                WHERE room_id = ? AND session_id = ?
+            `, [roomId, sessionId]);
+
+            if (sessionSummary) {
+                const likeSummary = await get(`
+                    SELECT MAX(CASE WHEN type='like' THEN COALESCE(total_like_count, 0) ELSE 0 END) as maxLikes
+                    FROM event
+                    WHERE room_id = ? AND session_id = ?
+                `, [roomId, sessionId]);
+
+                summary = {
+                    totalComments: sessionSummary.chatCount || 0,
+                    totalVisits: sessionSummary.memberCount || 0,
+                    maxLikes: likeSummary?.maxLikes || 0,
+                    totalGiftValue: sessionSummary.giftValue || 0
+                };
+                timeRange = {
+                    start: sessionSummary.startTime || null,
+                    end: sessionSummary.endTime || null
+                };
+                duration = parseInt(sessionSummary.durationSecs) || 0;
+            }
+        }
+
+        if (!summary) {
+            summary = await get(`
+                SELECT
+                    SUM(CASE WHEN type='chat' THEN 1 ELSE 0 END) as totalComments,
+                    SUM(CASE WHEN type='member' THEN 1 ELSE 0 END) as totalVisits,
+                    MAX(CASE WHEN type='like' THEN COALESCE(total_like_count, 0) ELSE 0 END) as maxLikes,
+                    SUM(CASE WHEN type='gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as totalGiftValue
+                FROM event
+                ${whereClause}
+            `, params);
+
+            timeRange = await get(`SELECT MIN(timestamp) as start, MAX(timestamp) as end FROM event ${whereClause}`, params);
+            if (timeRange.start && timeRange.end) {
+                const start = new Date(timeRange.start);
+                const end = new Date(timeRange.end);
+                duration = Math.floor((end - start) / 1000);
+            }
         }
 
         // 2. Leaderboards
