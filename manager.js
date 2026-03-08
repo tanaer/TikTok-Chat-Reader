@@ -1482,16 +1482,40 @@ class Manager {
             [common, mastered, userId]);
     }
 
-    async updateAIAnalysis(userId, analysis) {
+    async updateAIAnalysis(userId, analysis, options = {}) {
         await this.ensureDb();
-        // Use upsert pattern - insert if not exists, update if exists
+        const {
+            resultJson = null,
+            promptKey = null,
+            promptUpdatedAt = null,
+            contextVersion = null,
+            modelVersion = null,
+            currentRoomId = null
+        } = options;
+
         await run(`
-            INSERT INTO "user" (user_id, ai_analysis, updated_at)
-            VALUES (?, ?, NOW())
+            INSERT INTO "user" (
+                user_id,
+                ai_analysis,
+                ai_analysis_json,
+                ai_analysis_prompt_key,
+                ai_analysis_prompt_updated_at,
+                ai_analysis_context_version,
+                ai_analysis_model_version,
+                ai_analysis_current_room_id,
+                updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, NOW())
             ON CONFLICT(user_id) DO UPDATE SET
                 ai_analysis = EXCLUDED.ai_analysis,
+                ai_analysis_json = EXCLUDED.ai_analysis_json,
+                ai_analysis_prompt_key = EXCLUDED.ai_analysis_prompt_key,
+                ai_analysis_prompt_updated_at = EXCLUDED.ai_analysis_prompt_updated_at,
+                ai_analysis_context_version = EXCLUDED.ai_analysis_context_version,
+                ai_analysis_model_version = EXCLUDED.ai_analysis_model_version,
+                ai_analysis_current_room_id = EXCLUDED.ai_analysis_current_room_id,
                 updated_at = NOW()
-        `, [userId, analysis]);
+        `, [userId, analysis, resultJson, promptKey, promptUpdatedAt, contextVersion, modelVersion, currentRoomId]);
     }
 
     async getTopGifters(page = 1, pageSize = 50, filters = {}) {
@@ -2685,8 +2709,8 @@ class Manager {
             visitRooms,
             hourStats,
             dayStats,
-            isAdmin: userInfo?.isAdmin || 0,
-            isSuperAdmin: userInfo?.isSuperAdmin || 0,
+            isAdmin: 0,
+            isSuperAdmin: 0,
             isModerator: userInfo?.isModerator || 0,
             fanLevel: userInfo?.fanLevel || 0,
             fanClubName: userInfo?.fanClubName || '',
@@ -2694,6 +2718,7 @@ class Manager {
             masteredLanguages: userInfo?.masteredLanguages || '',
             region: userInfo?.region || '',
             aiAnalysis: userInfo?.aiAnalysis || null,
+            aiAnalysisJson: userInfo?.aiAnalysisJson || null,
             moderatorRooms
         };
     }

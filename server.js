@@ -55,6 +55,10 @@ const cacheService = require('./services/cacheService');
 const { disconnectRedisClient } = require('./services/redisClient');
 const liveStateService = require('./services/liveStateService');
 const {
+    prepareCustomerAnalysis,
+    runCustomerAnalysis,
+} = require('./services/customerAiAnalysisService');
+const {
     runRoomStatsRefreshJob,
     runUserStatsRefreshJob,
     runGlobalStatsRefreshJob,
@@ -479,6 +483,47 @@ async function getCachedAnalysisPayload(cacheKey, loader) {
     const payload = await loader();
     await cacheService.setJson(cacheKey, payload, { ttlMs: ANALYSIS_CACHE_TTL_MS });
     return payload;
+}
+
+function buildUserAnalysisDetailVersionKey(targetUserId) {
+    return cacheService.buildCacheKey('analysis', 'user_detail_version', String(targetUserId || '').trim());
+}
+
+function buildUserAnalysisDetailCacheKey(req, roomFilter, targetUserId, cacheVersion = 0) {
+    return buildAnalysisCacheKey('user_detail', req, roomFilter, {
+        userId: String(targetUserId || '').trim(),
+        version: Number(cacheVersion || 0)
+    });
+}
+
+async function getUserAnalysisDetailCacheVersion(targetUserId) {
+    const normalizedTargetUserId = String(targetUserId || '').trim();
+    if (!normalizedTargetUserId || !cacheService.isRoomCacheEnabled()) {
+        return 0;
+    }
+
+    const version = await cacheService.getNumber(buildUserAnalysisDetailVersionKey(normalizedTargetUserId));
+    return Number.isFinite(version) && version > 0 ? version : 0;
+}
+
+async function invalidateUserAnalysisDetailCaches(targetUserId) {
+    const normalizedTargetUserId = String(targetUserId || '').trim();
+    if (!normalizedTargetUserId || !cacheService.isRoomCacheEnabled()) {
+        return 0;
+    }
+
+    return cacheService.increment(buildUserAnalysisDetailVersionKey(normalizedTargetUserId), 1);
+}
+
+async function getCachedUserAnalysisBase(req, targetUserId, roomFilter) {
+    const normalizedTargetUserId = String(targetUserId || '').trim();
+    if (!normalizedTargetUserId) {
+        return manager.getUserAnalysis(targetUserId, roomFilter);
+    }
+
+    const cacheVersion = await getUserAnalysisDetailCacheVersion(normalizedTargetUserId);
+    const cacheKey = buildUserAnalysisDetailCacheKey(req, roomFilter, normalizedTargetUserId, cacheVersion);
+    return getCachedAnalysisPayload(cacheKey, () => manager.getUserAnalysis(normalizedTargetUserId, roomFilter));
 }
 
 function buildSessionRecapCacheKey(roomId, sessionId, req, roomFilter) {
@@ -1779,12 +1824,13 @@ app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
         // This shows a TikTok user's analysis; access requires login
         if (!req.user) return res.status(401).json({ error: '请先登录' });
         const roomFilter = await getUserRoomFilter(req);
-        const data = await manager.getUserAnalysis(req.params.userId, roomFilter);
+        const data = await getCachedUserAnalysisBase(req, req.params.userId, roomFilter);
 
         const response = serializeUserAnalysisDetail(data);
         if (req.user.role !== 'admin') {
             const memberAnalysis = await getLatestMemberAnalysis(req.user.id, req.params.userId);
             response.aiAnalysis = memberAnalysis?.result || null;
+            response.aiAnalysisJson = safeParseJsonObject(memberAnalysis?.resultJson);
         }
 
         res.json(response);
@@ -1826,14 +1872,13 @@ app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
             : await getLatestMemberAnalysisMap(req.user.id, result.users.map(user => user.userId));
 
         // Fetch details for each user
-        const usersWithDetails = [];
-        for (const user of result.users) {
-            const details = await manager.getUserAnalysis(user.userId, roomFilter);
+        const usersWithDetails = await mapWithConcurrency(result.users, 8, async (user) => {
+            const details = await getCachedUserAnalysisBase(req, user.userId, roomFilter);
             const aiAnalysis = req.user.role === 'admin'
                 ? (details.aiAnalysis || null)
                 : (memberAnalysisMap.get(user.userId)?.result || null);
 
-            usersWithDetails.push({
+            return {
                 ...user,
                 ...details,
                 aiAnalysis,
@@ -1847,8 +1892,8 @@ app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
                 // Format time distribution
                 peakHours: formatPeakHours(details.hourStats),
                 peakDays: formatPeakDays(details.dayStats)
-            });
-        }
+            };
+        });
 
         res.json({ users: usersWithDetails, total: result.total });
     } catch (err) {
@@ -1871,6 +1916,30 @@ function formatPeakDays(dayStats) {
     return sorted.slice(0, 3).map(d => dayNames[parseInt(d.day)] || '').join(', ');
 }
 
+async function mapWithConcurrency(items, concurrency, iterator) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return [];
+    }
+
+    const normalizedConcurrency = Math.max(1, Math.min(Number(concurrency) || 1, items.length));
+    const results = new Array(items.length);
+    let nextIndex = 0;
+
+    async function worker() {
+        while (true) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+            if (currentIndex >= items.length) {
+                return;
+            }
+            results[currentIndex] = await iterator(items[currentIndex], currentIndex);
+        }
+    }
+
+    await Promise.all(Array.from({ length: normalizedConcurrency }, () => worker()));
+    return results;
+}
+
 function serializeUserAnalysisDetail(data = {}) {
     return {
         totalValue: data.totalValue || 0,
@@ -1889,15 +1958,25 @@ function serializeUserAnalysisDetail(data = {}) {
         masteredLanguages: data.masteredLanguages || '',
         region: data.region || '',
         aiAnalysis: data.aiAnalysis || null,
+        aiAnalysisJson: safeParseJsonObject(data.aiAnalysisJson),
         moderatorRooms: Array.isArray(data.moderatorRooms) ? data.moderatorRooms : []
     };
+}
+
+function safeParseJsonObject(value) {
+    if (!value || typeof value !== 'string') return null;
+    try {
+        return JSON.parse(value);
+    } catch (err) {
+        return null;
+    }
 }
 
 async function getLatestMemberAnalysis(memberId, targetUserId) {
     if (!memberId || !targetUserId) return null;
 
     return await db.get(
-        `SELECT result, chat_count, created_at, model_name, latency_ms, source
+        `SELECT result, result_json, chat_count, created_at, model_name, model_version, prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
          FROM user_ai_analysis
          WHERE member_id = ? AND target_user_id = ?
          ORDER BY created_at DESC
@@ -1913,7 +1992,7 @@ async function getLatestMemberAnalysisMap(memberId, targetUserIds = []) {
 
     const placeholders = targetUserIds.map(() => '?').join(',');
     const rows = await db.query(
-        `SELECT DISTINCT ON (target_user_id) target_user_id, result, chat_count, created_at, model_name, latency_ms, source
+        `SELECT DISTINCT ON (target_user_id) target_user_id, result, result_json, chat_count, created_at, model_name, model_version, prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
          FROM user_ai_analysis
          WHERE member_id = ? AND target_user_id IN (${placeholders})
          ORDER BY target_user_id, created_at DESC`,
@@ -1923,7 +2002,39 @@ async function getLatestMemberAnalysisMap(memberId, targetUserIds = []) {
     return new Map(rows.map(row => [row.targetUserId, row]));
 }
 
+function normalizeCacheTimestamp(value) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function sameInstant(leftValue, rightValue) {
+    const left = normalizeCacheTimestamp(leftValue);
+    const right = normalizeCacheTimestamp(rightValue);
+    if (left === null && right === null) return true;
+    return left === right;
+}
+
+function isCustomerAnalysisCacheReusable(cacheRecord, cacheSignature) {
+    if (!cacheRecord || !cacheSignature) return false;
+
+    if (String(cacheRecord.promptKey || '') !== String(cacheSignature.promptKey || '')) return false;
+    if (!sameInstant(cacheRecord.promptUpdatedAt, cacheSignature.promptUpdatedAt)) return false;
+    if (String(cacheRecord.contextVersion || '') !== String(cacheSignature.contextVersion || '')) return false;
+    if (String(cacheRecord.currentRoomId || '') !== String(cacheSignature.currentRoomId || '')) return false;
+
+    const latestActivityAt = normalizeCacheTimestamp(cacheSignature.latestActivityAt);
+    const cacheCreatedAt = normalizeCacheTimestamp(cacheRecord.updatedAt || cacheRecord.createdAt);
+    if (latestActivityAt !== null && cacheCreatedAt !== null && cacheCreatedAt < latestActivityAt) return false;
+
+    const ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);
+    if (cacheCreatedAt !== null && cacheCreatedAt < ninetyDaysAgo) return false;
+
+    return true;
+}
+
 const SESSION_RECAP_AI_POINTS = 20;
+const CUSTOMER_ANALYSIS_AI_POINTS = 1;
 
 function clampNumber(value, min, max, fallback = 0) {
     const numeric = Number(value);
@@ -3003,118 +3114,190 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
     try {
         if (!req.user) return res.status(401).json({ error: '请先登录' });
 
-        const { userId, force = false } = req.body;
+        const { userId, force = false, roomId = null } = req.body;
         const memberId = req.user.id;
         const isAdmin = req.user?.role === 'admin';
         const roomFilter = await getUserRoomFilter(req);
+        if (!userId) {
+            return res.status(400).json({ error: 'userId 不能为空' });
+        }
+        if (!isAdmin && roomId && Array.isArray(roomFilter) && !roomFilter.includes(roomId)) {
+            return res.status(403).json({ error: '无权访问该房间的客户数据' });
+        }
 
-        // 1. Get chat history and check minimum corpus (10 messages)
-        const history = await manager.getUserChatHistory(userId, 200, roomFilter);
-        const chatCount = history ? history.length : 0;
+        const preparedAnalysis = await prepareCustomerAnalysis({ userId, roomId, roomFilter });
+        const chatCount = preparedAnalysis.chatCount;
+
         if (chatCount < 10) {
             return res.json({ result: '待分析语料不足（需至少10条弹幕记录）', chatCount, skipped: true });
         }
 
-        // 2. For non-admin members: check if already in their personal analysis table
         if (!force && !isAdmin) {
             const memberCache = await getLatestMemberAnalysis(memberId, userId);
-            if (memberCache) {
-                return res.json({ result: memberCache.result, cached: true, chatCount: memberCache.chatCount, analyzedAt: memberCache.createdAt, source: 'member_cache' });
+            if (isCustomerAnalysisCacheReusable(memberCache, preparedAnalysis.cacheSignature)) {
+                return res.json({
+                    result: memberCache.result,
+                    analysis: safeParseJsonObject(memberCache.resultJson),
+                    cached: true,
+                    chatCount: memberCache.chatCount || chatCount,
+                    analyzedAt: memberCache.createdAt,
+                    source: 'member_cache'
+                });
             }
         }
 
-        // 3. Check system-level cache ("user".ai_analysis) - within 3 months
         let systemAnalysis = null;
         if (!force) {
             systemAnalysis = await db.get(
-                `SELECT ai_analysis, updated_at FROM "user" WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
+                `SELECT ai_analysis, ai_analysis_json, ai_analysis_prompt_key, ai_analysis_prompt_updated_at,
+                        ai_analysis_context_version, ai_analysis_model_version, ai_analysis_current_room_id, updated_at
+                 FROM "user"
+                 WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
                 [userId]
             );
-            if (systemAnalysis && systemAnalysis.aiAnalysis) {
-                const updatedAt = new Date(systemAnalysis.updatedAt);
-                const threeMonthsAgo = new Date();
-                threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-
-                if (updatedAt > threeMonthsAgo) {
-                    // System cache is fresh — use it, write to member table, and charge
-                    if (!isAdmin) {
-                        // Check credits before charging
-                        const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
-                        const remaining = Number(credits?.aiCreditsRemaining || 0);
-                        if (remaining <= 0) {
-                            return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
-                        }
-
-                        const simulatedLatency = getSimulatedAiDelayMs();
-                        await sleep(simulatedLatency);
-
-                        // Write to member table
-                        await db.run(
-                            `INSERT INTO user_ai_analysis (member_id, target_user_id, result, chat_count, model_name, latency_ms, source)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                            [memberId, userId, systemAnalysis.aiAnalysis, chatCount, 'system_cache', simulatedLatency, 'system_cache']
-                        );
-                        // Deduct credit
-                        await db.run('UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - 1, 0), ai_credits_used = ai_credits_used + 1 WHERE id = ?', [memberId]);
-                        await db.run('INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, 1, ?)', [memberId, 'analysis', userId]);
-
-                        console.log(`[AI] Reused system cache for member ${memberId}, target ${userId}, simulated ${simulatedLatency}ms`);
-                        return res.json({ result: systemAnalysis.aiAnalysis, cached: false, chatCount, latency: simulatedLatency, source: 'api' });
+            if (isCustomerAnalysisCacheReusable({
+                ...systemAnalysis,
+                promptKey: systemAnalysis?.aiAnalysisPromptKey,
+                promptUpdatedAt: systemAnalysis?.aiAnalysisPromptUpdatedAt,
+                contextVersion: systemAnalysis?.aiAnalysisContextVersion,
+                currentRoomId: systemAnalysis?.aiAnalysisCurrentRoomId
+            }, preparedAnalysis.cacheSignature)) {
+                if (!isAdmin) {
+                    const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
+                    const remaining = Number(credits?.aiCreditsRemaining || 0);
+                    if (remaining < CUSTOMER_ANALYSIS_AI_POINTS) {
+                        return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
                     }
-                    console.log(`[AI] Using system cache for ${userId} (updated ${updatedAt.toISOString()})`);
-                    return res.json({ result: systemAnalysis.aiAnalysis, cached: true, chatCount, analyzedAt: systemAnalysis.updatedAt, source: 'system_cache' });
+
+                    const simulatedLatency = getSimulatedAiDelayMs();
+                    await sleep(simulatedLatency);
+
+                    await db.run(
+                        `INSERT INTO user_ai_analysis (
+                            member_id, target_user_id, result, result_json, chat_count, model_name, model_version,
+                            prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
+                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                        [
+                            memberId,
+                            userId,
+                            systemAnalysis.aiAnalysis,
+                            systemAnalysis.aiAnalysisJson || null,
+                            chatCount,
+                            'system_cache',
+                            systemAnalysis.aiAnalysisModelVersion || 'system_cache',
+                            systemAnalysis.aiAnalysisPromptKey || preparedAnalysis.promptKey,
+                            systemAnalysis.aiAnalysisPromptUpdatedAt || preparedAnalysis.promptUpdatedAt,
+                            systemAnalysis.aiAnalysisContextVersion || preparedAnalysis.cacheSignature.contextVersion,
+                            systemAnalysis.aiAnalysisCurrentRoomId || preparedAnalysis.currentRoomId,
+                            simulatedLatency,
+                            'system_cache'
+                        ]
+                    );
+                    await db.run(
+                        'UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - ?, 0), ai_credits_used = ai_credits_used + ? WHERE id = ?',
+                        [CUSTOMER_ANALYSIS_AI_POINTS, CUSTOMER_ANALYSIS_AI_POINTS, memberId]
+                    );
+                    await db.run(
+                        'INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, ?, ?)',
+                        [memberId, 'analysis', CUSTOMER_ANALYSIS_AI_POINTS, userId]
+                    );
+
+                    console.log(`[AI] Reused system cache for member ${memberId}, target ${userId}, simulated ${simulatedLatency}ms`);
+                    return res.json({
+                        result: systemAnalysis.aiAnalysis,
+                        analysis: safeParseJsonObject(systemAnalysis.aiAnalysisJson),
+                        cached: false,
+                        chatCount,
+                        latency: simulatedLatency,
+                        analyzedAt: systemAnalysis.updatedAt,
+                        source: 'system_cache'
+                    });
                 }
+
+                console.log(`[AI] Using system cache for ${userId}`);
+                return res.json({
+                    result: systemAnalysis.aiAnalysis,
+                    analysis: safeParseJsonObject(systemAnalysis.aiAnalysisJson),
+                    cached: true,
+                    chatCount,
+                    analyzedAt: systemAnalysis.updatedAt,
+                    source: 'system_cache'
+                });
             }
         }
 
-        // 4. Need fresh AI analysis — check credits for non-admin
         if (!isAdmin) {
             const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
             const remaining = Number(credits?.aiCreditsRemaining || 0);
-            if (remaining <= 0) {
+            if (remaining < CUSTOMER_ANALYSIS_AI_POINTS) {
                 return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
             }
         }
 
-        // 5. Get AI model config
-        // 5. Call AI API with automatic failover
-        const chatText = history.map(h => h.comment).join('\n');
-        const { completion, modelName, latencyMs: aiLatency } = await requestAiChatCompletion({
-            requestLabel: `user analysis ${userId}`,
-            messages: [
-                { role: 'system', content: '你是一个数十年经验的专业娱乐主播运营总监，并且你的情商非常高。请根据用户的弹幕历史，简要分析该用户的：1、常用语种 2、掌握语种 3、感兴趣的话题 4、 聊天风格。请用简洁的中文回答。5、建议破冰方式。请用简洁的中文回答。' },
-                { role: 'user', content: `用户弹幕记录：\n${chatText}` }
-            ]
+        const generated = await runCustomerAnalysis({
+            preparedInput: preparedAnalysis,
+            requestAiChatCompletion
         });
-        const result = completion.choices?.[0]?.message?.content?.trim() || '无法获取分析结果';
 
-        // 8. Save to system-level user table when missing, or always refresh for admin
-        let shouldPersistSystemAnalysis = isAdmin;
-        if (!isAdmin) {
-            if (!systemAnalysis) {
-                systemAnalysis = await db.get(
-                    `SELECT ai_analysis FROM "user" WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
-                    [userId]
-                );
-            }
-            shouldPersistSystemAnalysis = !systemAnalysis?.aiAnalysis;
-        }
+        const shouldPersistSystemAnalysis = isAdmin || !isCustomerAnalysisCacheReusable({
+            ...systemAnalysis,
+            promptKey: systemAnalysis?.aiAnalysisPromptKey,
+            promptUpdatedAt: systemAnalysis?.aiAnalysisPromptUpdatedAt,
+            contextVersion: systemAnalysis?.aiAnalysisContextVersion,
+            currentRoomId: systemAnalysis?.aiAnalysisCurrentRoomId
+        }, preparedAnalysis.cacheSignature);
         if (shouldPersistSystemAnalysis) {
-            await manager.updateAIAnalysis(userId, result);
+            await manager.updateAIAnalysis(userId, generated.result, {
+                resultJson: generated.resultJsonText,
+                promptKey: preparedAnalysis.promptKey,
+                promptUpdatedAt: preparedAnalysis.promptUpdatedAt,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion,
+                modelVersion: generated.modelVersion,
+                currentRoomId: preparedAnalysis.currentRoomId
+            });
+            await invalidateUserAnalysisDetailCaches(userId);
         }
 
-        // 9. Save to member's personal table & deduct credits
         if (!isAdmin) {
             await db.run(
-                `INSERT INTO user_ai_analysis (member_id, target_user_id, result, chat_count, model_name, latency_ms, source)
-                 VALUES (?, ?, ?, ?, ?, ?, 'api')`,
-                [memberId, userId, result, chatCount, modelName, aiLatency]
+                `INSERT INTO user_ai_analysis (
+                    member_id, target_user_id, result, result_json, chat_count, model_name, model_version,
+                    prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'api')`,
+                [
+                    memberId,
+                    userId,
+                    generated.result,
+                    generated.resultJsonText,
+                    chatCount,
+                    generated.modelName,
+                    generated.modelVersion,
+                    preparedAnalysis.promptKey,
+                    preparedAnalysis.promptUpdatedAt,
+                    preparedAnalysis.cacheSignature.contextVersion,
+                    preparedAnalysis.currentRoomId,
+                    generated.latencyMs
+                ]
             );
-            await db.run('UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - 1, 0), ai_credits_used = ai_credits_used + 1 WHERE id = ?', [memberId]);
-            await db.run('INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, 1, ?)', [memberId, 'analysis', userId]);
+            await db.run(
+                'UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - ?, 0), ai_credits_used = ai_credits_used + ? WHERE id = ?',
+                [CUSTOMER_ANALYSIS_AI_POINTS, CUSTOMER_ANALYSIS_AI_POINTS, memberId]
+            );
+            await db.run(
+                'INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, ?, ?)',
+                [memberId, 'analysis', CUSTOMER_ANALYSIS_AI_POINTS, userId]
+            );
         }
 
-        res.json({ result, cached: false, chatCount, latency: aiLatency, model: modelName, source: 'api' });
+        res.json({
+            result: generated.result,
+            analysis: generated.analysis,
+            cached: false,
+            chatCount,
+            latency: generated.latencyMs,
+            model: generated.modelName,
+            source: 'api'
+        });
 
     } catch (err) {
         console.error('[AI] Analysis error:', err);

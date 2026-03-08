@@ -95,6 +95,12 @@ async function initDb() {
                 common_language TEXT,
                 mastered_languages TEXT,
                 ai_analysis TEXT,
+                ai_analysis_json TEXT,
+                ai_analysis_prompt_key TEXT,
+                ai_analysis_prompt_updated_at TIMESTAMP,
+                ai_analysis_context_version TEXT,
+                ai_analysis_model_version TEXT,
+                ai_analysis_current_room_id TEXT,
                 is_moderator INTEGER DEFAULT 0,
                 region TEXT
             )
@@ -819,14 +825,32 @@ async function initDb() {
                 member_id INTEGER NOT NULL,
                 target_user_id TEXT NOT NULL,
                 result TEXT NOT NULL,
+                result_json TEXT,
                 chat_count INTEGER DEFAULT 0,
                 model_name TEXT,
+                model_version TEXT,
+                prompt_key TEXT,
+                prompt_updated_at TIMESTAMP,
+                context_version TEXT,
+                current_room_id TEXT,
                 latency_ms INTEGER DEFAULT 0,
                 source TEXT DEFAULT 'api',
                 created_at TIMESTAMP DEFAULT NOW()
             )
         `);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_ai_analysis_member ON user_ai_analysis(member_id, target_user_id)`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_json TEXT`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_prompt_key TEXT`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_prompt_updated_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_context_version TEXT`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_model_version TEXT`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_current_room_id TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS result_json TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS model_version TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS prompt_key TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS prompt_updated_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS context_version TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS current_room_id TEXT`);
 
         // Single-session AI review cache table
         await pool.query(`
