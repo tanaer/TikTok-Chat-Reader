@@ -34,8 +34,10 @@ function saveRoomViewModePreference(mode) {
 
 roomListViewMode = loadRoomViewModePreference();
 
+const MONTHLY_GIFT_TOOLTIP = '自然月累计（从每月1日开始统计）；括号内按26天折算日均';
+
 // Helper to format monthly total with daily average: "260（10）"
-// Daily average = total / 26 (fixed divisor)
+// Total = current calendar month; average in parentheses = total / 26 (fixed divisor)
 const formatMonthlyWithAvg = (total) => {
     const avg = Math.round(total / 26);
     return `${total.toLocaleString()}（${avg.toLocaleString()}）`;
@@ -187,7 +189,7 @@ function renderRoomCard(r, index = 0) {
                     <div class="stat-title text-[10px] uppercase tracking-wider">💎N</div>
                     <div class="stat-value text-sm text-warning font-mono">${(r.totalGiftValue || 0).toLocaleString()}</div>
                 </div>
-                <div class="stat p-2 place-items-center" title="本月总计（日均）">
+                <div class="stat p-2 place-items-center" title="${MONTHLY_GIFT_TOOLTIP}">
                     <div class="stat-title text-[10px] uppercase tracking-wider">💎月</div>
                     <div class="stat-value text-sm text-success font-mono">${formatMonthlyWithAvg(r.monthlyGiftValue || 0)}</div>
                 </div>
@@ -266,7 +268,7 @@ function renderRoomRow(r, index = 0) {
         <td class="p-2 text-center font-mono text-sm">${(r.totalVisits || 0).toLocaleString()}</td>
         <td class="p-2 text-center font-mono text-sm">${(r.totalComments || 0).toLocaleString()}</td>
         <td class="p-2 text-center font-mono text-sm text-warning">${(r.totalGiftValue || 0).toLocaleString()}</td>
-        <td class="p-2 text-center font-mono text-sm text-success" title="本月总计（日均）">${formatMonthlyWithAvg(r.monthlyGiftValue || 0)}</td>
+        <td class="p-2 text-center font-mono text-sm text-success" title="${MONTHLY_GIFT_TOOLTIP}">${formatMonthlyWithAvg(r.monthlyGiftValue || 0)}</td>
         ${roomListSort.includes('daily_avg') ? `<td class="p-2 text-center font-mono text-sm text-primary" title="有效天数: ${r.validDays || 0}天">${(r.validDailyAvg || 0).toLocaleString()}</td>` : ''}
         <td class="p-2 text-center">
             <span class="badge badge-warning badge-sm">💰${r.giftEfficiency || 0}</span>
@@ -390,10 +392,10 @@ async function renderRoomList() {
                             <th class="p-2 text-center">进房</th>
                             <th class="p-2 text-center">弹幕</th>
                             <th class="p-2 text-center">💎本场</th>
-                            <th class="p-2 text-center" title="本月总计（日均）">💎月</th>
+                            <th class="p-2 text-center" title="${MONTHLY_GIFT_TOOLTIP}">💎月</th>
                             ${roomListSort.includes('daily_avg') ? '<th class="p-2 text-center" title="有效日均 (开播>2h的日期)">💎日均</th>' : ''}
                             <th class="p-2 text-center">💰效率</th>
-                            <th class="p-2 text-center">💬效率</th>
+                            <th class="p-2 text-center">💬话题度</th>
                             <th class="p-2 text-center">👥质量</th>
                             <th class="p-2 text-center">T1</th>
                             <th class="p-2 text-center">T3</th>
