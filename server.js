@@ -374,6 +374,7 @@ const ROOM_LIST_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ROOM_LIST_CACHE_
 const ALLTIME_LEADERBOARDS_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ALLTIME_LEADERBOARDS_CACHE_TTL_MS || '15000', 10) || 15000);
 const ROOM_SESSIONS_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 15000);
 const ARCHIVED_STATS_DETAIL_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 30000);
+const ANALYSIS_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 20000);
 const ROOM_LIST_CACHE_MAX_ENTRIES = 200;
 const roomListResponseCache = new Map();
 const ROOM_LIST_CACHE_NAMESPACE = 'room_list';
@@ -448,6 +449,35 @@ async function invalidateRoomDetailCaches(roomId, sessionId = null) {
     if (sessionId) {
         await cacheService.del(buildArchivedStatsDetailCacheKey(roomId, sessionId));
     }
+}
+
+function normalizeRoomFilterCacheKey(roomFilter) {
+    if (roomFilter === null) return 'all';
+    if (!Array.isArray(roomFilter) || roomFilter.length === 0) return 'none';
+    return Array.from(new Set(roomFilter.map(item => String(item || '').trim()).filter(Boolean))).sort().join(',');
+}
+
+function buildAnalysisCacheKey(endpoint, req, roomFilter, params = {}) {
+    return cacheService.buildCacheKey(
+        'analysis',
+        endpoint,
+        getRoomListActorCacheKey(req),
+        normalizeRoomFilterCacheKey(roomFilter),
+        JSON.stringify(params || {})
+    );
+}
+
+async function getCachedAnalysisPayload(cacheKey, loader) {
+    if (!cacheService.isRoomCacheEnabled() || ANALYSIS_CACHE_TTL_MS <= 0) {
+        return loader();
+    }
+
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const payload = await loader();
+    await cacheService.setJson(cacheKey, payload, { ttlMs: ANALYSIS_CACHE_TTL_MS });
+    return payload;
 }
 
 function readLocalRoomListCache(cacheKey) {
@@ -2905,7 +2935,8 @@ app.get('/api/analysis/stats', optionalAuth, async (req, res) => {
     try {
         const roomFilter = await getUserRoomFilter(req);
         console.log(`[API] /api/analysis/stats - user: ${req.user?.username || 'anonymous'}, roomFilter: ${roomFilter === null ? 'null(admin)' : JSON.stringify(roomFilter)}`);
-        const stats = await manager.getGlobalStats(roomFilter);
+        const cacheKey = buildAnalysisCacheKey('stats', req, roomFilter);
+        const stats = await getCachedAnalysisPayload(cacheKey, () => manager.getGlobalStats(roomFilter));
         res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2917,7 +2948,12 @@ app.get('/api/analysis/rooms/entry', optionalAuth, async (req, res) => {
         const { startDate, endDate, limit } = req.query;
         const roomFilter = await getUserRoomFilter(req);
         console.log(`[API] /api/analysis/rooms/entry - user: ${req.user?.username || 'anonymous'}, roomFilter: ${roomFilter === null ? 'null(admin)' : JSON.stringify(roomFilter)}`);
-        const stats = await manager.getRoomEntryStats(startDate, endDate, limit, roomFilter);
+        const cacheKey = buildAnalysisCacheKey('rooms_entry', req, roomFilter, {
+            startDate: String(startDate || ''),
+            endDate: String(endDate || ''),
+            limit: String(limit || '')
+        });
+        const stats = await getCachedAnalysisPayload(cacheKey, () => manager.getRoomEntryStats(startDate, endDate, limit, roomFilter));
         res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
