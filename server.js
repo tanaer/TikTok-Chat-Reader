@@ -26,6 +26,7 @@ const {
 } = require('./services/aiPromptService');
 const {
     AI_WORK_JOB_TYPE_SESSION_RECAP,
+    AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS,
     createAiWorkJob,
     appendAiWorkJobLog,
     updateAiWorkJob,
@@ -33,8 +34,12 @@ const {
     markAiWorkJobCompleted,
     markAiWorkJobFailed,
     findReusableAiWorkJob,
+    findReusableCustomerAnalysisAiWorkJob,
+    getLatestCustomerAnalysisAiWorkJobForUser,
     getLatestSessionAiWorkJobForUser,
     claimNextAiWorkJobs,
+    buildAiWorkTitle,
+    buildAiWorkActionUrl,
 } = require('./services/aiWorkService');
 const {
     isSessionMaintenanceSettingKey,
@@ -1656,6 +1661,11 @@ app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
             response.aiAnalysisJson = safeParseJsonObject(memberAnalysis?.resultJson);
         }
 
+        const latestAiJob = await getLatestCustomerAnalysisAiWorkJobForUser(req.user.id, req.params.userId);
+        if (latestAiJob && ['queued', 'processing'].includes(String(latestAiJob.status || '').toLowerCase())) {
+            response.aiJob = serializeSessionAiWorkJobForClient(latestAiJob);
+        }
+
         res.json(response);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1759,6 +1769,7 @@ function serializeUserAnalysisDetail(data = {}) {
         region: data.region || '',
         aiAnalysis: data.aiAnalysis || null,
         aiAnalysisJson: safeParseJsonObject(data.aiAnalysisJson),
+        aiJob: data.aiJob ? serializeSessionAiWorkJobForClient(data.aiJob) : null,
         moderatorRooms: Array.isArray(data.moderatorRooms) ? data.moderatorRooms : []
     };
 }
@@ -1834,7 +1845,81 @@ function isCustomerAnalysisCacheReusable(cacheRecord, cacheSignature) {
 }
 
 const SESSION_RECAP_AI_POINTS = 20;
-const CUSTOMER_ANALYSIS_AI_POINTS = 1;
+const CUSTOMER_ANALYSIS_AI_POINTS = 3;
+
+async function consumeCustomerAnalysisCredits(memberId, targetUserId, points = CUSTOMER_ANALYSIS_AI_POINTS) {
+    const safePoints = Math.max(0, Number(points || 0));
+    if (safePoints <= 0) {
+        return { success: true, chargedPoints: 0 };
+    }
+
+    const updated = await db.pool.query(
+        `UPDATE users
+         SET ai_credits_remaining = ai_credits_remaining - $2,
+             ai_credits_used = ai_credits_used + $2
+         WHERE id = $1 AND ai_credits_remaining >= $2
+         RETURNING id`,
+        [memberId, safePoints]
+    );
+
+    if (!updated.rows.length) {
+        return { success: false, chargedPoints: 0 };
+    }
+
+    await db.run(
+        'INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, ?, ?)',
+        [memberId, 'analysis', safePoints, targetUserId]
+    );
+
+    return { success: true, chargedPoints: safePoints };
+}
+
+async function saveMemberCustomerAnalysisRecord({
+    memberId,
+    targetUserId,
+    result,
+    resultJson = null,
+    chatCount = 0,
+    modelName = '',
+    modelVersion = '',
+    promptKey = null,
+    promptUpdatedAt = null,
+    contextVersion = null,
+    currentRoomId = null,
+    latencyMs = 0,
+    source = 'api'
+} = {}) {
+    await db.run(
+        `INSERT INTO user_ai_analysis (
+            member_id, target_user_id, result, result_json, chat_count, model_name, model_version,
+            prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            memberId,
+            targetUserId,
+            result,
+            resultJson || null,
+            Number(chatCount || 0),
+            modelName || '',
+            modelVersion || '',
+            promptKey,
+            promptUpdatedAt,
+            contextVersion,
+            currentRoomId,
+            Number(latencyMs || 0),
+            source || 'api'
+        ]
+    );
+}
+
+function buildCustomerAnalysisJobTitle(targetUserId, preparedAnalysis = {}) {
+    const identity = preparedAnalysis?.customerContext?.identity || {};
+    return buildAiWorkTitle(AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS, {
+        roomId: preparedAnalysis?.currentRoomId || '',
+        targetUserId: String(targetUserId || '').trim(),
+        targetNickname: String(identity?.nickname || identity?.uniqueId || '').trim()
+    });
+}
 
 function clampNumber(value, min, max, fallback = 0) {
     const numeric = Number(value);
@@ -2707,11 +2792,22 @@ async function sendAiWorkJobNotification(job, { success = true, errorMessage = '
     if (!job || !job.userId || job.notificationSent) return;
 
     try {
-        const title = success ? 'AI直播复盘已完成' : 'AI直播复盘处理失败';
+        const isCustomerAnalysisJob = String(job.jobType || '') === AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS;
+        const title = success
+            ? (isCustomerAnalysisJob ? 'AI客户分析已完成' : 'AI直播复盘已完成')
+            : (isCustomerAnalysisJob ? 'AI客户分析处理失败' : 'AI直播复盘处理失败');
         const content = success
-            ? `${job.title || 'AI直播复盘'} 已处理完成，点击可直达该房间的 AI复盘。`
-            : `${job.title || 'AI直播复盘'} 处理失败，请点击回到该房间查看。`;
-        const actionUrl = `/monitor.html?roomId=${encodeURIComponent(job.roomId || '')}&sessionId=${encodeURIComponent(job.sessionId || '')}&detailTab=timeStats`;
+            ? (isCustomerAnalysisJob
+                ? `${job.title || 'AI客户分析'} 已处理完成，点击查看结果。`
+                : `${job.title || 'AI直播复盘'} 已处理完成，点击可直达该房间的 AI复盘。`)
+            : (isCustomerAnalysisJob
+                ? `${job.title || 'AI客户分析'} 处理失败，请点击查看。`
+                : `${job.title || 'AI直播复盘'} 处理失败，请点击回到该房间查看。`);
+        const actionUrl = buildAiWorkActionUrl(job.jobType, {
+            roomId: job.roomId || '',
+            sessionId: job.sessionId || '',
+            requestPayload: job.requestPayload || null
+        });
 
         await notificationService.createUserNotification({
             userId: job.userId,
@@ -2722,6 +2818,7 @@ async function sendAiWorkJobNotification(job, { success = true, errorMessage = '
             actionTab: 'notifications',
             actionUrl
         });
+
         await updateAiWorkJob(job.id, { notificationSent: true });
     } catch (err) {
         console.error('[AI_WORK] send notification error:', err.message);
@@ -2844,10 +2941,271 @@ async function processSessionRecapAiWorkJob(job) {
     }
 }
 
+async function processCustomerAnalysisAiWorkJob(job) {
+    const isAdmin = Boolean(job.isAdmin);
+    const requestPayload = job.requestPayload || {};
+    const targetUserId = String(requestPayload.targetUserId || '').trim();
+    const requestedRoomId = String(requestPayload.requestedRoomId || job.roomId || '').trim();
+    const trace = async ({ phase = '', level = 'info', message = '', payload = null } = {}) => {
+        await appendAiWorkTrace(job.id, { phase, level, message, payload });
+    };
+
+    if (!targetUserId) {
+        throw new Error('缺少客户分析目标用户ID');
+    }
+
+    try {
+        await markAiWorkJobStarted(job.id, '正在准备客户上下文');
+        await trace({
+            phase: 'job',
+            level: 'info',
+            message: '客户分析任务开始执行',
+            payload: { targetUserId, roomId: requestedRoomId || '', attemptCount: job.attemptCount }
+        });
+
+        const roomFilter = await getRoomFilterForUserScope(job.userId, isAdmin);
+        const preparedAnalysis = await prepareCustomerAnalysis({
+            userId: targetUserId,
+            roomId: requestedRoomId || null,
+            roomFilter
+        });
+        const chatCount = Number(preparedAnalysis.chatCount || 0);
+        const currentRoomId = preparedAnalysis.currentRoomId || '';
+        const targetNickname = String(requestPayload.targetNickname || preparedAnalysis?.customerContext?.identity?.nickname || '').trim();
+        const targetUniqueId = String(requestPayload.targetUniqueId || preparedAnalysis?.customerContext?.identity?.uniqueId || '').trim();
+
+        await updateAiWorkJob(job.id, {
+            roomId: currentRoomId,
+            currentStep: '正在构建结构化客户上下文',
+            progressPercent: 18,
+            requestPayload: {
+                ...requestPayload,
+                trigger: 'async_worker',
+                targetUserId,
+                targetNickname,
+                targetUniqueId,
+                requestedRoomId,
+                currentRoomId,
+                chatCount,
+                promptKey: preparedAnalysis.promptKey,
+                promptUpdatedAt: preparedAnalysis.promptUpdatedAt,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion
+            }
+        });
+        await trace({
+            phase: 'context',
+            level: 'info',
+            message: '客户上下文构建完成',
+            payload: {
+                targetUserId,
+                currentRoomId,
+                chatCount,
+                promptKey: preparedAnalysis.promptKey,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion
+            }
+        });
+
+        if (chatCount < 10) {
+            throw new Error('待分析语料不足（需至少10条弹幕记录）');
+        }
+
+        const forceRegenerate = Boolean(requestPayload.force);
+        const reusableSystemAnalysis = !forceRegenerate
+            ? await db.get(
+                `SELECT ai_analysis, ai_analysis_json, ai_analysis_prompt_key, ai_analysis_prompt_updated_at,
+                        ai_analysis_context_version, ai_analysis_model_version, ai_analysis_current_room_id, updated_at
+                 FROM "user"
+                 WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
+                [targetUserId]
+            )
+            : null;
+        const canReuseSystemCache = Boolean(reusableSystemAnalysis) && isCustomerAnalysisCacheReusable({
+            ...reusableSystemAnalysis,
+            promptKey: reusableSystemAnalysis?.aiAnalysisPromptKey,
+            promptUpdatedAt: reusableSystemAnalysis?.aiAnalysisPromptUpdatedAt,
+            contextVersion: reusableSystemAnalysis?.aiAnalysisContextVersion,
+            currentRoomId: reusableSystemAnalysis?.aiAnalysisCurrentRoomId
+        }, preparedAnalysis.cacheSignature);
+
+        if (canReuseSystemCache) {
+            await trace({
+                phase: 'cache',
+                level: 'info',
+                message: '命中系统缓存，转为后台结果发放',
+                payload: {
+                    targetUserId,
+                    currentRoomId,
+                    promptKey: reusableSystemAnalysis?.aiAnalysisPromptKey || preparedAnalysis.promptKey,
+                    contextVersion: reusableSystemAnalysis?.aiAnalysisContextVersion || preparedAnalysis.cacheSignature.contextVersion
+                }
+            });
+
+            let chargedPoints = 0;
+            if (!isAdmin) {
+                const consumeResult = await consumeCustomerAnalysisCredits(job.userId, targetUserId, Number(job.pointCost || CUSTOMER_ANALYSIS_AI_POINTS));
+                if (!consumeResult.success) {
+                    throw new Error('AI 点数不足，任务执行时扣点失败');
+                }
+                chargedPoints = Number(consumeResult.chargedPoints || 0);
+                await saveMemberCustomerAnalysisRecord({
+                    memberId: job.userId,
+                    targetUserId,
+                    result: reusableSystemAnalysis.aiAnalysis,
+                    resultJson: reusableSystemAnalysis.aiAnalysisJson || null,
+                    chatCount,
+                    modelName: 'system_cache',
+                    modelVersion: reusableSystemAnalysis.aiAnalysisModelVersion || 'system_cache',
+                    promptKey: reusableSystemAnalysis.aiAnalysisPromptKey || preparedAnalysis.promptKey,
+                    promptUpdatedAt: reusableSystemAnalysis.aiAnalysisPromptUpdatedAt || preparedAnalysis.promptUpdatedAt,
+                    contextVersion: reusableSystemAnalysis.aiAnalysisContextVersion || preparedAnalysis.cacheSignature.contextVersion,
+                    currentRoomId: reusableSystemAnalysis.aiAnalysisCurrentRoomId || preparedAnalysis.currentRoomId,
+                    latencyMs: 0,
+                    source: 'system_cache'
+                });
+            }
+
+            const completedJob = await markAiWorkJobCompleted(job.id, {
+                chargedPoints,
+                modelName: reusableSystemAnalysis.aiAnalysisModelVersion || 'system_cache',
+                currentStep: '处理完成',
+                resultPayload: {
+                    targetUserId,
+                    targetNickname,
+                    targetUniqueId,
+                    analysis: safeParseJsonObject(reusableSystemAnalysis.aiAnalysisJson),
+                    result: reusableSystemAnalysis.aiAnalysis,
+                    resultJsonText: reusableSystemAnalysis.aiAnalysisJson || '',
+                    chatCount,
+                    source: 'system_cache',
+                    latencyMs: 0,
+                    modelName: reusableSystemAnalysis.aiAnalysisModelVersion || 'system_cache',
+                    chargedPoints
+                }
+            });
+
+            await trace({ phase: 'job', level: 'info', message: '客户分析任务通过系统缓存完成', payload: { jobId: job.id, targetUserId, chargedPoints } });
+            await sendAiWorkJobNotification(completedJob || { ...job, chargedPoints }, { success: true });
+            return;
+        }
+
+        await updateAiWorkJob(job.id, {
+            currentStep: '正在调用 AI 生成客户分析',
+            progressPercent: 52
+        });
+
+        const generated = await runCustomerAnalysis({
+            preparedInput: preparedAnalysis,
+            requestAiChatCompletion,
+            trace
+        });
+        await trace({
+            phase: 'analysis',
+            level: 'info',
+            message: 'AI 客户分析生成完成',
+            payload: {
+                targetUserId,
+                summary: generated.analysis?.summary || '',
+                modelName: generated.modelName || '',
+                latencyMs: Number(generated.latencyMs || 0)
+            }
+        });
+
+        await updateAiWorkJob(job.id, {
+            currentStep: '正在保存客户分析结果',
+            progressPercent: 78,
+            modelName: generated.modelName || ''
+        });
+
+        const systemAnalysis = await db.get(
+            `SELECT ai_analysis, ai_analysis_json, ai_analysis_prompt_key, ai_analysis_prompt_updated_at,
+                    ai_analysis_context_version, ai_analysis_model_version, ai_analysis_current_room_id, updated_at
+             FROM "user"
+             WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
+            [targetUserId]
+        );
+        const shouldPersistSystemAnalysis = isAdmin || !isCustomerAnalysisCacheReusable({
+            ...systemAnalysis,
+            promptKey: systemAnalysis?.aiAnalysisPromptKey,
+            promptUpdatedAt: systemAnalysis?.aiAnalysisPromptUpdatedAt,
+            contextVersion: systemAnalysis?.aiAnalysisContextVersion,
+            currentRoomId: systemAnalysis?.aiAnalysisCurrentRoomId
+        }, preparedAnalysis.cacheSignature);
+        if (shouldPersistSystemAnalysis) {
+            await manager.updateAIAnalysis(targetUserId, generated.result, {
+                resultJson: generated.resultJsonText,
+                promptKey: preparedAnalysis.promptKey,
+                promptUpdatedAt: preparedAnalysis.promptUpdatedAt,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion,
+                modelVersion: generated.modelVersion,
+                currentRoomId: preparedAnalysis.currentRoomId
+            });
+        }
+
+        let chargedPoints = 0;
+        if (!isAdmin) {
+            const consumeResult = await consumeCustomerAnalysisCredits(job.userId, targetUserId, Number(job.pointCost || CUSTOMER_ANALYSIS_AI_POINTS));
+            if (!consumeResult.success) {
+                throw new Error('AI 点数不足，任务执行时扣点失败');
+            }
+            chargedPoints = Number(consumeResult.chargedPoints || 0);
+            await saveMemberCustomerAnalysisRecord({
+                memberId: job.userId,
+                targetUserId,
+                result: generated.result,
+                resultJson: generated.resultJsonText,
+                chatCount,
+                modelName: generated.modelName,
+                modelVersion: generated.modelVersion,
+                promptKey: preparedAnalysis.promptKey,
+                promptUpdatedAt: preparedAnalysis.promptUpdatedAt,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion,
+                currentRoomId: preparedAnalysis.currentRoomId,
+                latencyMs: generated.latencyMs,
+                source: 'api'
+            });
+        }
+
+        const completedJob = await markAiWorkJobCompleted(job.id, {
+            chargedPoints,
+            modelName: generated.modelName || '',
+            currentStep: '处理完成',
+            resultPayload: {
+                targetUserId,
+                targetNickname,
+                targetUniqueId,
+                analysis: generated.analysis,
+                result: generated.result,
+                resultJsonText: generated.resultJsonText,
+                chatCount,
+                source: 'api',
+                latencyMs: Number(generated.latencyMs || 0),
+                modelName: generated.modelName || '',
+                chargedPoints
+            }
+        });
+
+        await trace({ phase: 'job', level: 'info', message: '客户分析任务处理完成', payload: { jobId: job.id, targetUserId, chargedPoints } });
+        await sendAiWorkJobNotification(completedJob || { ...job, chargedPoints }, { success: true });
+    } catch (err) {
+        const errorMessage = err?.message || '处理失败';
+        await trace({ phase: 'job', level: 'error', message: '客户分析任务执行失败', payload: { targetUserId, error: errorMessage } });
+        const failedJob = await markAiWorkJobFailed(job.id, {
+            errorMessage,
+            currentStep: '处理失败',
+            modelName: String(job.modelName || '')
+        });
+        await sendAiWorkJobNotification(failedJob || job, { success: false, errorMessage });
+    }
+}
+
 async function processAiWorkJob(job) {
     if (!job) return;
     if (job.jobType === AI_WORK_JOB_TYPE_SESSION_RECAP) {
         await processSessionRecapAiWorkJob(job);
+        return;
+    }
+    if (job.jobType === AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS) {
+        await processCustomerAnalysisAiWorkJob(job);
         return;
     }
     throw new Error(`暂不支持的 AI 工作类型: ${job.jobType}`);
@@ -2945,8 +3303,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
         }
 
         const preparedAnalysis = await prepareCustomerAnalysis({ userId, roomId, roomFilter });
-        const chatCount = preparedAnalysis.chatCount;
-
+        const chatCount = Number(preparedAnalysis.chatCount || 0);
         if (chatCount < 10) {
             return res.json({ result: '待分析语料不足（需至少10条弹幕记录）', chatCount, skipped: true });
         }
@@ -2965,84 +3322,25 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
             }
         }
 
-        let systemAnalysis = null;
-        if (!force) {
-            systemAnalysis = await db.get(
-                `SELECT ai_analysis, ai_analysis_json, ai_analysis_prompt_key, ai_analysis_prompt_updated_at,
-                        ai_analysis_context_version, ai_analysis_model_version, ai_analysis_current_room_id, updated_at
-                 FROM "user"
-                 WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
-                [userId]
-            );
-            if (isCustomerAnalysisCacheReusable({
-                ...systemAnalysis,
-                promptKey: systemAnalysis?.aiAnalysisPromptKey,
-                promptUpdatedAt: systemAnalysis?.aiAnalysisPromptUpdatedAt,
-                contextVersion: systemAnalysis?.aiAnalysisContextVersion,
-                currentRoomId: systemAnalysis?.aiAnalysisCurrentRoomId
-            }, preparedAnalysis.cacheSignature)) {
-                if (!isAdmin) {
-                    const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
-                    const remaining = Number(credits?.aiCreditsRemaining || 0);
-                    if (remaining < CUSTOMER_ANALYSIS_AI_POINTS) {
-                        return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
-                    }
 
-                    const simulatedLatency = getSimulatedAiDelayMs();
-                    await sleep(simulatedLatency);
-
-                    await db.run(
-                        `INSERT INTO user_ai_analysis (
-                            member_id, target_user_id, result, result_json, chat_count, model_name, model_version,
-                            prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
-                         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-                        [
-                            memberId,
-                            userId,
-                            systemAnalysis.aiAnalysis,
-                            systemAnalysis.aiAnalysisJson || null,
-                            chatCount,
-                            'system_cache',
-                            systemAnalysis.aiAnalysisModelVersion || 'system_cache',
-                            systemAnalysis.aiAnalysisPromptKey || preparedAnalysis.promptKey,
-                            systemAnalysis.aiAnalysisPromptUpdatedAt || preparedAnalysis.promptUpdatedAt,
-                            systemAnalysis.aiAnalysisContextVersion || preparedAnalysis.cacheSignature.contextVersion,
-                            systemAnalysis.aiAnalysisCurrentRoomId || preparedAnalysis.currentRoomId,
-                            simulatedLatency,
-                            'system_cache'
-                        ]
-                    );
-                    await db.run(
-                        'UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - ?, 0), ai_credits_used = ai_credits_used + ? WHERE id = ?',
-                        [CUSTOMER_ANALYSIS_AI_POINTS, CUSTOMER_ANALYSIS_AI_POINTS, memberId]
-                    );
-                    await db.run(
-                        'INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, ?, ?)',
-                        [memberId, 'analysis', CUSTOMER_ANALYSIS_AI_POINTS, userId]
-                    );
-
-                    console.log(`[AI] Reused system cache for member ${memberId}, target ${userId}, simulated ${simulatedLatency}ms`);
-                    return res.json({
-                        result: systemAnalysis.aiAnalysis,
-                        analysis: safeParseJsonObject(systemAnalysis.aiAnalysisJson),
-                        cached: false,
-                        chatCount,
-                        latency: simulatedLatency,
-                        analyzedAt: systemAnalysis.updatedAt,
-                        source: 'system_cache'
-                    });
-                }
-
-                console.log(`[AI] Using system cache for ${userId}`);
-                return res.json({
-                    result: systemAnalysis.aiAnalysis,
-                    analysis: safeParseJsonObject(systemAnalysis.aiAnalysisJson),
-                    cached: true,
-                    chatCount,
-                    analyzedAt: systemAnalysis.updatedAt,
-                    source: 'system_cache'
-                });
-            }
+        const resolvedRoomId = String(preparedAnalysis.currentRoomId || roomId || '').trim();
+        const existingJob = await findReusableCustomerAnalysisAiWorkJob({
+            userId: memberId,
+            targetUserId: userId,
+            roomId: resolvedRoomId
+        });
+        if (existingJob) {
+            return res.status(202).json({
+                accepted: true,
+                queued: existingJob.status === 'queued',
+                processing: existingJob.status === 'processing',
+                reused: true,
+                cached: false,
+                pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+                chatCount,
+                job: serializeSessionAiWorkJobForClient(existingJob),
+                message: 'AI 已启动，正在后台分析客户，完成后会主动通知。'
+            });
         }
 
         if (!isAdmin) {
@@ -3053,68 +3351,54 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
             }
         }
 
-        const generated = await runCustomerAnalysis({
-            preparedInput: preparedAnalysis,
-            requestAiChatCompletion
-        });
-
-        const shouldPersistSystemAnalysis = isAdmin || !isCustomerAnalysisCacheReusable({
-            ...systemAnalysis,
-            promptKey: systemAnalysis?.aiAnalysisPromptKey,
-            promptUpdatedAt: systemAnalysis?.aiAnalysisPromptUpdatedAt,
-            contextVersion: systemAnalysis?.aiAnalysisContextVersion,
-            currentRoomId: systemAnalysis?.aiAnalysisCurrentRoomId
-        }, preparedAnalysis.cacheSignature);
-        if (shouldPersistSystemAnalysis) {
-            await manager.updateAIAnalysis(userId, generated.result, {
-                resultJson: generated.resultJsonText,
+        const targetIdentity = preparedAnalysis?.customerContext?.identity || {};
+        const job = await createAiWorkJob({
+            userId: memberId,
+            jobType: AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS,
+            roomId: resolvedRoomId,
+            sessionId: '',
+            title: buildCustomerAnalysisJobTitle(userId, preparedAnalysis),
+            pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+            forceRegenerate: force,
+            isAdmin,
+            requestPayload: {
+                trigger: 'user_submit',
+                targetUserId: String(userId || '').trim(),
+                targetNickname: String(targetIdentity.nickname || '').trim(),
+                targetUniqueId: String(targetIdentity.uniqueId || '').trim(),
+                requestedRoomId: String(roomId || '').trim(),
+                currentRoomId: resolvedRoomId,
+                force,
+                chatCount,
+                pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
                 promptKey: preparedAnalysis.promptKey,
                 promptUpdatedAt: preparedAnalysis.promptUpdatedAt,
-                contextVersion: preparedAnalysis.cacheSignature.contextVersion,
-                modelVersion: generated.modelVersion,
-                currentRoomId: preparedAnalysis.currentRoomId
-            });
-        }
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion
+            }
+        });
 
-        if (!isAdmin) {
-            await db.run(
-                `INSERT INTO user_ai_analysis (
-                    member_id, target_user_id, result, result_json, chat_count, model_name, model_version,
-                    prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'api')`,
-                [
-                    memberId,
-                    userId,
-                    generated.result,
-                    generated.resultJsonText,
-                    chatCount,
-                    generated.modelName,
-                    generated.modelVersion,
-                    preparedAnalysis.promptKey,
-                    preparedAnalysis.promptUpdatedAt,
-                    preparedAnalysis.cacheSignature.contextVersion,
-                    preparedAnalysis.currentRoomId,
-                    generated.latencyMs
-                ]
-            );
-            await db.run(
-                'UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - ?, 0), ai_credits_used = ai_credits_used + ? WHERE id = ?',
-                [CUSTOMER_ANALYSIS_AI_POINTS, CUSTOMER_ANALYSIS_AI_POINTS, memberId]
-            );
-            await db.run(
-                'INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, ?, ?)',
-                [memberId, 'analysis', CUSTOMER_ANALYSIS_AI_POINTS, userId]
-            );
-        }
+        await appendAiWorkJobLog(job.id, {
+            phase: 'queued',
+            level: 'info',
+            message: '客户分析任务已入队，等待后台调度',
+            payload: {
+                targetUserId: String(userId || '').trim(),
+                currentRoomId: resolvedRoomId,
+                requestedRoomId: String(roomId || '').trim(),
+                force,
+                chatCount,
+                pointCost: CUSTOMER_ANALYSIS_AI_POINTS
+            }
+        });
 
-        res.json({
-            result: generated.result,
-            analysis: generated.analysis,
+        res.status(202).json({
+            accepted: true,
+            queued: true,
             cached: false,
+            pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
             chatCount,
-            latency: generated.latencyMs,
-            model: generated.modelName,
-            source: 'api'
+            job: serializeSessionAiWorkJobForClient(job),
+            message: 'AI 已启动，正在后台分析客户，完成后会主动通知。'
         });
 
     } catch (err) {

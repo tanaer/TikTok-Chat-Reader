@@ -45,12 +45,27 @@ function getMonitorDeepLinkState() {
     return {
         roomId: String(params.get('roomId') || '').trim(),
         sessionId: String(params.get('sessionId') || '').trim(),
-        detailTab: String(params.get('detailTab') || '').trim()
+        detailTab: String(params.get('detailTab') || '').trim(),
+        section: String(params.get('section') || '').trim(),
+        analysisUserId: String(params.get('analysisUserId') || '').trim(),
+        analysisNickname: String(params.get('analysisNickname') || '').trim(),
+        analysisUniqueId: String(params.get('analysisUniqueId') || '').trim()
     };
 }
 
 async function handleMonitorDeepLink() {
     const deepLink = getMonitorDeepLinkState();
+    if (deepLink.analysisUserId) {
+        switchSection(deepLink.section || 'userAnalysis');
+        if (typeof showUserDetails === 'function') {
+            showUserDetails(
+                deepLink.analysisUserId,
+                deepLink.analysisNickname || deepLink.analysisUserId,
+                deepLink.analysisUniqueId || ''
+            );
+        }
+        return;
+    }
     if (!deepLink.roomId) return;
 
     switchSection('roomDetail');
