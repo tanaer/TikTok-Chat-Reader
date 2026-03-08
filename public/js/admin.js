@@ -1,9 +1,245 @@
 // admin.js - Admin panel logic
 
-document.addEventListener('DOMContentLoaded', () => {
+const ADMIN_SECTION_META = Object.freeze({
+    overview: { title: '系统概览', permission: 'overview.view' },
+    users: { title: '用户管理', permission: 'users.manage' },
+    orders: { title: '订单管理', permission: 'orders.manage' },
+    plans: { title: '套餐设置', permission: 'plans.manage' },
+    gifts: { title: '礼物配置', permission: 'gifts.manage' },
+    payment: { title: '支付管理', permission: 'payments.manage' },
+    notifications: { title: '通知系统', permission: 'notifications.manage' },
+    aiWork: { title: 'AI工作中心', permission: 'ai_work.manage' },
+    prompts: { title: '提示词管理', permission: 'prompts.manage' },
+    aiModels: { title: 'AI 通道配置', permission: 'ai_channels.manage' },
+    eulerKeys: { title: 'Euler API Keys', permission: 'euler_keys.manage' },
+    sessionMaintenance: { title: '场次运维', permission: 'session_maintenance.manage' },
+    settings: { title: '系统设置', permission: 'settings.manage' },
+    smtpServices: { title: '邮箱服务', permission: 'smtp.manage' },
+    adminAccess: { title: '管理员管理', permission: 'admins.manage' },
+    docs: { title: '系统文档', permission: 'docs.manage' }
+});
+const ADMIN_SIDEBAR_SECTION_STORAGE_KEY = 'admin:sidebar:activeSection';
+const ADMIN_SIDEBAR_GROUP_STORAGE_KEY = 'admin:sidebar:groupState';
+const ADMIN_READ_METHODS = new Set(['GET', 'HEAD']);
+const ADMIN_REQUEST_TARGET_HINTS = Object.freeze([
+    ['admin-access', '管理员管理'],
+    ['session-maintenance', '场次运维'],
+    ['smtp', '邮箱服务'],
+    ['/docs', '系统文档'],
+    ['prompt-templates', '提示词管理'],
+    ['ai-work', 'AI工作中心'],
+    ['ai-models', 'AI 通道配置'],
+    ['ai-channels', 'AI 通道配置'],
+    ['euler-keys', 'Euler API Keys'],
+    ['/api/admin/payment/pushplus-config', '通知配置'],
+    ['/api/admin/payment/config', '支付配置'],
+    ['ai-credit-packages', 'AI 点数包'],
+    ['/addons', '扩容包配置'],
+    ['/plans', '套餐配置'],
+    ['/orders', '订单数据'],
+    ['/users', '用户数据'],
+    ['/api/gifts', '礼物配置'],
+    ['/api/settings', '系统设置'],
+    ['/api/config', '系统设置'],
+    ['/stats', '系统概览'],
+]);
+
+let adminOriginalApiFetch = null;
+let adminReadRequestCount = 0;
+let adminWriteRequestCount = 0;
+let adminLatestRequestMessage = '';
+let adminRequestHideTimer = null;
+
+function getAdminCurrentSectionTitle() {
+    return ADMIN_SECTION_META[currentSection]?.title || '后台数据';
+}
+
+function inferAdminRequestTarget(url) {
+    const normalizedUrl = String(url || '');
+    for (const [pattern, label] of ADMIN_REQUEST_TARGET_HINTS) {
+        if (normalizedUrl.includes(pattern)) return label;
+    }
+    return getAdminCurrentSectionTitle();
+}
+
+function inferAdminRequestMessage(url, method) {
+    const normalizedMethod = String(method || 'GET').toUpperCase();
+    const target = inferAdminRequestTarget(url);
+    if (ADMIN_READ_METHODS.has(normalizedMethod)) return `正在加载${target}...`;
+    if (normalizedMethod === 'DELETE') return `正在删除${target}...`;
+    if (normalizedMethod === 'PATCH' || normalizedMethod === 'PUT') return `正在保存${target}...`;
+    return `正在提交${target}...`;
+}
+
+function inferAdminButtonBusyText(url, method) {
+    const normalizedMethod = String(method || 'GET').toUpperCase();
+    const target = inferAdminRequestTarget(url);
+    if (ADMIN_READ_METHODS.has(normalizedMethod)) return `加载${target}...`;
+    if (normalizedMethod === 'DELETE') return '删除中...';
+    if (String(url || '').includes('/test')) return '测试中...';
+    if (normalizedMethod === 'PATCH' || normalizedMethod === 'PUT') return '保存中...';
+    return '提交中...';
+}
+
+function getAdminRequestUiRefs() {
+    return {
+        banner: document.getElementById('admin-request-banner'),
+        bannerText: document.getElementById('admin-request-banner-text'),
+        bannerMeta: document.getElementById('admin-request-banner-meta'),
+        overlay: document.getElementById('admin-content-loading-overlay'),
+        overlayText: document.getElementById('admin-content-loading-text'),
+    };
+}
+
+function renderAdminRequestUi() {
+    const { banner, bannerText, bannerMeta, overlay, overlayText } = getAdminRequestUiRefs();
+    const total = adminReadRequestCount + adminWriteRequestCount;
+    if (adminRequestHideTimer) {
+        clearTimeout(adminRequestHideTimer);
+        adminRequestHideTimer = null;
+    }
+
+    if (total <= 0) {
+        if (banner) banner.classList.add('hidden');
+        if (overlay) overlay.classList.add('hidden');
+        return;
+    }
+
+    const activeKind = adminWriteRequestCount > 0 ? 'write' : 'read';
+    const activeCount = activeKind === 'write' ? adminWriteRequestCount : adminReadRequestCount;
+    const baseMessage = adminLatestRequestMessage || (activeKind === 'write' ? '正在提交后台数据...' : '正在加载后台数据...');
+    const message = activeCount > 1 ? `${baseMessage}（${activeCount} 项请求）` : baseMessage;
+
+    if (banner) {
+        banner.classList.remove('hidden');
+    }
+    if (bannerText) {
+        bannerText.textContent = message;
+    }
+    if (bannerMeta) {
+        bannerMeta.textContent = activeKind === 'write' ? '提交中' : '读取中';
+        bannerMeta.className = `badge badge-sm ${activeKind === 'write' ? 'badge-primary' : 'badge-ghost'}`;
+    }
+
+    if (overlay) {
+        overlay.classList.toggle('hidden', adminReadRequestCount <= 0);
+    }
+    if (overlayText) {
+        overlayText.textContent = adminReadRequestCount > 0 ? message : '正在同步当前页面数据，请稍候...';
+    }
+}
+
+function scheduleAdminRequestUiHide() {
+    if (adminRequestHideTimer) {
+        clearTimeout(adminRequestHideTimer);
+    }
+    adminRequestHideTimer = setTimeout(() => {
+        renderAdminRequestUi();
+    }, 180);
+}
+
+function resolveAdminRequestButton(explicitButton = null) {
+    const candidate = explicitButton || document.activeElement;
+    if (!candidate || typeof candidate.closest !== 'function') return null;
+    const button = candidate.closest('button, .btn');
+    return button || null;
+}
+
+function setAdminRequestButtonBusy(button, busy, busyText = '处理中...') {
+    if (!button) return;
+
+    const currentCount = Math.max(0, parseInt(button.dataset.adminBusyCount || '0', 10) || 0);
+
+    if (busy) {
+        if (currentCount === 0) {
+            button.dataset.adminOriginalHtml = button.innerHTML;
+            button.dataset.adminOriginalDisabled = button.disabled ? 'true' : 'false';
+            button.disabled = true;
+            button.setAttribute('aria-busy', 'true');
+            button.classList.add('pointer-events-none');
+            button.innerHTML = `<span class="loading loading-spinner loading-xs"></span><span>${busyText}</span>`;
+        }
+        button.dataset.adminBusy = 'true';
+        button.dataset.adminBusyCount = String(currentCount + 1);
+        return;
+    }
+
+    const nextCount = Math.max(0, currentCount - 1);
+    if (nextCount > 0) {
+        button.dataset.adminBusyCount = String(nextCount);
+        return;
+    }
+
+    if (button.dataset.adminOriginalHtml) {
+        button.innerHTML = button.dataset.adminOriginalHtml;
+    }
+    button.disabled = button.dataset.adminOriginalDisabled === 'true';
+    button.removeAttribute('aria-busy');
+    button.classList.remove('pointer-events-none');
+    delete button.dataset.adminOriginalHtml;
+    delete button.dataset.adminOriginalDisabled;
+    delete button.dataset.adminBusy;
+    delete button.dataset.adminBusyCount;
+}
+
+function installAdminApiFetchHooks() {
+    if (adminOriginalApiFetch || !window.Auth || typeof Auth.apiFetch !== 'function') return;
+
+    adminOriginalApiFetch = Auth.apiFetch.bind(Auth);
+    Auth.apiFetch = async function adminManagedApiFetch(url, options = {}) {
+        const normalizedMethod = String(options.method || 'GET').toUpperCase();
+        const normalizedUrl = String(url || '');
+        const isSilentRequest = options.adminSilent === true || normalizedUrl.startsWith('/api/auth/');
+        if (isSilentRequest) {
+            return adminOriginalApiFetch(url, options);
+        }
+
+        const isReadRequest = ADMIN_READ_METHODS.has(normalizedMethod);
+        const button = resolveAdminRequestButton(options.adminButton || null);
+        const message = options.adminMessage || inferAdminRequestMessage(url, normalizedMethod);
+        const busyText = options.adminBusyText || inferAdminButtonBusyText(url, normalizedMethod);
+
+        adminLatestRequestMessage = message;
+        if (isReadRequest) adminReadRequestCount += 1;
+        else adminWriteRequestCount += 1;
+
+        if (button) {
+            setAdminRequestButtonBusy(button, true, busyText);
+        }
+        renderAdminRequestUi();
+
+        try {
+            return await adminOriginalApiFetch(url, options);
+        } finally {
+            if (button) {
+                setAdminRequestButtonBusy(button, false);
+            }
+            if (isReadRequest) adminReadRequestCount = Math.max(0, adminReadRequestCount - 1);
+            else adminWriteRequestCount = Math.max(0, adminWriteRequestCount - 1);
+
+            if (adminReadRequestCount + adminWriteRequestCount > 0) {
+                renderAdminRequestUi();
+            } else {
+                scheduleAdminRequestUiHide();
+            }
+        }
+    };
+}
+
+document.addEventListener('DOMContentLoaded', async () => {
+    installAdminApiFetchHooks();
     if (!Auth.requireAdmin()) return;
     Auth.updateNavbar();
-    loadOverviewStats();
+    try {
+        await loadAdminAccessProfile();
+    } catch (err) {
+        console.error('Load admin access profile error:', err);
+        alert(err.message || '加载管理员权限失败');
+        return;
+    }
+    initSidebarMenu();
+    const preferredSection = localStorage.getItem(ADMIN_SIDEBAR_SECTION_STORAGE_KEY) || 'overview';
+    showSection(preferredSection);
 });
 
 let currentSection = 'overview';
@@ -21,20 +257,90 @@ let currentAdminAiWorkDetailId = null;
 let sessionMaintenanceOverviewCache = null;
 let sessionMaintenanceConfigCache = null;
 let sessionMaintenanceLogsCache = [];
+let adminAccessProfile = null;
+let adminPermissionGroups = [];
+let allAdminPermissions = [];
+let adminPermissionsSet = new Set();
+let adminRolesCache = [];
+let adminAdminsCache = [];
+let adminCandidatesCache = [];
+let adminRoleEditingSnapshot = null;
+let adminRoleEditorId = null;
 
-function showSection(name) {
-    currentSection = name;
-    document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
-    document.getElementById(`sec-${name}`).classList.remove('hidden');
-    document.querySelectorAll('#sidebar-menu a').forEach(a => a.classList.remove('active'));
-    if (event && event.target) event.target.classList.add('active');
+function getDefaultMenuPermissions() {
+    return [...new Set(Object.values(ADMIN_SECTION_META).map((item) => item.permission).filter(Boolean))];
+}
 
-    const titles = {
-        overview: '系统概览', users: '用户管理', orders: '订单管理', payment: '支付管理', notifications: '通知系统', plans: '套餐设置',
-        gifts: '礼物配置', settings: '系统设置', sessionMaintenance: '场次运维', smtpServices: '邮箱服务', aiWork: 'AI工作中心', prompts: '提示词管理', docs: '系统文档', eulerKeys: 'Euler API Keys', aiModels: 'AI 通道配置'
-    };
-    document.getElementById('section-title').textContent = titles[name] || name;
+function loadSidebarGroupState() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(ADMIN_SIDEBAR_GROUP_STORAGE_KEY) || '{}');
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+        return {};
+    }
+}
 
+function persistSidebarGroupState() {
+    const groupState = {};
+    document.querySelectorAll('#sidebar-menu details[data-admin-group]').forEach((detailsEl) => {
+        groupState[detailsEl.dataset.adminGroup] = Boolean(detailsEl.open);
+    });
+    localStorage.setItem(ADMIN_SIDEBAR_GROUP_STORAGE_KEY, JSON.stringify(groupState));
+}
+
+function hasSectionPermission(permissionKey) {
+    if (!permissionKey) return true;
+    if (adminAccessProfile?.isSuperAdmin) return true;
+    return adminPermissionsSet.has(permissionKey);
+}
+
+function canAccessSection(name) {
+    const meta = ADMIN_SECTION_META[name];
+    if (!meta) return false;
+    return hasSectionPermission(meta.permission);
+}
+
+function resolveAccessibleSection(sectionName) {
+    const preferred = String(sectionName || '').trim();
+    if (preferred && canAccessSection(preferred) && document.getElementById(`sec-${preferred}`)) {
+        return preferred;
+    }
+    const firstAllowed = Object.keys(ADMIN_SECTION_META).find(
+        (key) => canAccessSection(key) && document.getElementById(`sec-${key}`)
+    );
+    return firstAllowed || 'overview';
+}
+
+function initSidebarMenu() {
+    const sidebar = document.getElementById('sidebar-menu');
+    if (!sidebar) return;
+
+    const groupState = loadSidebarGroupState();
+    sidebar.querySelectorAll('details[data-admin-group]').forEach((detailsEl) => {
+        const groupKey = detailsEl.dataset.adminGroup;
+        if (Object.prototype.hasOwnProperty.call(groupState, groupKey)) {
+            detailsEl.open = Boolean(groupState[groupKey]);
+        }
+        detailsEl.addEventListener('toggle', persistSidebarGroupState);
+    });
+
+    sidebar.querySelectorAll('a[data-admin-section]').forEach((link) => {
+        const sectionName = link.dataset.adminSection;
+        const visible = canAccessSection(sectionName);
+        const item = link.closest('li');
+        link.classList.toggle('hidden', !visible);
+        if (item) item.classList.toggle('hidden', !visible);
+    });
+
+    sidebar.querySelectorAll('[data-admin-group-wrapper]').forEach((wrapper) => {
+        const hasVisibleChild = wrapper.querySelector('a[data-admin-section]:not(.hidden)');
+        wrapper.classList.toggle('hidden', !hasVisibleChild);
+    });
+
+    persistSidebarGroupState();
+}
+
+function runSectionLoader(name) {
     if (name === 'overview') loadOverviewStats();
     else if (name === 'users') loadUsers(1);
     else if (name === 'orders') loadAdminOrders(1);
@@ -50,6 +356,35 @@ function showSection(name) {
     else if (name === 'docs') loadAdminDocs();
     else if (name === 'eulerKeys') loadEulerKeys();
     else if (name === 'aiModels') loadAiModels();
+    else if (name === 'adminAccess') loadAdminAccessSection();
+}
+
+function showSection(name, event) {
+    const resolvedName = resolveAccessibleSection(name);
+    if (resolvedName !== name && event) {
+        alert('当前账号没有该菜单权限');
+        return false;
+    }
+
+    currentSection = resolvedName;
+    document.querySelectorAll('main > section').forEach(s => s.classList.add('hidden'));
+    document.getElementById(`sec-${resolvedName}`)?.classList.remove('hidden');
+    document.querySelectorAll('#sidebar-menu a[data-admin-section]').forEach((link) => link.classList.remove('active'));
+
+    const activeLink = document.querySelector(`#sidebar-menu a[data-admin-section="${resolvedName}"]`);
+    if (activeLink) {
+        activeLink.classList.add('active');
+        const detailsEl = activeLink.closest('details[data-admin-group]');
+        if (detailsEl && !detailsEl.open) {
+            detailsEl.open = true;
+            persistSidebarGroupState();
+        }
+    }
+
+    localStorage.setItem(ADMIN_SIDEBAR_SECTION_STORAGE_KEY, resolvedName);
+    document.getElementById('section-title').textContent = ADMIN_SECTION_META[resolvedName]?.title || resolvedName;
+    runSectionLoader(resolvedName);
+    return false;
 }
 
 // ==================== Overview ====================
@@ -2709,5 +3044,644 @@ async function loadAdminDocs(forceRefresh = false) {
     } catch (err) {
         console.error('Load admin docs error:', err);
         listEl.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-4 py-6 text-sm text-error">${escapeHtml(err.message || '加载文档列表失败')}</div>`;
+    }
+}
+
+function getAdminPermissionMetaMap() {
+    const map = new Map();
+    (adminPermissionGroups || []).forEach((group) => {
+        (group.permissions || []).forEach((permission) => {
+            map.set(permission.key, permission);
+        });
+    });
+    return map;
+}
+
+function getAdminPermissionLabel(permissionKey) {
+    if (!permissionKey) return '-';
+    const permission = getAdminPermissionMetaMap().get(permissionKey);
+    return permission?.label || permissionKey;
+}
+
+function formatAdminAccessTime(value) {
+    if (!value) return '-';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return escapeHtml(String(value));
+    return escapeHtml(date.toLocaleString('zh-CN'));
+}
+
+function renderAdminPermissionBadges(permissionKeys = [], limit = 4) {
+    const normalized = Array.isArray(permissionKeys) ? permissionKeys : [];
+    if (!normalized.length) {
+        return '<span class="text-base-content/40">未配置权限</span>';
+    }
+    const badges = normalized.slice(0, limit).map((key) => `<span class="badge badge-outline badge-sm">${escapeHtml(getAdminPermissionLabel(key))}</span>`);
+    if (normalized.length > limit) {
+        badges.push(`<span class="badge badge-ghost badge-sm">+${normalized.length - limit}</span>`);
+    }
+    return badges.join('');
+}
+
+function getAdminRoleOptionsHtml(selectedRoleId = null, allowEmpty = true) {
+    const options = [];
+    if (allowEmpty) {
+        options.push(`<option value="">请选择角色</option>`);
+    }
+    adminRolesCache.forEach((role) => {
+        const selected = Number(selectedRoleId) === Number(role.id) ? 'selected' : '';
+        options.push(`<option value="${role.id}" ${selected}>${escapeHtml(role.name)} (${escapeHtml(role.code)})</option>`);
+    });
+    return options.join('');
+}
+
+function renderAdminAccessSummary() {
+    const wrap = document.getElementById('admin-access-summary');
+    if (!wrap) return;
+    if (!adminAccessProfile) {
+        wrap.innerHTML = '<div class="rounded-box border border-base-300 bg-base-100 px-5 py-5 text-sm text-base-content/60">未获取到管理员权限画像。</div>';
+        return;
+    }
+
+    const visibleSections = Object.keys(ADMIN_SECTION_META).filter((key) => canAccessSection(key));
+    const permissionCount = adminAccessProfile.isSuperAdmin ? allAdminPermissions.length : adminPermissionsSet.size;
+    const customRoleCount = adminRolesCache.filter((role) => !role.isSystem).length;
+
+    wrap.innerHTML = `
+        <div class="rounded-box border border-base-300 bg-base-100/90 px-5 py-5">
+            <div class="text-sm text-base-content/60">当前账号</div>
+            <div class="text-xl font-bold mt-2">${escapeHtml(adminAccessProfile.adminRoleName || adminAccessProfile.adminRoleCode || '管理员')}</div>
+            <div class="text-sm text-base-content/65 mt-2">角色编码：${escapeHtml(adminAccessProfile.adminRoleCode || '-')}</div>
+            <div class="flex flex-wrap gap-2 mt-4">
+                <span class="badge ${adminAccessProfile.isSuperAdmin ? 'badge-primary' : 'badge-outline'}">${adminAccessProfile.isSuperAdmin ? '超级管理员' : '受限角色'}</span>
+                <span class="badge badge-ghost">权限 ${permissionCount} 项</span>
+            </div>
+        </div>
+        <div class="rounded-box border border-base-300 bg-base-100/90 px-5 py-5">
+            <div class="text-sm text-base-content/60">菜单可见范围</div>
+            <div class="text-xl font-bold mt-2">${visibleSections.length} 个模块</div>
+            <div class="text-sm text-base-content/65 mt-2 leading-6">${visibleSections.map((section) => escapeHtml(ADMIN_SECTION_META[section].title)).join('、') || '暂无'}</div>
+        </div>
+        <div class="rounded-box border border-base-300 bg-base-100/90 px-5 py-5">
+            <div class="text-sm text-base-content/60">角色 / 管理员规模</div>
+            <div class="text-xl font-bold mt-2">${adminRolesCache.length} 个角色</div>
+            <div class="text-sm text-base-content/65 mt-2 leading-6">管理员 ${adminAdminsCache.length} 人，自定义角色 ${customRoleCount} 个。</div>
+        </div>
+    `;
+}
+
+async function loadAdminAccessProfile(forceRefresh = false) {
+    if (adminAccessProfile && !forceRefresh) return adminAccessProfile;
+
+    const res = await Auth.apiFetch('/api/admin/admin-access/me', {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-store' }
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.error || '加载管理员权限信息失败');
+    }
+
+    adminAccessProfile = data.access || {};
+    adminPermissionGroups = Array.isArray(data.permissionGroups) ? data.permissionGroups : [];
+    allAdminPermissions = Array.isArray(data.allPermissions) && data.allPermissions.length
+        ? data.allPermissions
+        : getDefaultMenuPermissions();
+    adminPermissionsSet = new Set(
+        adminAccessProfile.isSuperAdmin
+            ? allAdminPermissions
+            : (Array.isArray(adminAccessProfile.permissions) ? adminAccessProfile.permissions : [])
+    );
+    return adminAccessProfile;
+}
+
+async function loadAdminRoles(forceRefresh = false) {
+    if (!forceRefresh && adminRolesCache.length) return adminRolesCache;
+
+    const res = await Auth.apiFetch('/api/admin/admin-access/roles', {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-store' }
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.error || '加载管理员角色失败');
+    }
+
+    adminRolesCache = Array.isArray(data.roles) ? data.roles : [];
+    if (Array.isArray(data.permissionGroups) && data.permissionGroups.length) {
+        adminPermissionGroups = data.permissionGroups;
+    }
+    if (Array.isArray(data.allPermissions) && data.allPermissions.length) {
+        allAdminPermissions = data.allPermissions;
+    }
+
+    if (adminRoleEditorId && !adminRolesCache.some((role) => Number(role.id) === Number(adminRoleEditorId))) {
+        adminRoleEditorId = null;
+        adminRoleEditingSnapshot = null;
+    }
+
+    return adminRolesCache;
+}
+
+async function loadAdminAdmins(forceRefresh = false) {
+    if (!forceRefresh && adminAdminsCache.length) return adminAdminsCache;
+
+    const res = await Auth.apiFetch('/api/admin/admin-access/admins', {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-store' }
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.error || '加载管理员列表失败');
+    }
+
+    adminAdminsCache = Array.isArray(data.admins) ? data.admins : [];
+    return adminAdminsCache;
+}
+
+function renderAdminRolesList() {
+    const listEl = document.getElementById('admin-role-list');
+    if (!listEl) return;
+
+    if (!adminRolesCache.length) {
+        listEl.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">暂无角色数据。</div>';
+        return;
+    }
+
+    listEl.innerHTML = adminRolesCache.map((role) => {
+        const selected = Number(adminRoleEditorId) === Number(role.id);
+        const permissionCount = Array.isArray(role.permissions) ? role.permissions.length : 0;
+        return `
+            <div class="rounded-box border ${selected ? 'border-primary bg-primary/5' : 'border-base-300 bg-base-100'} px-4 py-4">
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <div class="text-base font-semibold">${escapeHtml(role.name)}</div>
+                        <div class="text-xs text-base-content/55 mt-1">${escapeHtml(role.code)}</div>
+                    </div>
+                    <div class="flex flex-wrap gap-2 justify-end">
+                        <span class="badge ${role.isSystem ? 'badge-outline' : 'badge-secondary badge-outline'}">${role.isSystem ? '系统角色' : '自定义角色'}</span>
+                        <span class="badge badge-ghost">${permissionCount} 项权限</span>
+                    </div>
+                </div>
+                <div class="text-sm text-base-content/65 mt-3 leading-6">${escapeHtml(role.description || '未填写角色说明')}</div>
+                <div class="flex flex-wrap gap-2 mt-4">${renderAdminPermissionBadges(role.permissions || [], 4)}</div>
+                <div class="flex flex-wrap gap-2 mt-4">
+                    <button class="btn btn-sm ${selected ? 'btn-primary' : 'btn-outline'}" onclick="selectAdminRole(${role.id})">${selected ? '正在查看' : '查看角色'}</button>
+                    ${role.isSystem ? '<span class="text-xs text-base-content/50 flex items-center">系统角色只读</span>' : `<button class="btn btn-ghost btn-sm text-error" onclick="deleteAdminRole(${role.id})">删除</button>`}
+                </div>
+            </div>
+        `;
+    }).join('');
+}
+
+function renderAdminRolePermissionChecklist(selectedPermissions = [], disabled = false) {
+    const wrap = document.getElementById('admin-role-permissions');
+    if (!wrap) return;
+
+    const selectedSet = new Set(Array.isArray(selectedPermissions) ? selectedPermissions : []);
+    wrap.innerHTML = (adminPermissionGroups || []).map((group) => `
+        <div class="rounded-box border border-base-300 bg-base-100 px-4 py-4">
+            <div class="font-semibold">${escapeHtml(group.label || group.key || '权限组')}</div>
+            <div class="text-xs text-base-content/55 mt-1">建议按业务域收敛授权，避免给不必要的后台入口。</div>
+            <div class="space-y-3 mt-4">
+                ${(group.permissions || []).map((permission) => `
+                    <label class="flex items-start gap-3 rounded-box border border-base-300/70 px-3 py-3 cursor-pointer ${disabled ? 'opacity-70 cursor-not-allowed' : 'hover:border-primary/40'}">
+                        <input
+                            type="checkbox"
+                            class="checkbox checkbox-sm checkbox-primary mt-0.5"
+                            data-admin-permission-key="${escapeHtml(permission.key)}"
+                            ${selectedSet.has(permission.key) ? 'checked' : ''}
+                            ${disabled ? 'disabled' : ''}
+                        >
+                        <span class="min-w-0">
+                            <span class="block font-medium">${escapeHtml(permission.label || permission.key)}</span>
+                            <span class="block text-xs text-base-content/60 mt-1 leading-6">${escapeHtml(permission.description || '')}</span>
+                        </span>
+                    </label>
+                `).join('')}
+            </div>
+        </div>
+    `).join('');
+}
+
+function setAdminRoleEditorResult(message, tone = 'muted') {
+    const el = document.getElementById('admin-role-editor-result');
+    if (!el) return;
+    const toneClass = tone === 'error'
+        ? 'text-error'
+        : tone === 'success'
+            ? 'text-success'
+            : 'text-base-content/60';
+    el.className = `mt-3 text-sm ${toneClass}`;
+    el.textContent = message;
+}
+
+function openAdminRoleCreateForm() {
+    adminRoleEditorId = null;
+    adminRoleEditingSnapshot = null;
+    renderAdminRolesList();
+    renderAdminRoleEditor();
+}
+
+function selectAdminRole(roleId) {
+    adminRoleEditorId = Number(roleId);
+    adminRoleEditingSnapshot = null;
+    renderAdminRolesList();
+    renderAdminRoleEditor();
+}
+
+function resetAdminRoleEditor() {
+    renderAdminRoleEditor();
+}
+
+function collectAdminRoleFormPayload() {
+    const code = document.getElementById('admin-role-code')?.value.trim() || '';
+    const name = document.getElementById('admin-role-name')?.value.trim() || '';
+    const description = document.getElementById('admin-role-description')?.value.trim() || '';
+    const permissions = Array.from(document.querySelectorAll('#admin-role-permissions input[data-admin-permission-key]:checked'))
+        .map((input) => input.dataset.adminPermissionKey)
+        .filter(Boolean);
+    return { code, name, description, permissions };
+}
+
+function renderAdminRoleEditor() {
+    const role = adminRolesCache.find((item) => Number(item.id) === Number(adminRoleEditorId)) || null;
+    const isCreateMode = !role;
+    const isSystemRole = Boolean(role?.isSystem);
+
+    const titleEl = document.getElementById('admin-role-editor-title');
+    const descEl = document.getElementById('admin-role-editor-desc');
+    const codeInput = document.getElementById('admin-role-code');
+    const nameInput = document.getElementById('admin-role-name');
+    const descriptionInput = document.getElementById('admin-role-description');
+    const saveBtn = document.getElementById('admin-role-save-btn');
+    const deleteBtn = document.getElementById('admin-role-delete-btn');
+
+    if (titleEl) titleEl.textContent = isCreateMode ? '新建自定义角色' : `角色编辑：${role.name}`;
+    if (descEl) {
+        descEl.textContent = isCreateMode
+            ? '角色编码创建后固定，建议使用英文下划线命名。'
+            : (isSystemRole ? '系统角色只读，用于保障基础后台职责分工。' : '仅支持修改角色名称、说明与权限项，角色编码创建后固定。');
+    }
+    if (codeInput) {
+        codeInput.value = isCreateMode ? '' : (role.code || '');
+        codeInput.disabled = !isCreateMode;
+    }
+    if (nameInput) {
+        nameInput.value = isCreateMode ? '' : (role.name || '');
+        nameInput.disabled = isSystemRole;
+    }
+    if (descriptionInput) {
+        descriptionInput.value = isCreateMode ? '' : (role.description || '');
+        descriptionInput.disabled = isSystemRole;
+    }
+
+    renderAdminRolePermissionChecklist(role?.permissions || [], isSystemRole);
+
+    if (saveBtn) {
+        saveBtn.textContent = isCreateMode ? '创建角色' : '保存角色';
+        saveBtn.disabled = isSystemRole;
+    }
+    if (deleteBtn) {
+        deleteBtn.style.display = !isCreateMode && !isSystemRole ? '' : 'none';
+    }
+
+    setAdminRoleEditorResult(
+        isCreateMode
+            ? '可创建新的自定义角色，并为其勾选后台菜单与接口权限。'
+            : (isSystemRole ? '系统角色不允许修改或删除，可用于对照权限边界。' : '修改后会立即影响绑定该角色的管理员可见菜单与可调接口。'),
+        'muted'
+    );
+}
+
+async function saveAdminRole() {
+    const role = adminRolesCache.find((item) => Number(item.id) === Number(adminRoleEditorId)) || null;
+    if (role?.isSystem) {
+        alert('系统角色不允许修改');
+        return;
+    }
+
+    const payload = collectAdminRoleFormPayload();
+    if (!payload.name) {
+        alert('请填写角色名称');
+        return;
+    }
+    if (!payload.permissions.length) {
+        alert('请至少选择一个权限');
+        return;
+    }
+    if (!role && !payload.code) {
+        alert('请填写角色编码');
+        return;
+    }
+
+    setAdminRoleEditorResult('正在保存角色...', 'muted');
+    const url = role ? `/api/admin/admin-access/roles/${role.id}` : '/api/admin/admin-access/roles';
+    const method = role ? 'PUT' : 'POST';
+    const requestBody = role
+        ? { name: payload.name, description: payload.description, permissions: payload.permissions }
+        : payload;
+
+    try {
+        const res = await Auth.apiFetch(url, {
+            method,
+            body: JSON.stringify(requestBody)
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '保存角色失败');
+
+        adminRoleEditorId = data.role?.id || role?.id || null;
+        await Promise.all([loadAdminRoles(true), loadAdminAdmins(true)]);
+        renderAdminRolesList();
+        renderAdminAdminsTable();
+        renderAdminAccessSummary();
+        renderAdminRoleEditor();
+        setAdminRoleEditorResult(data.message || '角色已保存', 'success');
+    } catch (err) {
+        console.error('Save admin role error:', err);
+        setAdminRoleEditorResult(err.message || '保存角色失败', 'error');
+        alert(err.message || '保存角色失败');
+    }
+}
+
+async function deleteAdminRole(roleId = null) {
+    const targetId = roleId ? Number(roleId) : Number(adminRoleEditorId);
+    const role = adminRolesCache.find((item) => Number(item.id) === targetId);
+    if (!role) {
+        alert('未找到待删除角色');
+        return;
+    }
+    if (role.isSystem) {
+        alert('系统角色不允许删除');
+        return;
+    }
+    if (!confirm(`确认删除角色「${role.name}」吗？`)) {
+        return;
+    }
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/admin-access/roles/${targetId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '删除角色失败');
+
+        if (Number(adminRoleEditorId) === targetId) {
+            adminRoleEditorId = null;
+        }
+        await Promise.all([loadAdminRoles(true), loadAdminAdmins(true)]);
+        renderAdminRolesList();
+        renderAdminAdminsTable();
+        renderAdminAccessSummary();
+        renderAdminRoleEditor();
+        alert(data.message || '角色已删除');
+    } catch (err) {
+        console.error('Delete admin role error:', err);
+        alert(err.message || '删除角色失败');
+    }
+}
+
+function renderAdminAdminsTable() {
+    const wrap = document.getElementById('admin-admins-table-wrap');
+    if (!wrap) return;
+
+    if (!adminAdminsCache.length) {
+        wrap.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">当前还没有管理员账号。</div>';
+        return;
+    }
+
+    wrap.innerHTML = `
+        <table class="table table-sm md:table-md">
+            <thead>
+                <tr>
+                    <th>账号</th>
+                    <th>当前角色</th>
+                    <th>权限摘要</th>
+                    <th>状态</th>
+                    <th>最近登录</th>
+                    <th>重绑角色</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${adminAdminsCache.map((admin) => {
+                    const isSelf = Number(admin.id) === Number(adminAccessProfile?.userId);
+                    const roleBadgeClass = admin.source === 'legacy_fallback' ? 'badge-warning badge-outline' : 'badge-primary badge-outline';
+                    return `
+                        <tr>
+                            <td>
+                                <div class="font-semibold">${escapeHtml(admin.nickname || admin.username || '-')}</div>
+                                <div class="text-xs text-base-content/55 mt-1">${escapeHtml(admin.username || '-')} · ${escapeHtml(admin.email || '未绑定邮箱')}</div>
+                            </td>
+                            <td>
+                                <div class="flex flex-wrap gap-2">
+                                    <span class="badge ${roleBadgeClass}">${escapeHtml(admin.roleName || admin.roleCode || '未绑定角色')}</span>
+                                    ${isSelf ? '<span class="badge badge-ghost">当前登录</span>' : ''}
+                                </div>
+                                <div class="text-xs text-base-content/55 mt-2 leading-6">${escapeHtml(admin.roleDescription || '暂无角色说明')}</div>
+                            </td>
+                            <td><div class="flex flex-wrap gap-2">${renderAdminPermissionBadges(admin.permissions || [], 3)}</div></td>
+                            <td><span class="badge ${admin.status === 'active' ? 'badge-success' : 'badge-error'} badge-outline">${admin.status === 'active' ? '正常' : '禁用'}</span></td>
+                            <td class="text-xs leading-6">${formatAdminAccessTime(admin.lastLoginAt)}</td>
+                            <td>
+                                <select id="admin-role-select-${admin.id}" class="select select-bordered select-sm w-full min-w-[14rem]" ${isSelf ? 'disabled' : ''}>
+                                    ${getAdminRoleOptionsHtml(admin.roleId, true)}
+                                </select>
+                            </td>
+                            <td>
+                                <div class="flex flex-wrap gap-2">
+                                    <button class="btn btn-primary btn-xs" onclick="assignAdminRoleToUser(${admin.id})" ${isSelf ? 'disabled' : ''}>保存角色</button>
+                                    <button class="btn btn-outline btn-error btn-xs" onclick="revokeAdminUser(${admin.id})" ${isSelf ? 'disabled' : ''}>移除管理员</button>
+                                </div>
+                            </td>
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+function renderAdminCandidates() {
+    const wrap = document.getElementById('admin-candidates-results');
+    if (!wrap) return;
+
+    if (!adminCandidatesCache.length) {
+        wrap.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">未找到匹配用户。</div>';
+        return;
+    }
+
+    wrap.innerHTML = `
+        <table class="table table-sm md:table-md">
+            <thead>
+                <tr>
+                    <th>候选用户</th>
+                    <th>当前状态</th>
+                    <th>分配角色</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                ${adminCandidatesCache.map((user) => {
+                    const isSelf = Number(user.id) === Number(adminAccessProfile?.userId);
+                    const alreadyAdmin = user.role === 'admin';
+                    return `
+                        <tr>
+                            <td>
+                                <div class="font-semibold">${escapeHtml(user.nickname || user.username || '-')}</div>
+                                <div class="text-xs text-base-content/55 mt-1">${escapeHtml(user.username || '-')} · ${escapeHtml(user.email || '未绑定邮箱')}</div>
+                            </td>
+                            <td>
+                                <div class="flex flex-wrap gap-2">
+                                    <span class="badge ${alreadyAdmin ? 'badge-primary badge-outline' : 'badge-ghost'}">${alreadyAdmin ? '已是管理员' : '普通用户'}</span>
+                                    <span class="badge ${user.status === 'active' ? 'badge-success' : 'badge-error'} badge-outline">${user.status === 'active' ? '正常' : '禁用'}</span>
+                                </div>
+                                <div class="text-xs text-base-content/55 mt-2">${escapeHtml(user.adminRoleName || (alreadyAdmin ? '历史管理员 / 未绑定角色' : '未分配后台角色'))}</div>
+                            </td>
+                            <td>
+                                <select id="candidate-role-select-${user.id}" class="select select-bordered select-sm w-full min-w-[14rem]" ${isSelf ? 'disabled' : ''}>
+                                    ${getAdminRoleOptionsHtml(null, true)}
+                                </select>
+                            </td>
+                            <td>
+                                <button class="btn btn-primary btn-xs" onclick="assignAdminRoleToUser(${user.id}, 'candidate')" ${isSelf ? 'disabled' : ''}>${alreadyAdmin ? '更新角色' : '设为管理员'}</button>
+                            </td>
+                        </tr>
+                    `;
+                }).join('')}
+            </tbody>
+        </table>
+    `;
+}
+
+async function assignAdminRoleToUser(userId, source = 'admin') {
+    const selectId = source === 'candidate' ? `candidate-role-select-${userId}` : `admin-role-select-${userId}`;
+    const selectEl = document.getElementById(selectId);
+    const roleId = Number(selectEl?.value || 0);
+    if (!roleId) {
+        alert('请选择要分配的角色');
+        return;
+    }
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/admin-access/admins/${userId}`, {
+            method: 'PUT',
+            body: JSON.stringify({ roleId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '分配管理员角色失败');
+
+        await Promise.all([loadAdminAdmins(true), loadAdminRoles(true)]);
+        renderAdminAdminsTable();
+        renderAdminRolesList();
+        renderAdminAccessSummary();
+        if (source === 'candidate' && adminCandidatesCache.length) {
+            renderAdminCandidates();
+        }
+        alert(data.message || '管理员角色已分配');
+    } catch (err) {
+        console.error('Assign admin role error:', err);
+        alert(err.message || '分配管理员角色失败');
+    }
+}
+
+async function revokeAdminUser(userId) {
+    const target = adminAdminsCache.find((admin) => Number(admin.id) === Number(userId));
+    if (!target) {
+        alert('未找到目标管理员');
+        return;
+    }
+    if (!confirm(`确认移除管理员「${target.nickname || target.username}」吗？`)) {
+        return;
+    }
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/admin-access/admins/${userId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '移除管理员失败');
+
+        await loadAdminAdmins(true);
+        renderAdminAdminsTable();
+        renderAdminAccessSummary();
+        alert(data.message || '管理员权限已移除');
+    } catch (err) {
+        console.error('Revoke admin user error:', err);
+        alert(err.message || '移除管理员失败');
+    }
+}
+
+async function searchAdminAccessCandidates() {
+    const keywordInput = document.getElementById('admin-candidate-keyword');
+    const keyword = keywordInput?.value.trim() || '';
+    const wrap = document.getElementById('admin-candidates-results');
+    if (!keyword) {
+        clearAdminAccessCandidates();
+        return;
+    }
+
+    if (wrap) {
+        wrap.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在搜索候选用户...</div>';
+    }
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/admin-access/candidates?keyword=${encodeURIComponent(keyword)}`, {
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-store' }
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '搜索候选用户失败');
+
+        adminCandidatesCache = Array.isArray(data.candidates) ? data.candidates : [];
+        renderAdminCandidates();
+    } catch (err) {
+        console.error('Search admin candidates error:', err);
+        if (wrap) {
+            wrap.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-5 py-8 text-sm text-error">${escapeHtml(err.message || '搜索候选用户失败')}</div>`;
+        }
+    }
+}
+
+function clearAdminAccessCandidates() {
+    adminCandidatesCache = [];
+    const keywordInput = document.getElementById('admin-candidate-keyword');
+    if (keywordInput) keywordInput.value = '';
+    const wrap = document.getElementById('admin-candidates-results');
+    if (wrap) {
+        wrap.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">输入关键词后可搜索待分配管理员的用户。</div>';
+    }
+}
+
+async function loadAdminAccessSection(forceRefresh = false) {
+    const adminsWrap = document.getElementById('admin-admins-table-wrap');
+    const rolesWrap = document.getElementById('admin-role-list');
+    if (adminsWrap && (forceRefresh || !adminAdminsCache.length)) {
+        adminsWrap.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载管理员列表...</div>';
+    }
+    if (rolesWrap && (forceRefresh || !adminRolesCache.length)) {
+        rolesWrap.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载角色列表...</div>';
+    }
+
+    try {
+        await Promise.all([
+            loadAdminAccessProfile(forceRefresh),
+            loadAdminRoles(forceRefresh),
+            loadAdminAdmins(forceRefresh),
+        ]);
+        if (!adminRoleEditorId && adminRolesCache.length) {
+            adminRoleEditorId = adminRolesCache.find((role) => !role.isSystem)?.id || adminRolesCache[0].id;
+        }
+        renderAdminAccessSummary();
+        renderAdminRolesList();
+        renderAdminAdminsTable();
+        renderAdminRoleEditor();
+    } catch (err) {
+        console.error('Load admin access section error:', err);
+        const summary = document.getElementById('admin-access-summary');
+        if (summary) {
+            summary.innerHTML = `<div class="rounded-box border border-error/20 bg-error/10 px-5 py-5 text-sm text-error">${escapeHtml(err.message || '加载管理员管理数据失败')}</div>`;
+        }
+        if (adminsWrap) {
+            adminsWrap.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-5 py-8 text-sm text-error">${escapeHtml(err.message || '加载管理员列表失败')}</div>`;
+        }
+        if (rolesWrap) {
+            rolesWrap.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-5 py-8 text-sm text-error">${escapeHtml(err.message || '加载角色列表失败')}</div>`;
+        }
     }
 }

@@ -4,7 +4,7 @@ const path = require('path');
 const { body, query: queryValidator, validationResult } = require('express-validator');
 const db = require('../db');
 const { manager } = require('../manager');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, hasAdminPermission } = require('../middleware/auth');
 const authService = require('../services/authService');
 const balanceService = require('../services/balanceService');
 const emailService = require('../services/emailService');
@@ -25,11 +25,56 @@ const {
     runSessionMaintenanceTask,
     SESSION_MAINTENANCE_ACTION_ALIASES,
 } = require('../services/sessionMaintenanceService');
+const {
+    ADMIN_PERMISSION_GROUPS,
+    ALL_ADMIN_PERMISSION_KEYS,
+    listAdminRoles,
+    listAdminUsers,
+    searchAdminCandidates,
+    upsertAdminUserRole,
+    revokeAdminUser,
+    createAdminRole,
+    updateAdminRole,
+    deleteAdminRole,
+} = require('../services/rbacService');
 
 const router = express.Router();
 
 // All admin routes require authentication + admin role
 router.use(authenticate, requireAdmin);
+
+
+function resolveAdminRoutePermission(req) {
+    const routePath = String(req.path || '');
+    if (routePath === '/admin-access/me') return null;
+    if (routePath.startsWith('/admin-access')) return 'admins.manage';
+    if (routePath === '/stats') return 'overview.view';
+    if (routePath.startsWith('/docs')) return 'docs.manage';
+    if (routePath.startsWith('/users')) return 'users.manage';
+    if (routePath.startsWith('/orders')) return 'orders.manage';
+    if (routePath.startsWith('/plans') || routePath.startsWith('/addons') || routePath.startsWith('/ai-credit-packages')) return 'plans.manage';
+    if (routePath.startsWith('/gifts')) return 'gifts.manage';
+    if (routePath.startsWith('/settings')) return 'settings.manage';
+    if (routePath.startsWith('/session-maintenance')) return 'session_maintenance.manage';
+    if (routePath.startsWith('/prompt-templates')) return 'prompts.manage';
+    if (routePath.startsWith('/ai-work')) return 'ai_work.manage';
+    if (routePath.startsWith('/euler-keys')) return 'euler_keys.manage';
+    if (routePath.startsWith('/ai-channels') || routePath.startsWith('/ai-models')) return 'ai_channels.manage';
+    if (routePath.startsWith('/smtp')) return 'smtp.manage';
+    return null;
+}
+
+router.use((req, res, next) => {
+    const permission = resolveAdminRoutePermission(req);
+    if (!permission || hasAdminPermission(req.user, permission)) {
+        return next();
+    }
+    return res.status(403).json({
+        error: '缺少后台权限',
+        code: 'ADMIN_PERMISSION_DENIED',
+        permission,
+    });
+});
 
 const DOCS_ROOT = path.resolve(__dirname, '..', 'docs');
 const AI_MODEL_FAILURE_COOLDOWN_MS = (() => {
@@ -850,6 +895,133 @@ router.put('/settings', async (req, res) => {
     } catch (err) {
         console.error('[Admin] Save settings error:', err.message);
         res.status(500).json({ error: '保存失败' });
+    }
+});
+
+
+router.get('/admin-access/me', async (req, res) => {
+    try {
+        res.json({
+            access: {
+                userId: Number(req.user.id || 0),
+                role: req.user.role,
+                adminRoleCode: req.user.adminRoleCode || '',
+                adminRoleName: req.user.adminRoleName || '',
+                isSuperAdmin: Boolean(req.user.isSuperAdmin),
+                permissions: Array.isArray(req.user.permissions) ? req.user.permissions : [],
+            },
+            permissionGroups: ADMIN_PERMISSION_GROUPS,
+            allPermissions: ALL_ADMIN_PERMISSION_KEYS,
+        });
+    } catch (err) {
+        console.error('[Admin] Load RBAC profile error:', err.message);
+        res.status(500).json({ error: '获取管理员权限信息失败' });
+    }
+});
+
+router.get('/admin-access/roles', async (req, res) => {
+    try {
+        const roles = await listAdminRoles();
+        res.json({ roles, permissionGroups: ADMIN_PERMISSION_GROUPS, allPermissions: ALL_ADMIN_PERMISSION_KEYS });
+    } catch (err) {
+        console.error('[Admin] Load admin roles error:', err.message);
+        res.status(500).json({ error: '获取管理员角色失败' });
+    }
+});
+
+router.post('/admin-access/roles', async (req, res) => {
+    try {
+        const role = await createAdminRole(req.body || {});
+        res.json({ message: '管理员角色已创建', role });
+    } catch (err) {
+        console.error('[Admin] Create admin role error:', err.message);
+        res.status(500).json({ error: err.message || '创建管理员角色失败' });
+    }
+});
+
+router.put('/admin-access/roles/:id', async (req, res) => {
+    try {
+        const roleId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(roleId) || roleId <= 0) {
+            return res.status(400).json({ error: '角色ID无效' });
+        }
+        const role = await updateAdminRole(roleId, req.body || {});
+        res.json({ message: '管理员角色已更新', role });
+    } catch (err) {
+        console.error('[Admin] Update admin role error:', err.message);
+        res.status(500).json({ error: err.message || '更新管理员角色失败' });
+    }
+});
+
+router.delete('/admin-access/roles/:id', async (req, res) => {
+    try {
+        const roleId = parseInt(req.params.id, 10);
+        if (!Number.isInteger(roleId) || roleId <= 0) {
+            return res.status(400).json({ error: '角色ID无效' });
+        }
+        await deleteAdminRole(roleId);
+        res.json({ message: '管理员角色已删除' });
+    } catch (err) {
+        console.error('[Admin] Delete admin role error:', err.message);
+        res.status(500).json({ error: err.message || '删除管理员角色失败' });
+    }
+});
+
+router.get('/admin-access/admins', async (req, res) => {
+    try {
+        const admins = await listAdminUsers();
+        res.json({ admins });
+    } catch (err) {
+        console.error('[Admin] Load admin users error:', err.message);
+        res.status(500).json({ error: '获取管理员列表失败' });
+    }
+});
+
+router.get('/admin-access/candidates', async (req, res) => {
+    try {
+        const candidates = await searchAdminCandidates(req.query.keyword || req.query.q || '', req.query.limit || 10);
+        res.json({ candidates });
+    } catch (err) {
+        console.error('[Admin] Search admin candidates error:', err.message);
+        res.status(500).json({ error: '搜索候选用户失败' });
+    }
+});
+
+router.put('/admin-access/admins/:userId', async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId, 10);
+        const roleId = parseInt(req.body?.roleId, 10);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ error: '用户ID无效' });
+        }
+        if (!Number.isInteger(roleId) || roleId <= 0) {
+            return res.status(400).json({ error: '角色ID无效' });
+        }
+        if (userId === Number(req.user.id)) {
+            return res.status(400).json({ error: '暂不支持修改自己的管理员角色，请让其他超级管理员处理' });
+        }
+        const role = await upsertAdminUserRole({ userId, roleId, actorId: req.user.id });
+        res.json({ message: '管理员角色已分配', role });
+    } catch (err) {
+        console.error('[Admin] Assign admin role error:', err.message);
+        res.status(500).json({ error: err.message || '分配管理员角色失败' });
+    }
+});
+
+router.delete('/admin-access/admins/:userId', async (req, res) => {
+    try {
+        const userId = parseInt(req.params.userId, 10);
+        if (!Number.isInteger(userId) || userId <= 0) {
+            return res.status(400).json({ error: '用户ID无效' });
+        }
+        if (userId === Number(req.user.id)) {
+            return res.status(400).json({ error: '不能移除自己的管理员权限' });
+        }
+        await revokeAdminUser({ userId, actorId: req.user.id });
+        res.json({ message: '管理员权限已移除' });
+    } catch (err) {
+        console.error('[Admin] Revoke admin role error:', err.message);
+        res.status(500).json({ error: err.message || '移除管理员权限失败' });
     }
 });
 

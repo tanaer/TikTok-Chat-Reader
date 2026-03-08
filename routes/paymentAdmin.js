@@ -1,10 +1,25 @@
 const express = require('express');
 const { body, param, validationResult } = require('express-validator');
-const { authenticate, requireAdmin } = require('../middleware/auth');
+const { authenticate, requireAdmin, hasAdminPermission } = require('../middleware/auth');
 const paymentService = require('../services/paymentService');
 
 const router = express.Router();
 router.use(authenticate, requireAdmin);
+router.use((req, res, next) => {
+    const permission = req.path.startsWith('/pushplus-config')
+        ? 'notifications.manage'
+        : 'payments.manage';
+
+    if (hasAdminPermission(req.user, permission)) {
+        return next();
+    }
+
+    return res.status(403).json({
+        error: '缺少后台权限',
+        code: 'ADMIN_PERMISSION_DENIED',
+        permission,
+    });
+});
 
 router.get('/config', async (req, res) => {
     try {

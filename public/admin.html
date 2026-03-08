@@ -72,21 +72,55 @@
             <p class="text-xs text-base-content/60 mt-1">管理后台</p>
         </div>
         <ul class="menu p-4 gap-1" id="sidebar-menu">
-            <li><a class="active" onclick="showSection('overview')">系统概览</a></li>
-            <li><a onclick="showSection('users')">用户管理</a></li>
-            <li><a onclick="showSection('orders')">订单管理</a></li>
-            <li><a onclick="showSection('payment')">支付管理</a></li>
-            <li><a onclick="showSection('notifications')">通知系统</a></li>
-            <li><a onclick="showSection('plans')">套餐设置</a></li>
-            <li><a onclick="showSection('gifts')">礼物配置</a></li>
-            <li><a onclick="showSection('eulerKeys')">Euler API Keys</a></li>
-            <li><a onclick="showSection('aiModels')">AI 通道配置</a></li>
-            <li><a onclick="showSection('sessionMaintenance')">场次运维</a></li>
-            <li><a onclick="showSection('settings')">系统设置</a></li>
-            <li><a onclick="showSection('smtpServices')">邮箱服务</a></li>
-            <li><a onclick="showSection('aiWork')">AI工作中心</a></li>
-            <li><a onclick="showSection('prompts')">提示词管理</a></li>
-            <li><a onclick="showSection('docs')">系统文档</a></li>
+            <li><a href="#" class="active" data-admin-section="overview" onclick="return showSection('overview', event)">系统概览</a></li>
+
+            <li data-admin-group-wrapper>
+                <details data-admin-group="business" open>
+                    <summary>经营管理</summary>
+                    <ul>
+                        <li><a href="#" data-admin-section="users" onclick="return showSection('users', event)">用户管理</a></li>
+                        <li><a href="#" data-admin-section="orders" onclick="return showSection('orders', event)">订单管理</a></li>
+                        <li><a href="#" data-admin-section="plans" onclick="return showSection('plans', event)">套餐设置</a></li>
+                        <li><a href="#" data-admin-section="gifts" onclick="return showSection('gifts', event)">礼物配置</a></li>
+                    </ul>
+                </details>
+            </li>
+
+            <li data-admin-group-wrapper>
+                <details data-admin-group="payments" open>
+                    <summary>支付与通知</summary>
+                    <ul>
+                        <li><a href="#" data-admin-section="payment" onclick="return showSection('payment', event)">支付管理</a></li>
+                        <li><a href="#" data-admin-section="notifications" onclick="return showSection('notifications', event)">通知系统</a></li>
+                    </ul>
+                </details>
+            </li>
+
+            <li data-admin-group-wrapper>
+                <details data-admin-group="ai" open>
+                    <summary>AI 与通道</summary>
+                    <ul>
+                        <li><a href="#" data-admin-section="aiWork" onclick="return showSection('aiWork', event)">AI工作中心</a></li>
+                        <li><a href="#" data-admin-section="prompts" onclick="return showSection('prompts', event)">提示词管理</a></li>
+                        <li><a href="#" data-admin-section="aiModels" onclick="return showSection('aiModels', event)">AI 通道配置</a></li>
+                        <li><a href="#" data-admin-section="eulerKeys" onclick="return showSection('eulerKeys', event)">Euler API Keys</a></li>
+                    </ul>
+                </details>
+            </li>
+
+            <li data-admin-group-wrapper>
+                <details data-admin-group="system" open>
+                    <summary>系统与运维</summary>
+                    <ul>
+                        <li><a href="#" data-admin-section="sessionMaintenance" onclick="return showSection('sessionMaintenance', event)">场次运维</a></li>
+                        <li><a href="#" data-admin-section="settings" onclick="return showSection('settings', event)">系统设置</a></li>
+                        <li><a href="#" data-admin-section="smtpServices" onclick="return showSection('smtpServices', event)">邮箱服务</a></li>
+                        <li><a href="#" data-admin-section="adminAccess" onclick="return showSection('adminAccess', event)">管理员管理</a></li>
+                        <li><a href="#" data-admin-section="docs" onclick="return showSection('docs', event)">系统文档</a></li>
+                    </ul>
+                </details>
+            </li>
+
             <li class="mt-4"><a href="/" class="text-base-content/60">← 返回前台</a></li>
         </ul>
     </aside>
@@ -104,7 +138,26 @@
             </div>
         </div>
 
-        <main class="flex-1 p-6 overflow-y-auto">
+        <div id="admin-request-banner" class="hidden px-6 pb-0">
+            <div class="rounded-box border border-primary/20 bg-base-100/95 shadow-sm px-4 py-3 flex flex-wrap items-center gap-3 text-sm">
+                <span class="loading loading-spinner loading-sm text-primary"></span>
+                <span id="admin-request-banner-text" class="font-medium text-base-content/85">正在处理后台请求...</span>
+                <span id="admin-request-banner-meta" class="badge badge-ghost badge-sm">处理中</span>
+            </div>
+        </div>
+
+        <main class="flex-1 p-6 overflow-y-auto relative">
+            <div id="admin-content-loading-overlay" class="hidden absolute inset-0 z-20 bg-base-300/55 backdrop-blur-[1px]">
+                <div class="sticky top-6 px-6">
+                    <div class="mx-auto max-w-md rounded-[1.5rem] border border-primary/20 bg-base-100/95 shadow-xl px-5 py-4 flex items-center gap-3">
+                        <span class="loading loading-spinner loading-md text-primary"></span>
+                        <div class="min-w-0">
+                            <div class="font-semibold">后台数据加载中</div>
+                            <div id="admin-content-loading-text" class="text-sm text-base-content/65 mt-1">正在同步当前页面数据，请稍候...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
             <!-- Overview Section -->
             <section id="sec-overview">
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
@@ -612,6 +665,125 @@
                 </div>
             </section>
 
+            <section id="sec-adminAccess" class="hidden">
+                <div class="space-y-6">
+                    <div class="rounded-[1.75rem] border border-primary/20 bg-gradient-to-br from-primary/12 via-base-100 to-secondary/12 shadow-lg overflow-hidden">
+                        <div class="px-6 py-6 lg:px-8">
+                            <div class="flex flex-wrap items-start justify-between gap-4">
+                                <div>
+                                    <div class="flex flex-wrap items-center gap-2 mb-3">
+                                        <span class="badge badge-primary badge-outline">管理员管理</span>
+                                        <span class="badge badge-secondary badge-outline">RBAC</span>
+                                        <span class="badge badge-info badge-outline">细粒度权限</span>
+                                    </div>
+                                    <h3 class="text-2xl font-bold leading-tight">管理员账号与角色权限</h3>
+                                    <p class="text-sm text-base-content/70 mt-3 leading-7">集中管理后台管理员账号、角色模板和权限边界。支持搜索候选用户、分配角色、查看当前权限画像，并为后续菜单可见性和接口拦截提供统一 RBAC 基础。</p>
+                                </div>
+                                <button class="btn btn-primary btn-sm" onclick="loadAdminAccessSection(true)">刷新权限数据</button>
+                            </div>
+                            <div id="admin-access-summary" class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
+                                <div class="rounded-box border border-base-300 bg-base-100/80 px-5 py-5 text-sm text-base-content/60">正在加载管理员权限概览...</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.2fr)_minmax(24rem,0.8fr)] gap-6 items-start">
+                        <div class="space-y-6">
+                            <div class="card bg-base-100 shadow">
+                                <div class="card-body">
+                                    <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 class="card-title">管理员账号</h3>
+                                            <p class="text-sm text-base-content/60 mt-1">查看当前管理员、绑定角色、权限摘要与最近登录情况。</p>
+                                        </div>
+                                        <button class="btn btn-outline btn-sm" onclick="loadAdminAccessSection(true)">刷新列表</button>
+                                    </div>
+                                    <div id="admin-admins-table-wrap" class="overflow-x-auto">
+                                        <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载管理员列表...</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card bg-base-100 shadow">
+                                <div class="card-body">
+                                    <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 class="card-title">搜索候选用户</h3>
+                                            <p class="text-sm text-base-content/60 mt-1">输入用户名、昵称或邮箱，快速提拔管理员并分配角色。</p>
+                                        </div>
+                                        <button class="btn btn-ghost btn-sm" onclick="clearAdminAccessCandidates()">清空结果</button>
+                                    </div>
+                                    <div class="flex flex-col md:flex-row gap-3">
+                                        <input id="admin-candidate-keyword" type="text" class="input input-bordered flex-1" placeholder="搜索用户名 / 昵称 / 邮箱" onkeydown="if (event.key === 'Enter') { event.preventDefault(); searchAdminAccessCandidates(); }">
+                                        <button class="btn btn-primary" onclick="searchAdminAccessCandidates()">搜索候选</button>
+                                    </div>
+                                    <div id="admin-candidates-results" class="overflow-x-auto mt-5">
+                                        <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">输入关键词后可搜索待分配管理员的用户。</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-6">
+                            <div class="card bg-base-100 shadow">
+                                <div class="card-body">
+                                    <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 class="card-title">角色模板</h3>
+                                            <p class="text-sm text-base-content/60 mt-1">系统默认角色只读，自定义角色可新增、编辑与删除。</p>
+                                        </div>
+                                        <button class="btn btn-primary btn-sm" onclick="openAdminRoleCreateForm()">新建角色</button>
+                                    </div>
+                                    <div id="admin-role-list" class="space-y-3">
+                                        <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载角色列表...</div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card bg-base-100 shadow">
+                                <div class="card-body">
+                                    <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 id="admin-role-editor-title" class="card-title">新建自定义角色</h3>
+                                            <p id="admin-role-editor-desc" class="text-sm text-base-content/60 mt-1">角色编码创建后固定，建议使用英文下划线命名。</p>
+                                        </div>
+                                        <button class="btn btn-ghost btn-sm" onclick="resetAdminRoleEditor()">重置</button>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div>
+                                            <label class="label"><span class="label-text">角色编码</span></label>
+                                            <input id="admin-role-code" type="text" class="input input-bordered w-full" placeholder="例如：custom_ops_admin">
+                                        </div>
+                                        <div>
+                                            <label class="label"><span class="label-text">角色名称</span></label>
+                                            <input id="admin-role-name" type="text" class="input input-bordered w-full" placeholder="例如：运营值班管理员">
+                                        </div>
+                                        <div>
+                                            <label class="label"><span class="label-text">角色说明</span></label>
+                                            <textarea id="admin-role-description" class="textarea textarea-bordered w-full min-h-[6rem]" placeholder="说明该角色负责的后台能力边界"></textarea>
+                                        </div>
+                                        <div>
+                                            <div class="flex items-center justify-between gap-3 mb-2">
+                                                <label class="label px-0"><span class="label-text">权限清单</span></label>
+                                                <span class="text-xs text-base-content/50">至少勾选一个权限</span>
+                                            </div>
+                                            <div id="admin-role-permissions" class="space-y-4">
+                                                <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载权限清单...</div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-wrap gap-2 mt-6">
+                                        <button id="admin-role-save-btn" class="btn btn-primary btn-sm" onclick="saveAdminRole()">保存角色</button>
+                                        <button id="admin-role-delete-btn" class="btn btn-outline btn-error btn-sm" onclick="deleteAdminRole()">删除角色</button>
+                                    </div>
+                                    <div id="admin-role-editor-result" class="mt-3 text-sm text-base-content/60">可选择左侧现有角色查看，或创建新的自定义角色。</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <section id="sec-aiWork" class="hidden">
                 <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(24rem,0.8fr)] gap-6 items-start">
                     <div class="card bg-base-100 shadow">
@@ -945,6 +1117,6 @@
         </div>
     </dialog>
 
-    <script src="/js/admin.js?v=20260308h"></script>
+    <script src="/js/admin.js?v=20260308i"></script>
 </body>
 </html>

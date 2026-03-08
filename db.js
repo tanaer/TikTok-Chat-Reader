@@ -101,6 +101,30 @@ async function initDb() {
         `);
 
         await pool.query(`
+            CREATE TABLE IF NOT EXISTS admin_role (
+                id SERIAL PRIMARY KEY,
+                code TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                description TEXT DEFAULT '',
+                permissions_json TEXT NOT NULL DEFAULT '[]',
+                is_system BOOLEAN NOT NULL DEFAULT FALSE,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_admin_role (
+                user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+                role_id INTEGER NOT NULL REFERENCES admin_role(id) ON DELETE RESTRICT,
+                assigned_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                assigned_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_admin_role_role_id ON user_admin_role(role_id)`);
+
+        await pool.query(`
             CREATE TABLE IF NOT EXISTS session_maintenance_log (
                 id SERIAL PRIMARY KEY,
                 task_key TEXT NOT NULL,

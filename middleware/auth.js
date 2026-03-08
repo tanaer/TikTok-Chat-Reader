@@ -1,5 +1,6 @@
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { getUserAdminAccess, hasPermission } = require('../services/rbacService');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'tkmonitor_jwt_secret_change_in_production';
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '2h';
@@ -41,6 +42,14 @@ async function authenticate(req, res, next) {
         if (isSessionRevoked(decoded, user)) {
             return res.status(401).json({ error: '账号已在其他地方登录，请重新登录', code: 'SESSION_REVOKED' });
         }
+        if (user.role === 'admin') {
+            const adminAccess = await getUserAdminAccess(user);
+            user.adminAccess = adminAccess;
+            user.permissions = adminAccess.permissions;
+            user.adminRoleCode = adminAccess.roleCode;
+            user.adminRoleName = adminAccess.roleName;
+            user.isSuperAdmin = adminAccess.isSuperAdmin;
+        }
         req.user = user;
         next();
     } catch (err) {
@@ -68,7 +77,19 @@ async function optionalAuth(req, res, next) {
             'SELECT id, username, email, nickname, balance, role, status, session_version FROM users WHERE id = ?',
             [decoded.userId]
         );
-        req.user = (user && user.status === 'active' && !isSessionRevoked(decoded, user)) ? user : null;
+        if (user && user.status === 'active' && !isSessionRevoked(decoded, user)) {
+            if (user.role === 'admin') {
+                const adminAccess = await getUserAdminAccess(user);
+                user.adminAccess = adminAccess;
+                user.permissions = adminAccess.permissions;
+                user.adminRoleCode = adminAccess.roleCode;
+                user.adminRoleName = adminAccess.roleName;
+                user.isSuperAdmin = adminAccess.isSuperAdmin;
+            }
+            req.user = user;
+        } else {
+            req.user = null;
+        }
     } catch {
         req.user = null;
     }
@@ -85,10 +106,35 @@ function requireAdmin(req, res, next) {
     next();
 }
 
+
+function hasAdminPermission(user, permissionKey) {
+    if (!user || user.role !== 'admin') return false;
+    return hasPermission(user.adminAccess || {
+        isAdmin: user.role === 'admin',
+        isSuperAdmin: false,
+        permissions: Array.isArray(user.permissions) ? user.permissions : [],
+    }, permissionKey);
+}
+
+function requireAdminPermission(permissionKey) {
+    return (req, res, next) => {
+        if (hasAdminPermission(req.user, permissionKey)) {
+            return next();
+        }
+        return res.status(403).json({
+            error: '缺少后台权限',
+            code: 'ADMIN_PERMISSION_DENIED',
+            permission: permissionKey,
+        });
+    };
+}
+
 module.exports = {
     authenticate,
     optionalAuth,
     requireAdmin,
+    requireAdminPermission,
+    hasAdminPermission,
     JWT_SECRET,
     JWT_EXPIRES_IN,
     REFRESH_EXPIRES_IN

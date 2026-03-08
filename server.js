@@ -13,7 +13,7 @@ const { AutoRecorder } = require('./auto_recorder');
 const recordingManager = require('./recording_manager');
 const ffmpegManager = require('./utils/ffmpeg_manager');
 const { router: userManagementRouter, startPeriodicTasks } = require('./routes/index');
-const { optionalAuth, authenticate, requireAdmin } = require('./middleware/auth');
+const { optionalAuth, authenticate, requireAdmin, requireAdminPermission, hasAdminPermission } = require('./middleware/auth');
 const { checkRoomQuota, getUserQuota } = require('./middleware/quota');
 const db = require('./db');
 const {
@@ -473,8 +473,8 @@ function filterSensitiveSettings(settings) {
 app.get('/api/config', optionalAuth, async (req, res) => {
     try {
         const settings = await manager.getAllSettings();
-        const isAdmin = req.user && req.user.role === 'admin';
-        res.json(isAdmin ? settings : filterSensitiveSettings(settings));
+        const canViewAllSettings = req.user && req.user.role === 'admin' && hasAdminPermission(req.user, 'settings.manage');
+        res.json(canViewAllSettings ? settings : filterSensitiveSettings(settings));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -492,7 +492,7 @@ app.get('/api/settings', optionalAuth, async (req, res) => {
 });
 
 // Settings API - POST to save settings (admin only)
-app.post('/api/settings', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/settings', authenticate, requireAdmin, requireAdminPermission('settings.manage'), async (req, res) => {
     try {
         const settings = req.body;
         for (const [key, value] of Object.entries(settings)) {
@@ -520,7 +520,7 @@ app.post('/api/settings', authenticate, requireAdmin, async (req, res) => {
 });
 
 // Alias: POST /api/config also saves settings (admin only)
-app.post('/api/config', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/config', authenticate, requireAdmin, requireAdminPermission('settings.manage'), async (req, res) => {
     try {
         const settings = req.body;
         for (const [key, value] of Object.entries(settings)) {
@@ -567,6 +567,21 @@ app.get('/api/gifts/display-names', async (req, res) => {
     }
 });
 
+app.put('/api/gifts/:id', authenticate, requireAdmin, requireAdminPermission('gifts.manage'), async (req, res) => {
+    try {
+        const giftId = String(req.params.id || '').trim();
+        if (!giftId) {
+            return res.status(400).json({ error: '礼物ID不能为空' });
+        }
+
+        const nameCn = String(req.body?.nameCn || '').trim();
+        await manager.updateGiftChineseName(giftId, nameCn);
+        res.json({ success: true, giftId, nameCn });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 // Room Sessions API
 app.get('/api/rooms/:id/sessions', optionalAuth, async (req, res) => {
     try {
@@ -580,7 +595,7 @@ app.get('/api/rooms/:id/sessions', optionalAuth, async (req, res) => {
 });
 
 // Archive Stale Live Events API (Fix for long sessions)
-app.post('/api/rooms/:id/archive_stale', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/rooms/:id/archive_stale', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         console.log(`[API] Archiving stale events for room ${req.params.id}`);
         const task = await runSessionMaintenanceTask('archive_stale_live_events_room', {
@@ -595,7 +610,7 @@ app.post('/api/rooms/:id/archive_stale', authenticate, requireAdmin, async (req,
 });
 
 // Maintenance API: Rebuild missing session records from events
-app.post('/api/maintenance/rebuild_sessions', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/maintenance/rebuild_sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         console.log('[API] Rebuilding missing sessions...');
         const task = await runSessionMaintenanceTask('rebuild_missing_sessions', {
@@ -609,7 +624,7 @@ app.post('/api/maintenance/rebuild_sessions', authenticate, requireAdmin, async 
 });
 
 // Maintenance API: Merge Short Sessions
-app.post('/api/maintenance/merge_sessions', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/maintenance/merge_sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         console.log('[API] Merging short sessions...');
         const task = await runSessionMaintenanceTask('merge_continuity_sessions', {
@@ -624,7 +639,7 @@ app.post('/api/maintenance/merge_sessions', authenticate, requireAdmin, async (r
 });
 
 // FFmpeg Maintenance APIs
-app.get('/api/maintenance/ffmpeg', async (req, res) => {
+app.get('/api/maintenance/ffmpeg', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const status = await ffmpegManager.checkFFmpegStatus();
         res.json(status);
@@ -633,7 +648,7 @@ app.get('/api/maintenance/ffmpeg', async (req, res) => {
     }
 });
 
-app.post('/api/maintenance/ffmpeg/install', async (req, res) => {
+app.post('/api/maintenance/ffmpeg/install', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const force = req.body.force === true;
 
@@ -725,7 +740,7 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
 });
 
 // Debug API for connection diagnostics
-app.get('/api/debug/connections', (req, res) => {
+app.get('/api/debug/connections', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), (req, res) => {
     try {
         const stats = autoRecorder.getConnectionStats();
         res.json({
@@ -2625,7 +2640,7 @@ app.post('/api/rooms/:id/rename', optionalAuth, async (req, res) => {
     }
 });
 
-app.post('/api/rooms/:id/stop', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/rooms/:id/stop', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const roomId = req.params.id;
         // Stop monitoring
@@ -3122,7 +3137,7 @@ app.post('/api/socks5_proxies/:id/test', async (req, res) => {
 
 
 // Debug API - Force clear a stale connection (for testing)
-app.delete('/api/debug/connections/:id', authenticate, requireAdmin, async (req, res) => {
+app.delete('/api/debug/connections/:id', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     const roomId = req.params.id;
     console.log(`[Debug] Force clearing connection for ${roomId}`);
     const result = await autoRecorder.disconnectRoom(roomId);
@@ -3130,7 +3145,7 @@ app.delete('/api/debug/connections/:id', authenticate, requireAdmin, async (req,
 });
 
 // Migrate events from numeric room_id to username room_id
-app.post('/api/migrate-events', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/migrate-events', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         await manager.migrateEventRoomIds();
         res.json({ success: true, message: 'Events migrated successfully' });
@@ -3140,7 +3155,7 @@ app.post('/api/migrate-events', authenticate, requireAdmin, async (req, res) => 
 });
 
 // Fix orphaned events - create sessions for events without session_id
-app.post('/api/fix-orphaned-events', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/fix-orphaned-events', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const task = await runSessionMaintenanceTask('fix_orphaned_events', {
             triggerSource: 'legacy-api',
@@ -3152,7 +3167,7 @@ app.post('/api/fix-orphaned-events', authenticate, requireAdmin, async (req, res
 });
 
 // Delete empty sessions (sessions with 0 events)
-app.post('/api/delete-empty-sessions', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/delete-empty-sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const task = await runSessionMaintenanceTask('delete_empty_sessions', {
             triggerSource: 'legacy-api',
@@ -3164,7 +3179,7 @@ app.post('/api/delete-empty-sessions', authenticate, requireAdmin, async (req, r
 });
 
 // Rebuild missing session records (for events with session_id but no session record)
-app.post('/api/rebuild-missing-sessions', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/rebuild-missing-sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const task = await runSessionMaintenanceTask('rebuild_missing_sessions', {
             triggerSource: 'legacy-api',
@@ -3209,7 +3224,7 @@ async function runUserStatsRefreshJob(trigger = 'manual') {
 }
 
 // Manually refresh room_stats cache (for immediate update after changes)
-app.post('/api/maintenance/refresh_room_stats', async (req, res) => {
+app.post('/api/maintenance/refresh_room_stats', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const result = await runRoomStatsRefreshJob('manual-api');
         res.json({ success: true, ...result });
@@ -3219,7 +3234,7 @@ app.post('/api/maintenance/refresh_room_stats', async (req, res) => {
 });
 
 // Manually refresh user_stats cache (for immediate update after changes)
-app.post('/api/maintenance/refresh_user_stats', async (req, res) => {
+app.post('/api/maintenance/refresh_user_stats', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const result = await runUserStatsRefreshJob('manual-api');
         res.json({ success: true, ...result });
