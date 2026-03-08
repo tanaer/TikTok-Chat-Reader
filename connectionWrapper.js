@@ -22,6 +22,8 @@ class TikTokConnectionWrapper extends EventEmitter {
     constructor(uniqueId, options, enableLog) {
         super();
 
+        options = options || {};
+
         this.uniqueId = uniqueId;
         this.enableLog = enableLog;
 
@@ -32,6 +34,9 @@ class TikTokConnectionWrapper extends EventEmitter {
         this.reconnectWaitMs = 1000;
         this.didEmitDisconnected = false; // Prevent duplicate disconnected events
         this.maxReconnectAttempts = 5;
+        this.currentEulerKey = null;
+        this.currentEulerKeyRateLimited = false;
+        this.eulerRateLimitCooldownMs = Math.max(60 * 1000, Number(options.eulerRateLimitCooldownMs || process.env.EULER_RATE_LIMIT_COOLDOWN_MS || 10 * 60 * 1000) || 10 * 60 * 1000);
 
         // Setup proxy agent - use options if valid, otherwise fallback to env
         // Important: ignore empty strings from database settings
@@ -56,10 +61,15 @@ class TikTokConnectionWrapper extends EventEmitter {
             if (SignConfig) SignConfig.apiKey = process.env.EULER_API_KEY;
         }
 
+        const resolvedEulerApiKey = apiKey || options.eulerApiKey || process.env.EULER_API_KEY || null;
+        this.currentEulerKey = resolvedEulerApiKey;
+        const preferEulerRoomLookup = Boolean(resolvedEulerApiKey) && options.preferEulerRoomLookup !== false;
+
         // Merge options with proxy settings
         const connectionOptions = {
             ...options,
-            signApiKey: apiKey, // Pass to connection too
+            signApiKey: resolvedEulerApiKey,
+            fetchRoomInfoOnConnect: preferEulerRoomLookup ? false : options.fetchRoomInfoOnConnect,
             webClientOptions: {
                 ...(options?.webClientOptions || {}),
                 ...(agent ? { httpsAgent: agent, timeout: 30000 } : { timeout: 30000 })
@@ -71,6 +81,11 @@ class TikTokConnectionWrapper extends EventEmitter {
         };
 
         this.connection = new TikTokLiveConnection(uniqueId, connectionOptions);
+
+        if (preferEulerRoomLookup) {
+            this.installEulerRoomResolvers();
+            this.log('Euler-only room resolution enabled (skip HTML/API room lookup)');
+        }
 
 
         this.connection.on('streamEnd', () => {
@@ -96,6 +111,7 @@ class TikTokConnectionWrapper extends EventEmitter {
             // Parse nested errors for FetchIsLiveError
             let humanMessage = '';
             let shouldShowStack = false;
+            let shouldDisableEulerKeyForRateLimit = false;
 
             if (errorName === 'FetchIsLiveError' || msg?.includes?.('Failed to retrieve Room ID')) {
                 // Parse the nested errors array
@@ -113,6 +129,7 @@ class TikTokConnectionWrapper extends EventEmitter {
 
                     // Check for rate limiting indicators
                     if (eCode === 429 || eMsg?.includes?.('rate limit') || eMsg?.includes?.('Too Many Requests')) {
+                        shouldDisableEulerKeyForRateLimit = true;
                         errorReasons.push('🚫 API 请求频率过高，已被限流');
                     } else if (eMsg?.includes?.('SIGI_STATE')) {
                         errorReasons.push('🔒 TikTok 页面解析失败（可能被封锁或页面结构变化）');
@@ -147,6 +164,13 @@ class TikTokConnectionWrapper extends EventEmitter {
                 humanMessage = '🔒 无法解析 TikTok 页面（可能被封锁）';
             } else if (msg?.includes?.('SignAPIError') || msg?.includes?.('Sign Error')) {
                 humanMessage = '🔑 签名服务错误，请检查 API Key';
+            } else if (msg?.includes?.('Euler room lookup permission denied') || msg?.includes?.('Euler live status lookup permission denied')) {
+                humanMessage = '🔑 Euler Key 无权访问房间解析接口';
+            } else if (msg?.includes?.('Euler room lookup rate limited') || msg?.includes?.('Euler live status lookup rate limited')) {
+                shouldDisableEulerKeyForRateLimit = true;
+                humanMessage = '🚫 Euler 房间解析接口被限流';
+            } else if (msg?.includes?.('Euler room lookup failed') || msg?.includes?.('Euler live status lookup failed')) {
+                humanMessage = '⚠️ Euler 房间解析失败';
             } else if (msg?.includes?.('falling back to API')) {
                 humanMessage = '🔄 正在尝试备用连接方式...';
             } else if (msg?.includes?.('Error while connecting')) {
@@ -157,11 +181,96 @@ class TikTokConnectionWrapper extends EventEmitter {
                 shouldShowStack = true;
             }
 
+            if (shouldDisableEulerKeyForRateLimit) {
+                this.handleEulerRateLimit(humanMessage || msg, {
+                    errorName,
+                    source: 'connection-error',
+                });
+            }
             this.log(`[ERROR] ${humanMessage}`);
             if (shouldShowStack && err?.stack) {
                 console.error(err);
             }
         });
+    }
+
+
+    installEulerRoomResolvers() {
+        const webClient = this.connection?.webClient;
+        if (!webClient?.fetchRoomIdFromEuler) {
+            return;
+        }
+
+        this.connection.fetchRoomId = async (uniqueIdOverride) => {
+            const resolvedUniqueId = uniqueIdOverride || this.uniqueId;
+            const response = await webClient.fetchRoomIdFromEuler({ uniqueId: resolvedUniqueId });
+
+            if ([401, 402, 403].includes(response?.code)) {
+                this.markEulerKeyFailure(`Euler room lookup permission denied (${response.code})`);
+                throw new Error(`Euler room lookup permission denied (${response.code})`);
+            }
+            if (response?.code === 429) {
+                this.handleEulerRateLimit('Euler room lookup rate limited (429)', {
+                    source: 'fetchRoomId',
+                    responseCode: response.code,
+                });
+                throw new Error('Euler room lookup rate limited (429)');
+            }
+            if (!response?.ok || !response?.room_id) {
+                this.markEulerKeyFailure(`Euler room lookup failed: ${response?.message || 'missing room_id'}`);
+                throw new Error(`Euler room lookup failed: ${response?.message || 'missing room_id'}`);
+            }
+
+            return String(response.room_id);
+        };
+
+        this.connection.fetchIsLive = async () => {
+            const response = await webClient.fetchRoomIdFromEuler({ uniqueId: this.uniqueId });
+
+            if ([401, 402, 403].includes(response?.code)) {
+                this.markEulerKeyFailure(`Euler live status lookup permission denied (${response.code})`);
+                throw new Error(`Euler live status lookup permission denied (${response.code})`);
+            }
+            if (response?.code === 429) {
+                this.handleEulerRateLimit('Euler live status lookup rate limited (429)', {
+                    source: 'fetchIsLive',
+                    responseCode: response.code,
+                });
+                throw new Error('Euler live status lookup rate limited (429)');
+            }
+            if (typeof response?.is_live !== 'boolean') {
+                this.markEulerKeyFailure(`Euler live status lookup failed: ${response?.message || 'missing is_live'}`);
+                throw new Error(`Euler live status lookup failed: ${response?.message || 'missing is_live'}`);
+            }
+
+            return response.is_live;
+        };
+    }
+
+
+    markEulerKeySuccess() {
+        if (!this.currentEulerKey) return;
+        this.currentEulerKeyRateLimited = false;
+        keyManager.recordResult(this.currentEulerKey, true).catch(() => {});
+    }
+
+    markEulerKeyFailure(errorMessage) {
+        if (!this.currentEulerKey) return;
+        keyManager.recordResult(this.currentEulerKey, false, errorMessage).catch(() => {});
+    }
+
+    handleEulerRateLimit(errorMessage, meta = {}) {
+        if (!this.currentEulerKey || this.currentEulerKeyRateLimited) {
+            return;
+        }
+        this.currentEulerKeyRateLimited = true;
+        this.markEulerKeyFailure(errorMessage);
+        keyManager.disableKey(this.currentEulerKey, this.eulerRateLimitCooldownMs, 'rate_limit', {
+            uniqueId: this.uniqueId,
+            ...meta,
+            error: errorMessage,
+        });
+        this.log(`[EULER] Key ${this.currentEulerKey.slice(0, 10)}... hit rate limit; cooldown ${Math.round(this.eulerRateLimitCooldownMs / 60000)}m`);
     }
 
     connect(isReconnect, cachedRoomId = null) {
@@ -178,6 +287,7 @@ class TikTokConnectionWrapper extends EventEmitter {
             }
 
             globalConnectionCount += 1;
+            this.markEulerKeySuccess();
 
             // Reset reconnect vars
             this.reconnectCount = 0;
@@ -197,6 +307,9 @@ class TikTokConnectionWrapper extends EventEmitter {
 
         }).catch((err) => {
             this.log(`${isReconnect ? 'Reconnect' : 'Connection'} failed, ${err}`);
+            if (this.currentEulerKey && !this.currentEulerKeyRateLimited) {
+                this.markEulerKeyFailure(err?.message || String(err));
+            }
 
             if (isReconnect) {
                 // Schedule the next reconnect attempt

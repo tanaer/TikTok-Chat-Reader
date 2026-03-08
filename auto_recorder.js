@@ -618,6 +618,7 @@ class AutoRecorder {
             const options = {
                 enableExtendedGiftInfo: true,
                 fetchRoomInfoOnConnect: true,
+                preferEulerRoomLookup: true,
                 proxyUrl: dbSettings.proxy_url || dbSettings.proxy,
                 eulerApiKey: dbSettings.euler_api_key,
                 // Conditionally add session credentials
@@ -1162,6 +1163,7 @@ class AutoRecorder {
             const options = {
                 enableExtendedGiftInfo: true,
                 fetchRoomInfoOnConnect: true,
+                preferEulerRoomLookup: true,
                 proxyUrl: dbSettings.proxy_url || dbSettings.proxy,
                 eulerApiKey: dbSettings.euler_api_key,
                 ...(sessionId ? {
