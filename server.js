@@ -375,6 +375,7 @@ const ALLTIME_LEADERBOARDS_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ALLTI
 const ROOM_SESSIONS_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 15000);
 const ARCHIVED_STATS_DETAIL_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 30000);
 const ANALYSIS_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 20000);
+const SESSION_RECAP_CACHE_TTL_MS = Math.max(ARCHIVED_STATS_DETAIL_CACHE_TTL_MS, 30000);
 const ROOM_LIST_CACHE_MAX_ENTRIES = 200;
 const roomListResponseCache = new Map();
 const ROOM_LIST_CACHE_NAMESPACE = 'room_list';
@@ -478,6 +479,31 @@ async function getCachedAnalysisPayload(cacheKey, loader) {
     const payload = await loader();
     await cacheService.setJson(cacheKey, payload, { ttlMs: ANALYSIS_CACHE_TTL_MS });
     return payload;
+}
+
+function buildSessionRecapCacheKey(roomId, sessionId, req, roomFilter) {
+    return cacheService.buildCacheKey(
+        'room_detail',
+        'session_recap',
+        roomId,
+        sessionId,
+        getRoomListActorCacheKey(req),
+        normalizeRoomFilterCacheKey(roomFilter)
+    );
+}
+
+async function getCachedSessionRecap(roomId, sessionId, req, roomFilter) {
+    if (!roomId || !sessionId || sessionId === 'live' || !cacheService.isRoomCacheEnabled() || SESSION_RECAP_CACHE_TTL_MS <= 0) {
+        return manager.getSessionRecap(roomId, sessionId, roomFilter);
+    }
+
+    const cacheKey = buildSessionRecapCacheKey(roomId, sessionId, req, roomFilter);
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const recap = await manager.getSessionRecap(roomId, sessionId, roomFilter);
+    await cacheService.setJson(cacheKey, recap, { ttlMs: SESSION_RECAP_CACHE_TTL_MS });
+    return recap;
 }
 
 function readLocalRoomListCache(cacheKey) {
@@ -1447,7 +1473,7 @@ app.get('/api/rooms/:id/session-recap', optionalAuth, async (req, res) => {
 
         const sessionId = req.query.sessionId || 'live';
         const roomFilter = await getUserRoomFilter(req);
-        const recap = await manager.getSessionRecap(roomId, sessionId, roomFilter);
+        const recap = await getCachedSessionRecap(roomId, sessionId, req, roomFilter);
         const cachedReview = req.user && sessionId !== 'live'
             ? await getCachedSessionAiReview(req.user.id, roomId, sessionId)
             : null;
