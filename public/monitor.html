@@ -15,20 +15,22 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.4.1/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html-to-image@1.11.11/dist/html-to-image.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
     <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 
     <!-- App Scripts -->
-    <script src="js/auth.js"></script>
+    <script src="js/auth.js?v=20260308i"></script>
     <script src="connection.js?v=20260308f"></script>
     <script src="config.js?v=20260308f"></script>
     <script src="room_list.js?v=20260308h"></script>
     <script src="user_analysis.js?v=20260308f"></script>
     <script src="room_analysis.js?v=20260308f"></script>
     <script src="recording_ui.js?v=20260308f"></script>
-    <script src="app.js?v=20260308i"></script>
+    <script src="app.js?v=20260308n"></script>
 
 
-    <link rel="stylesheet" href="style.css"> <!-- Minimal overrides -->
+    <link rel="stylesheet" href="style.css?v=20260308c"> <!-- Minimal overrides -->
 </head>
 
 <body class="bg-base-300 min-h-screen flex flex-col">
@@ -260,19 +262,25 @@
                             <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
                                 <div>
                                     <h3 class="font-bold text-lg">AI直播复盘</h3>
-                                    <p class="text-sm opacity-60">点击生成后，会给出直播摘要、关键时刻、价值客户和下一场动作建议。</p>
+                                    <p class="text-sm opacity-60">当前先支持单场模式。点击生成后，会给出老板摘要、本场两点、主要问题、价值客户和下一步建议。</p>
                                 </div>
-                                <div class="flex items-center gap-2">
+                                <div class="flex flex-wrap items-center justify-end gap-2">
                                     <span id="sessionRecapStatus" class="badge badge-outline">待生成复盘</span>
-                                    <button class="btn btn-primary btn-sm" id="generateSessionRecapBtn"
-                                        onclick="generateSessionAiReview()">生成完整复盘（10点）</button>
+                                    <div id="sessionRecapExportActions" class="hidden dropdown dropdown-end session-recap-export-actions">
+                                        <button type="button" tabindex="0" class="btn btn-outline btn-sm session-recap-export-control" id="sessionRecapExportMenuBtn">导出复盘</button>
+                                        <ul tabindex="0" class="dropdown-content menu w-36 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl z-[30] session-recap-export-menu">
+                                            <li><button type="button" id="exportSessionRecapImageBtn" class="session-recap-export-item" onclick="exportSessionRecapAsImage()">导出图片</button></li>
+                                            <li><button type="button" id="exportSessionRecapPdfBtn" class="session-recap-export-item" onclick="exportSessionRecapAsPdf()">导出PDF</button></li>
+                                        </ul>
+                                    </div>
+                                    <button class="btn btn-primary btn-sm session-recap-export-control" id="generateSessionRecapBtn"
+                                        onclick="generateSessionAiReview()">生成AI直播复盘（20AI点）</button>
                                 </div>
                             </div>
 
                             <div id="sessionRecapEmpty" class="space-y-4">
-                                <div
-                                    class="rounded-box border border-base-300 bg-base-100 p-5 text-sm opacity-70 shadow-sm">
-                                    请先选择一场直播。建议切到归档场次后生成完整复盘。
+                                <div class="rounded-box border border-base-300 bg-base-100 p-5 text-sm opacity-70 shadow-sm">
+                                    请先选择一场直播。当前先支持单场模式，建议切到归档场次后生成完整 AI直播复盘。
                                 </div>
                             </div>
 
@@ -290,6 +298,8 @@
                                             </div>
                                             <div id="recapScoreLabel" class="text-sm opacity-70 mt-2">暂无数据</div>
                                             <div id="recapTags" class="flex flex-wrap gap-2 mt-4"></div>
+                                            <div id="recapScoreBreakdown" class="grid grid-cols-2 gap-2 mt-4 text-[11px] opacity-75"></div>
+                                            <div id="recapScoreReason" class="text-xs leading-6 opacity-70 mt-3"></div>
                                         </div>
                                     </div>
 
@@ -349,9 +359,9 @@
 
                                     <div class="card bg-base-100 border border-base-300 shadow-sm">
                                         <div class="card-body p-5">
-                                            <div class="text-xs uppercase tracking-[0.18em] opacity-60">直播摘要</div>
+                                            <div class="text-xs uppercase tracking-[0.18em] opacity-60">给老板看的本场摘要</div>
                                             <p id="sessionAiSummary" class="text-sm leading-7 mt-3 opacity-80">点击右上角生成
-                                                AI 直播摘要，默认按 10 点计费。</p>
+                                                AI直播复盘，默认按 20 AI点计费。</p>
                                             <div id="sessionAiMeta" class="text-xs opacity-50 mt-4">未生成</div>
                                         </div>
                                     </div>
@@ -406,8 +416,8 @@
                                     <div class="card bg-base-100 border border-base-300 shadow-sm">
                                         <div class="card-body p-5">
                                             <div class="flex items-center justify-between gap-2 mb-3">
-                                                <h4 class="font-bold text-success">本场亮点</h4>
-                                                <span class="badge badge-success badge-outline">正向</span>
+                                                <h4 class="font-bold text-success">本场两点</h4>
+                                                <span class="badge badge-success badge-outline">高光</span>
                                             </div>
                                             <ul id="recapHighlights" class="space-y-3 text-sm"></ul>
                                         </div>
@@ -429,6 +439,19 @@
                                             </div>
                                             <ul id="recapActions" class="space-y-3 text-sm"></ul>
                                         </div>
+                                    </div>
+                                </div>
+
+                                <div class="card bg-base-100 border border-base-300 shadow-sm">
+                                    <div class="card-body p-5">
+                                        <div class="flex items-center justify-between gap-2 mb-3">
+                                            <div>
+                                                <h4 class="font-bold">高价值弹幕信号</h4>
+                                                <p class="text-xs opacity-60">先从高频弹幕 Top50 里筛出真正值得复盘的内容反馈</p>
+                                            </div>
+                                            <span class="badge badge-outline">Top 10</span>
+                                        </div>
+                                        <div id="recapValuableComments" class="space-y-3"></div>
                                     </div>
                                 </div>
 

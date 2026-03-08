@@ -8,7 +8,7 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/shared-shell.css">
-    <script src="/js/auth.js"></script>
+    <script src="/js/auth.js?v=20260308i"></script>
     <script src="/js/email-verification-flow.js"></script>
     <script src="/vendor/qrious.min.js"></script>
     <style>
@@ -2175,7 +2175,7 @@
             const subtitle = document.getElementById('message-modal-subtitle');
             if (subtitle) subtitle.textContent = notificationUnreadCount > 0
                 ? `当前有 ${notificationUnreadCount} 条未读通知，请及时处理。`
-                : '支付到账、人工确认等消息会显示在这里。';
+                : '支付到账、人工确认、AI处理结果等消息会显示在这里。';
         }
 
         function buildNotificationCard(item, compact = false) {
@@ -2186,7 +2186,7 @@
                 ? ''
                 : `<button type="button" class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); markNotificationRead(${Number(item.id)}, { silentReload: true });">标记已读</button>`;
             return `
-            <div class="notification-card ${item.isRead ? '' : 'is-unread'}" onclick="handleNotificationClick(${Number(item.id)}, '${item.actionTab || 'overview'}')">
+            <div class="notification-card ${item.isRead ? '' : 'is-unread'}" onclick="handleNotificationClick(${Number(item.id)}, '${item.actionTab || 'overview'}', '${encodeURIComponent(item.actionUrl || '')}')">
                 <div class="notification-card-main">
                     <div class="notification-card-title">${unreadDot}<span>${escapeHtml(item.title || '通知')}</span><span class="badge badge-sm notification-level-badge ${levelMeta.badge}">${levelMeta.label}</span></div>
                     <div class="notification-card-content">${escapeHtml(item.content || '')}</div>
@@ -2278,9 +2278,19 @@
             loadNotifications(1, { silent: true });
         }
 
-        function handleNotificationClick(id, actionTab = 'overview') {
+        function handleNotificationClick(id, actionTab = 'overview', encodedActionUrl = '') {
             if (id) markNotificationRead(id, { silentReload: true });
             document.getElementById('messageModal')?.close();
+            const actionUrl = encodedActionUrl ? decodeURIComponent(encodedActionUrl) : '';
+            if (actionUrl) {
+                window.location.href = actionUrl;
+                return;
+            }
+            if (actionTab === 'ai_work') {
+                const tabEl = document.getElementById('main-tab-overview') || document.querySelector(`.tab[onclick*="overview"]`);
+                if ('overview' !== currentTab) switchTab('overview', tabEl);
+                return;
+            }
             const target = ['overview', 'orders', 'balance', 'subscription', 'settings'].includes(actionTab) ? actionTab : 'overview';
             const tabEl = document.getElementById(`main-tab-${target}`) || document.querySelector(`.tab[onclick*="${target}"]`);
             if (target !== currentTab) switchTab(target, tabEl);
@@ -2754,7 +2764,7 @@
                 },
                 {
                     label: 'AI直播复盘',
-                    hint: '单场 AI直播复盘与直播摘要',
+                    hint: '单场 AI直播复盘与老板摘要',
                     render: (item) => hasFlag(item.features, 'ai_live_recap', 'aiLiveRecap') ? '<strong>支持</strong>' : '<span class="opacity-50">未包含</span>'
                 },
                 {

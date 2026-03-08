@@ -6,6 +6,7 @@ const subscriptionService = require('../services/subscriptionService');
 const emailService = require('../services/emailService');
 const paymentService = require('../services/paymentService');
 const notificationService = require('../services/notificationService');
+const { listUserAiWorkJobs, getUserAiWorkJobById } = require('../services/aiWorkService');
 
 const router = express.Router();
 
@@ -303,6 +304,45 @@ router.post('/notifications/:id/read', authenticate, [
     } catch (err) {
         console.error('[User] Mark notification read error:', err.message);
         res.status(500).json({ error: '操作失败' });
+    }
+});
+
+
+/**
+ * GET /api/user/ai-work/jobs
+ */
+router.get('/ai-work/jobs', authenticate, async (req, res) => {
+    try {
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+        const status = String(req.query.status || '').trim();
+        const jobType = String(req.query.jobType || '').trim();
+        const result = await listUserAiWorkJobs(req.user.id, { page, limit, status, jobType });
+        res.json(result);
+    } catch (err) {
+        console.error('[User] AI work jobs error:', err.message);
+        res.status(500).json({ error: '获取 AI 工作列表失败' });
+    }
+});
+
+/**
+ * GET /api/user/ai-work/jobs/:id
+ */
+router.get('/ai-work/jobs/:id', authenticate, [
+    param('id').isInt({ min: 1 }).withMessage('任务ID无效')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    try {
+        const job = await getUserAiWorkJobById(req.user.id, Number(req.params.id));
+        if (!job) return res.status(404).json({ error: '任务不存在' });
+        res.json({ job });
+    } catch (err) {
+        console.error('[User] AI work job detail error:', err.message);
+        res.status(500).json({ error: '获取 AI 工作详情失败' });
     }
 });
 

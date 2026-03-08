@@ -1,6 +1,11 @@
 
 const { TikTokConnectionWrapper, getKeyCount } = require('./connectionWrapper');
 const { manager } = require('./manager');
+const {
+    getSessionMaintenanceConfig,
+    runSessionMaintenanceTask,
+    recordSessionMaintenanceEvent,
+} = require('./services/sessionMaintenanceService');
 const keyManager = require('./utils/keyManager');
 const dynamicProxyManager = require('./utils/DynamicProxyManager');
 
@@ -26,6 +31,15 @@ class AutoRecorder {
         // Delayed archiving: sessions are archived 30 min after disconnect unless reconnection happens
         this.pendingArchives = new Map();
         this.ARCHIVE_DELAY_MS = 30 * 60 * 1000; // 30 minutes
+        this.sessionMaintenanceConfig = null;
+        this.maintenanceTimers = {
+            staleCleanup: null,
+            consolidation: null,
+        };
+        this.maintenanceScheduleMeta = {
+            staleCleanupNextRunAt: null,
+            consolidationNextRunAt: null,
+        };
 
         // False positive cooldown: prevent repeated connection attempts for rooms that fail validation
         // roomId -> cooldownUntil timestamp
@@ -63,7 +77,7 @@ class AutoRecorder {
 
         if (state.length > 0) {
             try {
-                await manager.setSetting('_connection_state', JSON.stringify(state));
+                await manager.saveSetting('_connection_state', JSON.stringify(state));
                 console.log(`[AutoRecorder] Saved ${state.length} active connections for restart`);
             } catch (err) {
                 console.error('[AutoRecorder] Failed to save connection state:', err.message);
@@ -86,7 +100,7 @@ class AutoRecorder {
             this.restoredConnections = state;
 
             // Clear the saved state (one-time restore)
-            await manager.setSetting('_connection_state', '');
+            await manager.saveSetting('_connection_state', '');
         } catch (err) {
             console.error('[AutoRecorder] Failed to restore connection state:', err.message);
         }
@@ -298,32 +312,146 @@ class AutoRecorder {
         });
     }
 
-    async startLoop() {
-        // Run startup cleanup once
+    getSessionMaintenanceRuntimeSnapshot() {
+        const pendingArchives = Array.from(this.pendingArchives.entries()).map(([roomId, pending]) => ({
+            roomId,
+            disconnectTime: pending.disconnectTime ? new Date(pending.disconnectTime).toISOString() : null,
+            startIso: pending.startIso || null,
+            eventCount: Number(pending.eventCount || 0),
+            archiveDelayMinutes: pending.archiveDelayMs != null ? Math.round(Number(pending.archiveDelayMs || 0) / 60000) : null,
+        }));
+
+        return {
+            pendingArchives: pendingArchives.length,
+            pendingArchiveRooms: pendingArchives.slice(0, 10),
+            scheduler: {
+                staleCleanupNextRunAt: this.maintenanceScheduleMeta.staleCleanupNextRunAt,
+                consolidationNextRunAt: this.maintenanceScheduleMeta.consolidationNextRunAt,
+            },
+            config: this.sessionMaintenanceConfig,
+        };
+    }
+
+    async getSessionMaintenanceConfig() {
+        if (this.sessionMaintenanceConfig) return this.sessionMaintenanceConfig;
+        return this.refreshSessionMaintenanceConfig('lazy-load');
+    }
+
+    async refreshSessionMaintenanceConfig(reason = 'manual') {
+        const previousDelayMs = this.ARCHIVE_DELAY_MS;
+        const config = await getSessionMaintenanceConfig();
+        this.sessionMaintenanceConfig = config;
+        this.ARCHIVE_DELAY_MS = Math.max(0, Number(config.archiveDelayMinutes || 0)) * 60 * 1000;
+
+        if (previousDelayMs !== this.ARCHIVE_DELAY_MS && this.pendingArchives.size > 0) {
+            this.reschedulePendingArchives();
+        }
+
+        this.scheduleMaintenanceTask('staleCleanup', reason);
+        this.scheduleMaintenanceTask('consolidation', reason);
+        return config;
+    }
+
+    scheduleMaintenanceTask(taskName, reason = 'manual') {
+        if (this.maintenanceTimers[taskName]) {
+            clearTimeout(this.maintenanceTimers[taskName]);
+            this.maintenanceTimers[taskName] = null;
+        }
+        this.maintenanceScheduleMeta[taskName === 'staleCleanup' ? 'staleCleanupNextRunAt' : 'consolidationNextRunAt'] = null;
+
+        const config = this.sessionMaintenanceConfig;
+        if (!config) return;
+
+        const intervalMinutes = taskName === 'staleCleanup'
+            ? Number(config.staleCleanupIntervalMinutes || 0)
+            : Number(config.consolidationIntervalMinutes || 0);
+
+        if (!Number.isFinite(intervalMinutes) || intervalMinutes <= 0) {
+            return;
+        }
+
+        const nextRunAt = new Date(Date.now() + intervalMinutes * 60 * 1000).toISOString();
+        this.maintenanceScheduleMeta[taskName === 'staleCleanup' ? 'staleCleanupNextRunAt' : 'consolidationNextRunAt'] = nextRunAt;
+
+        this.maintenanceTimers[taskName] = setTimeout(async () => {
+            try {
+                const latestConfig = await getSessionMaintenanceConfig();
+                this.sessionMaintenanceConfig = latestConfig;
+                this.ARCHIVE_DELAY_MS = Math.max(0, Number(latestConfig.archiveDelayMinutes || 0)) * 60 * 1000;
+
+                if (taskName === 'staleCleanup') {
+                    await runSessionMaintenanceTask('cleanup_stale_live_events', {
+                        triggerSource: 'auto-recorder-interval',
+                        configOverride: latestConfig,
+                    });
+                    console.log('[AutoRecorder] Periodic stale event cleanup completed');
+                } else {
+                    await runSessionMaintenanceTask('consolidate_recent_sessions', {
+                        triggerSource: 'auto-recorder-interval',
+                        configOverride: latestConfig,
+                    });
+                    console.log('[AutoRecorder] Periodic session consolidation completed');
+                }
+            } catch (err) {
+                console.error(`[AutoRecorder] ${taskName} failed:`, err?.message || err);
+            } finally {
+                this.scheduleMaintenanceTask(taskName, 'reschedule');
+            }
+        }, intervalMinutes * 60 * 1000);
+
+        if (reason !== 'reschedule') {
+            console.log(`[AutoRecorder] Scheduled ${taskName} every ${intervalMinutes} minute(s)`);
+        }
+    }
+
+    reschedulePendingArchives() {
+        for (const [uniqueId, pending] of this.pendingArchives.entries()) {
+            if (pending.timerId) {
+                clearTimeout(pending.timerId);
+            }
+
+            const nextDelayMs = Math.max(0, (pending.disconnectTime + this.ARCHIVE_DELAY_MS) - Date.now());
+            pending.archiveDelayMs = this.ARCHIVE_DELAY_MS;
+            pending.timerId = setTimeout(() => {
+                this.executeArchive(uniqueId, pending.startIso, pending.reason, pending.eventCount).catch(err => {
+                    console.error(`[AutoRecorder] Rescheduled archive failed for ${uniqueId}:`, err?.message || err);
+                });
+            }, nextDelayMs);
+            this.pendingArchives.set(uniqueId, pending);
+        }
+    }
+
+    async recordSessionMaintenanceEventSafe(payload) {
         try {
-            console.log('[AutoRecorder] Running startup cleanup...');
-            await manager.cleanupAllStaleEvents();
-            console.log('[AutoRecorder] Running startup session consolidation...');
-            await manager.consolidateRecentSessions();
+            const config = payload.config || await this.getSessionMaintenanceConfig();
+            await recordSessionMaintenanceEvent({ ...payload, config });
+        } catch (err) {
+            console.error('[AutoRecorder] Failed to write session maintenance log:', err?.message || err);
+        }
+    }
+
+    async startLoop() {
+        const sessionOpsConfig = await this.refreshSessionMaintenanceConfig('startup');
+
+        try {
+            if (sessionOpsConfig.startupCleanupEnabled) {
+                console.log('[AutoRecorder] Running startup cleanup...');
+                await runSessionMaintenanceTask('cleanup_stale_live_events', {
+                    triggerSource: 'auto-recorder-startup',
+                    configOverride: sessionOpsConfig,
+                });
+            }
+
+            if (sessionOpsConfig.startupConsolidationEnabled) {
+                console.log('[AutoRecorder] Running startup session consolidation...');
+                await runSessionMaintenanceTask('consolidate_recent_sessions', {
+                    triggerSource: 'auto-recorder-startup',
+                    configOverride: sessionOpsConfig,
+                });
+            }
         } catch (e) {
             console.error('[AutoRecorder] Startup maintenance failed:', e);
         }
-
-        // Setup periodic maintenance jobs
-        // 1. Cleanup stale events every 30 minutes (prevents 20+ hour "live" sessions)
-        setInterval(async () => {
-            try {
-                await manager.cleanupAllStaleEvents();
-                console.log('[AutoRecorder] Periodic stale event cleanup completed');
-            } catch (err) {
-                console.error('[AutoRecorder] Periodic cleanup failed:', err);
-            }
-        }, 30 * 60 * 1000); // Every 30 minutes
-
-        // 2. Session consolidation every 60 minutes
-        setInterval(() => {
-            manager.consolidateRecentSessions().catch(err => console.error('[AutoRecorder] Hourly consolidation failed:', err));
-        }, 60 * 60 * 1000);
 
         // Dynamic Loop
         let firstRun = true;
@@ -454,10 +582,24 @@ class AutoRecorder {
 
             // Auto-Archive Stale Live Events (Prevent 24h+ duration bug)
             try {
+                const sessionOpsConfig = await this.getSessionMaintenanceConfig();
                 // If there are dangling events from a previous crash/restart > 1h ago, archive them now.
-                const staleInfo = await manager.archiveStaleLiveEvents(uniqueId);
+                const staleInfo = await manager.archiveStaleLiveEvents(uniqueId, {
+                    gapThresholdMinutes: sessionOpsConfig.staleGapThresholdMinutes,
+                    splitOlderThanMinutes: sessionOpsConfig.staleSplitAgeMinutes,
+                    archiveAllOlderThanMinutes: sessionOpsConfig.staleArchiveAllAgeMinutes,
+                });
                 if (staleInfo && staleInfo.archived > 0) {
                     console.log(`[AutoRecorder] Cleaned up ${staleInfo.archived} stale events for ${uniqueId} before new connection.`);
+                    await this.recordSessionMaintenanceEventSafe({
+                        taskKey: 'preconnect_stale_archive',
+                        triggerSource: 'preconnect-guard',
+                        roomId: uniqueId,
+                        status: 'success',
+                        message: '新连接建立前已清理遗留未归档事件',
+                        summary: staleInfo,
+                        config: sessionOpsConfig,
+                    });
                 }
             } catch (err) {
                 console.error(`[AutoRecorder] Warning: Failed to check stale events for ${uniqueId}:`, err.message);
@@ -499,7 +641,8 @@ class AutoRecorder {
                     console.log(`[AutoRecorder] ${uniqueId} reconnected, refreshing event listeners`);
                 } else {
                     // Initial connection - check if we should resume from recent disconnect
-                    const resumeWindowMs = 30 * 60 * 1000; // 30 minutes
+                    const sessionOpsConfig = await this.getSessionMaintenanceConfig();
+                    const resumeWindowMs = Math.max(0, Number(sessionOpsConfig.resumeWindowMinutes || 0)) * 60 * 1000;
                     let shouldResume = false;
 
                     try {
@@ -528,10 +671,22 @@ class AutoRecorder {
                             if (pendingArchive.timerId) {
                                 clearTimeout(pendingArchive.timerId);
                             }
-                            console.log(`[AutoRecorder] 🔄 ${uniqueId} reconnected within 30 min, cancelling archive timer and resuming session...`);
+                            console.log(`[AutoRecorder] 🔄 ${uniqueId} reconnected within ${sessionOpsConfig.resumeWindowMinutes} min, cancelling archive timer and resuming session...`);
                             shouldResume = true;
                             resumedStartTime = pendingArchive.startTime; // Restore original startTime
                             this.pendingArchives.delete(uniqueId);
+                            await this.recordSessionMaintenanceEventSafe({
+                                taskKey: 'pending_archive_cancelled',
+                                triggerSource: 'reconnect-resume',
+                                roomId: uniqueId,
+                                status: 'cancelled',
+                                message: '断线延迟归档被取消，恢复到原场次继续采集',
+                                summary: {
+                                    resumeWindowMinutes: sessionOpsConfig.resumeWindowMinutes,
+                                    disconnectAgoMs: Date.now() - pendingArchive.disconnectTime,
+                                },
+                                config: sessionOpsConfig,
+                            });
                         }
 
                         // If NOT resuming, archive orphan events first
@@ -539,7 +694,11 @@ class AutoRecorder {
                             const orphanCount = await manager.getUntaggedEventCount(uniqueId, null);
                             if (orphanCount > 0) {
                                 console.log(`[AutoRecorder] Found ${orphanCount} orphan events for ${uniqueId}, archiving before new stream...`);
-                                await manager.archiveStaleLiveEvents(uniqueId);
+                                await runSessionMaintenanceTask('archive_stale_live_events_room', {
+                                    roomId: uniqueId,
+                                    triggerSource: 'new-stream-guard',
+                                    configOverride: sessionOpsConfig,
+                                });
                             }
                         } else {
                             // Resuming - keep orphan events as-is, they'll be part of this session
@@ -547,6 +706,18 @@ class AutoRecorder {
                             if (orphanCount > 0) {
                                 console.log(`[AutoRecorder] ${uniqueId} resuming with ${orphanCount} existing events (no new archive created)`)
                             }
+                            await this.recordSessionMaintenanceEventSafe({
+                                taskKey: 'reconnect_resume_session',
+                                triggerSource: 'reconnect-resume',
+                                roomId: uniqueId,
+                                status: 'success',
+                                message: '直播间在续场窗口内恢复连接，沿用原逻辑场次',
+                                summary: {
+                                    resumeWindowMinutes: sessionOpsConfig.resumeWindowMinutes,
+                                    pendingArchive: Boolean(pendingArchive),
+                                },
+                                config: sessionOpsConfig,
+                            });
                         }
 
                         // Use resumed startTime if available, otherwise new Date()
@@ -1206,8 +1377,10 @@ class AutoRecorder {
                 // === DELAYED ARCHIVING LOGIC ===
                 // If immediate=true (manual stop), archive now
                 // Otherwise, set a timer to archive after 30 minutes
+                const sessionOpsConfig = await this.getSessionMaintenanceConfig();
+                const archiveDelayMinutes = Math.max(0, Number(sessionOpsConfig.archiveDelayMinutes || 0));
 
-                if (immediate) {
+                if (immediate || archiveDelayMinutes === 0) {
                     console.log(`[AutoRecorder] 🔒 Immediate archive for ${uniqueId} (${reason})...`);
                     await this.executeArchive(uniqueId, startIso, reason, eventCount);
                 } else {
@@ -1220,6 +1393,7 @@ class AutoRecorder {
                     }
 
                     // Set delayed archive timer
+                    const disconnectTime = Date.now();
                     const timerId = setTimeout(() => {
                         this.executeArchive(uniqueId, startIso, reason, eventCount).catch(err => {
                             console.error(`[AutoRecorder] Delayed archive failed for ${uniqueId}:`, err?.message);
@@ -1230,13 +1404,28 @@ class AutoRecorder {
                     this.pendingArchives.set(uniqueId, {
                         startTime: startTime,
                         startIso: startIso,
-                        disconnectTime: Date.now(),
+                        disconnectTime,
                         timerId: timerId,
                         eventCount: eventCount,
-                        reason: reason
+                        reason: reason,
+                        archiveDelayMs: this.ARCHIVE_DELAY_MS,
                     });
 
-                    console.log(`[AutoRecorder] ⏰ Session for ${uniqueId} will be archived in 30 min (${eventCount} events). Reconnection will resume.`);
+                    console.log(`[AutoRecorder] ⏰ Session for ${uniqueId} will be archived in ${archiveDelayMinutes} min (${eventCount} events). Reconnection will resume.`);
+                    await this.recordSessionMaintenanceEventSafe({
+                        taskKey: 'pending_archive_scheduled',
+                        triggerSource: immediate ? 'manual-stop' : 'disconnect-delay',
+                        roomId: uniqueId,
+                        status: 'scheduled',
+                        message: '断线后已创建延迟归档任务，等待续场窗口结束',
+                        summary: {
+                            eventCount,
+                            archiveDelayMinutes,
+                            resumeWindowMinutes: sessionOpsConfig.resumeWindowMinutes,
+                            reason: reason || '',
+                        },
+                        config: sessionOpsConfig,
+                    });
                 }
 
             } catch (err) {
@@ -1259,6 +1448,7 @@ class AutoRecorder {
 
     // Execute the actual session archiving
     async executeArchive(uniqueId, startIso, reason, eventCount) {
+        const sessionOpsConfig = await this.getSessionMaintenanceConfig();
         // Check if this archive was cancelled (room reconnected)
         const pending = this.pendingArchives.get(uniqueId);
         if (pending && pending.startIso !== startIso) {
@@ -1275,6 +1465,19 @@ class AutoRecorder {
 
         if (finalGiftCount === 0) {
             console.log(`[AutoRecorder] No gift events for ${uniqueId} at archive time, skipping.`);
+            await this.recordSessionMaintenanceEventSafe({
+                taskKey: 'execute_archive_session',
+                triggerSource: 'disconnect-archive',
+                roomId: uniqueId,
+                status: 'skipped',
+                message: '归档跳过：归档时没有礼物事件',
+                summary: {
+                    eventCount: finalEventCount,
+                    giftCount: finalGiftCount,
+                    reason: reason || '',
+                },
+                config: sessionOpsConfig,
+            });
             return;
         }
 
@@ -1288,9 +1491,38 @@ class AutoRecorder {
 
             await manager.tagEventsWithSession(uniqueId, sessionId, startIso);
             console.log(`[AutoRecorder] ✅ Session saved: ${sessionId}`);
+            await this.recordSessionMaintenanceEventSafe({
+                taskKey: 'execute_archive_session',
+                triggerSource: 'disconnect-archive',
+                roomId: uniqueId,
+                status: 'success',
+                message: `场次归档成功：${sessionId}`,
+                summary: {
+                    sessionId,
+                    eventCount: finalEventCount,
+                    giftCount: finalGiftCount,
+                    reason: reason || '',
+                    requestedEventCount: eventCount,
+                },
+                config: sessionOpsConfig,
+            });
 
         } catch (err) {
             console.error(`[AutoRecorder] Error saving session: ${err?.message || err}`);
+            await this.recordSessionMaintenanceEventSafe({
+                taskKey: 'execute_archive_session',
+                triggerSource: 'disconnect-archive',
+                roomId: uniqueId,
+                status: 'failed',
+                message: '场次归档失败',
+                summary: {
+                    eventCount: finalEventCount,
+                    giftCount: finalGiftCount,
+                    reason: reason || '',
+                },
+                errorMessage: err?.message || String(err),
+                config: sessionOpsConfig,
+            });
         }
     }
     setRecordingManager(rm) {
@@ -1299,4 +1531,3 @@ class AutoRecorder {
 }
 
 module.exports = { AutoRecorder };
-

@@ -3,12 +3,28 @@ const fs = require('fs/promises');
 const path = require('path');
 const { body, query: queryValidator, validationResult } = require('express-validator');
 const db = require('../db');
+const { manager } = require('../manager');
 const { authenticate, requireAdmin } = require('../middleware/auth');
 const authService = require('../services/authService');
 const balanceService = require('../services/balanceService');
 const emailService = require('../services/emailService');
+const {
+    listPromptTemplates,
+    getPromptTemplateDefinition,
+    savePromptTemplate,
+    resetPromptTemplate,
+} = require('../services/aiPromptService');
 const quotaService = require('../services/quotaService');
+const { listAdminAiWorkJobs, getAdminAiWorkJobDetail } = require('../services/aiWorkService');
 const keyManager = require('../utils/keyManager');
+const {
+    isSessionMaintenanceSettingKey,
+    saveSessionMaintenanceConfig,
+    getSessionMaintenanceOverview,
+    listSessionMaintenanceLogs,
+    runSessionMaintenanceTask,
+    SESSION_MAINTENANCE_ACTION_ALIASES,
+} = require('../services/sessionMaintenanceService');
 
 const router = express.Router();
 
@@ -86,6 +102,52 @@ function serializeAdminAiModel(row) {
         createdAt: row.createdAt || null,
         updatedAt: row.updatedAt || null
     };
+}
+
+function serializeAdminSmtpService(row) {
+    const cooldown = getAiModelCooldownMeta(row);
+    return {
+        id: row.id,
+        name: row.name,
+        host: row.host,
+        port: Number(row.port || 0),
+        secure: Boolean(row.secure),
+        username: row.username,
+        password: row.password,
+        fromEmail: row.fromEmail || '',
+        fromName: row.fromName || '',
+        isActive: Boolean(row.isActive),
+        isDefault: Boolean(row.isDefault),
+        callCount: Number(row.callCount || 0),
+        successCount: Number(row.successCount || 0),
+        failCount: Number(row.failCount || 0),
+        consecutiveFailures: Number(row.consecutiveFailures || 0),
+        avgLatencyMs: Number(row.avgLatencyMs || 0),
+        lastUsedAt: row.lastUsedAt || null,
+        lastError: row.lastError || '',
+        lastStatus: row.lastStatus || 'unknown',
+        cooldownUntil: cooldown.cooldownUntil,
+        isCooling: cooldown.isCooling,
+        cooldownRemainingSeconds: cooldown.cooldownRemainingSeconds,
+        createdAt: row.createdAt || null,
+        updatedAt: row.updatedAt || null,
+    };
+}
+
+async function promoteNextDefaultSmtpService(client, excludeId = null) {
+    const params = [];
+    let sql = `SELECT id FROM smtp_services WHERE is_active = true`;
+    if (excludeId !== null && excludeId !== undefined) {
+        params.push(excludeId);
+        sql += ` AND id <> $1`;
+    }
+    sql += ` ORDER BY id LIMIT 1`;
+
+    const nextDefault = await client.query(sql, params);
+    await client.query(`UPDATE smtp_services SET is_default = false, updated_at = NOW() WHERE is_default = true`);
+    if (nextDefault.rows[0]?.id) {
+        await client.query(`UPDATE smtp_services SET is_default = true, updated_at = NOW() WHERE id = $1`, [nextDefault.rows[0].id]);
+    }
 }
 
 async function collectMarkdownFiles(dirPath, prefix = '') {
@@ -765,17 +827,200 @@ router.put('/settings', async (req, res) => {
         }
 
         for (const [key, value] of Object.entries(settings)) {
+            await manager.saveSetting(key, typeof value === 'boolean' ? String(value) : value);
+        }
+
+        if (Object.keys(settings).some(key => String(key).startsWith('smtp_'))) {
             await db.pool.query(
-                `INSERT INTO settings (key, value, updated_at) VALUES ($1, $2, NOW())
-                 ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()`,
-                [key, String(value)]
+                `INSERT INTO settings (key, value, updated_at) VALUES ('smtp_legacy_migrated', 'false', NOW())
+                 ON CONFLICT (key) DO UPDATE SET value = 'false', updated_at = NOW()`
             );
+            emailService.resetTransporter();
+        }
+
+        if (Object.keys(settings).some(isSessionMaintenanceSettingKey)) {
+            try {
+                await req.app.locals.autoRecorder?.refreshSessionMaintenanceConfig?.('admin-settings-save');
+            } catch (refreshErr) {
+                console.error('[Admin] Refresh session maintenance config error:', refreshErr.message);
+            }
         }
 
         res.json({ message: '设置已保存' });
     } catch (err) {
         console.error('[Admin] Save settings error:', err.message);
         res.status(500).json({ error: '保存失败' });
+    }
+});
+
+router.get('/session-maintenance/config', async (req, res) => {
+    try {
+        const overview = await getSessionMaintenanceOverview();
+        res.json({
+            config: overview.config,
+            defaults: overview.defaults,
+            settingDefs: overview.settingDefs,
+        });
+    } catch (err) {
+        console.error('[Admin] Load session maintenance config error:', err.message);
+        res.status(500).json({ error: '获取场次运维配置失败' });
+    }
+});
+
+router.put('/session-maintenance/config', async (req, res) => {
+    try {
+        const settings = req.body?.config || req.body?.settings;
+        if (!settings || typeof settings !== 'object') {
+            return res.status(400).json({ error: '无效的配置数据' });
+        }
+
+        const config = await saveSessionMaintenanceConfig(settings);
+
+        try {
+            await req.app.locals.autoRecorder?.refreshSessionMaintenanceConfig?.('admin-session-maintenance-save');
+        } catch (refreshErr) {
+            console.error('[Admin] Refresh session maintenance config error:', refreshErr.message);
+        }
+
+        res.json({ message: '场次运维配置已保存', config });
+    } catch (err) {
+        console.error('[Admin] Save session maintenance config error:', err.message);
+        res.status(500).json({ error: '保存场次运维配置失败' });
+    }
+});
+
+router.get('/session-maintenance/overview', async (req, res) => {
+    try {
+        const overview = await getSessionMaintenanceOverview();
+        const runtime = req.app.locals.autoRecorder?.getSessionMaintenanceRuntimeSnapshot?.() || {};
+        res.json({
+            ...overview,
+            runtime,
+            pendingArchives: runtime.pendingArchives ?? 0,
+            scheduler: runtime.scheduler || {},
+            latestRuns: overview.latestRuns || overview.latestLogs || [],
+        });
+    } catch (err) {
+        console.error('[Admin] Load session maintenance overview error:', err.message);
+        res.status(500).json({ error: '获取场次运维概览失败' });
+    }
+});
+
+router.get('/session-maintenance/logs', async (req, res) => {
+    try {
+        const logs = await listSessionMaintenanceLogs({
+            limit: req.query.limit,
+            taskKey: req.query.taskKey,
+            status: req.query.status,
+            roomId: req.query.roomId,
+        });
+        res.json({ logs });
+    } catch (err) {
+        console.error('[Admin] Load session maintenance logs error:', err.message);
+        res.status(500).json({ error: '获取场次运维日志失败' });
+    }
+});
+
+router.post('/session-maintenance/actions/:action', async (req, res) => {
+    try {
+        const taskKey = SESSION_MAINTENANCE_ACTION_ALIASES[req.params.action];
+        if (!taskKey) {
+            return res.status(404).json({ error: '未知的场次运维动作' });
+        }
+
+        const task = await runSessionMaintenanceTask(taskKey, {
+            triggerSource: 'admin-panel-manual',
+            roomId: req.body?.roomId,
+            gapMinutes: req.body?.gapMinutes,
+            lookbackHours: req.body?.lookbackHours,
+        });
+
+        res.json({
+            success: true,
+            taskKey: task.taskKey,
+            logId: task.logId,
+            result: task.result,
+        });
+    } catch (err) {
+        console.error('[Admin] Run session maintenance action error:', err.message);
+        res.status(500).json({ error: err.message || '执行场次运维动作失败' });
+    }
+});
+
+router.get('/prompt-templates', async (req, res) => {
+    try {
+        const templates = await listPromptTemplates();
+        res.json({ templates });
+    } catch (err) {
+        console.error('[Admin] Load prompt templates error:', err.message);
+        res.status(500).json({ error: '获取提示词失败' });
+    }
+});
+
+router.put('/prompt-templates/:key', [
+    body('content').isString().isLength({ min: 20, max: 30000 }).withMessage('提示词内容长度需在 20-30000 字符之间')
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+    try {
+        const templateKey = String(req.params.key || '').trim();
+        if (!getPromptTemplateDefinition(templateKey)) {
+            return res.status(404).json({ error: '提示词不存在' });
+        }
+
+        const template = await savePromptTemplate(templateKey, req.body.content);
+        res.json({ message: '提示词已保存', template });
+    } catch (err) {
+        console.error('[Admin] Save prompt template error:', err.message);
+        res.status(500).json({ error: '保存提示词失败' });
+    }
+});
+
+router.post('/prompt-templates/:key/reset', async (req, res) => {
+    try {
+        const templateKey = String(req.params.key || '').trim();
+        if (!getPromptTemplateDefinition(templateKey)) {
+            return res.status(404).json({ error: '提示词不存在' });
+        }
+
+        const template = await resetPromptTemplate(templateKey);
+        res.json({ message: '已恢复默认提示词', template });
+    } catch (err) {
+        console.error('[Admin] Reset prompt template error:', err.message);
+        res.status(500).json({ error: '恢复默认失败' });
+    }
+});
+
+
+// ==================== AI Work Center ====================
+
+router.get('/ai-work/jobs', async (req, res) => {
+    try {
+        const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 20));
+        const status = String(req.query.status || '').trim();
+        const jobType = String(req.query.jobType || '').trim();
+        const search = String(req.query.search || '').trim();
+        const userId = req.query.userId ? Number(req.query.userId) : null;
+        const result = await listAdminAiWorkJobs({ page, limit, status, jobType, search, userId });
+        res.json(result);
+    } catch (err) {
+        console.error('[Admin] Load AI work jobs error:', err.message);
+        res.status(500).json({ error: '获取 AI 工作列表失败' });
+    }
+});
+
+router.get('/ai-work/jobs/:id', async (req, res) => {
+    try {
+        const jobId = Number(req.params.id || 0);
+        if (!jobId) return res.status(400).json({ error: '任务ID无效' });
+        const detail = await getAdminAiWorkJobDetail(jobId);
+        if (!detail) return res.status(404).json({ error: '任务不存在' });
+        res.json(detail);
+    } catch (err) {
+        console.error('[Admin] Load AI work job detail error:', err.message);
+        res.status(500).json({ error: '获取 AI 工作详情失败' });
     }
 });
 
@@ -1208,8 +1453,278 @@ router.delete('/ai-credit-packages/:id', async (req, res) => {
 
 // ==================== SMTP Configuration ====================
 
+function smtpValidationError(message) {
+    const error = new Error(message);
+    error.statusCode = 400;
+    return error;
+}
+
+function parseSmtpServicePayload(payload = {}, { requireAll = false } = {}) {
+    const result = {};
+
+    if (requireAll || Object.prototype.hasOwnProperty.call(payload, 'name')) {
+        const name = String(payload.name || '').trim();
+        if (!name) throw smtpValidationError('服务名称不能为空');
+        result.name = name;
+    }
+    if (requireAll || Object.prototype.hasOwnProperty.call(payload, 'host')) {
+        const host = String(payload.host || '').trim();
+        if (!host) throw smtpValidationError('SMTP 服务器不能为空');
+        result.host = host;
+    }
+    if (requireAll || Object.prototype.hasOwnProperty.call(payload, 'port')) {
+        const port = parseInt(payload.port, 10);
+        if (!Number.isFinite(port) || port < 1 || port > 65535) {
+            throw smtpValidationError('SMTP 端口无效');
+        }
+        result.port = port;
+    }
+    if (requireAll || Object.prototype.hasOwnProperty.call(payload, 'secure')) {
+        result.secure = payload.secure === undefined
+            ? true
+            : payload.secure === true || payload.secure === 'true' || payload.secure === 1 || payload.secure === '1';
+    }
+    if (requireAll || Object.prototype.hasOwnProperty.call(payload, 'username')) {
+        const username = String(payload.username || '').trim();
+        if (!username) throw smtpValidationError('SMTP 用户名不能为空');
+        result.username = username;
+    }
+    if (requireAll || Object.prototype.hasOwnProperty.call(payload, 'password')) {
+        const password = String(payload.password || '');
+        if (!password) throw smtpValidationError('SMTP 密码/授权码不能为空');
+        result.password = password;
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'fromEmail')) {
+        result.fromEmail = String(payload.fromEmail || '').trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'fromName')) {
+        result.fromName = String(payload.fromName || '').trim();
+    }
+    if (Object.prototype.hasOwnProperty.call(payload, 'isActive')) {
+        result.isActive = payload.isActive === true || payload.isActive === 'true' || payload.isActive === 1 || payload.isActive === '1';
+    }
+
+    return result;
+}
+
+router.get('/smtp/services', async (req, res) => {
+    try {
+        const [services, emailSettings] = await Promise.all([
+            emailService.listSmtpServices(),
+            emailService.getEmailFeatureConfig(),
+        ]);
+        res.json({
+            services: services.map(serializeAdminSmtpService),
+            emailSettings,
+            fallbackPolicy: {
+                strategy: 'default_then_failover',
+                cooldownMs: emailService.SMTP_FAILURE_COOLDOWN_MS,
+            },
+        });
+    } catch (err) {
+        console.error('[Admin] SMTP services error:', err.message);
+        res.status(500).json({ error: '获取邮箱服务失败' });
+    }
+});
+
+router.put('/smtp/settings', async (req, res) => {
+    try {
+        if (typeof req.body?.emailVerificationEnabled !== 'boolean') {
+            return res.status(400).json({ error: '邮箱验证开关参数无效' });
+        }
+
+        await emailService.saveEmailFeatureConfig({
+            emailVerificationEnabled: req.body.emailVerificationEnabled,
+        });
+
+        res.json({ message: '邮件策略已保存' });
+    } catch (err) {
+        console.error('[Admin] Save SMTP settings error:', err.message);
+        res.status(500).json({ error: '保存邮件策略失败' });
+    }
+});
+
+router.post('/smtp/services', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+        const payload = parseSmtpServicePayload(req.body, { requireAll: true });
+        const requestedDefault = req.body?.setAsDefault === true || req.body?.setAsDefault === 'true';
+        const isActive = payload.isActive !== false;
+
+        if (requestedDefault && !isActive) {
+            return res.status(400).json({ error: '禁用服务不能设为默认' });
+        }
+
+        await client.query('BEGIN');
+        const defaultRow = await client.query(`SELECT id FROM smtp_services WHERE is_default = true LIMIT 1`);
+        const shouldSetDefault = requestedDefault || (!defaultRow.rows.length && isActive);
+        if (shouldSetDefault) {
+            await client.query(`UPDATE smtp_services SET is_default = false, updated_at = NOW() WHERE is_default = true`);
+        }
+
+        const insertRes = await client.query(
+            `INSERT INTO smtp_services (
+                name, host, port, secure, username, password, from_email, from_name, is_active, is_default, updated_at
+             )
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+             RETURNING id`,
+            [
+                payload.name,
+                payload.host,
+                payload.port,
+                payload.secure,
+                payload.username,
+                payload.password,
+                payload.fromEmail || payload.username,
+                payload.fromName || 'TikTok Monitor',
+                isActive,
+                shouldSetDefault,
+            ]
+        );
+
+        await client.query('COMMIT');
+        emailService.resetTransporter();
+        res.status(201).json({ message: '邮箱服务创建成功', id: insertRes.rows[0].id });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[Admin] Create SMTP service error:', err.message);
+        res.status(err.statusCode || 500).json({ error: err.message || '创建邮箱服务失败' });
+    } finally {
+        client.release();
+    }
+});
+
+router.put('/smtp/services/:id', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+        const existing = await client.query(`SELECT id, is_default, is_active FROM smtp_services WHERE id = $1`, [req.params.id]);
+        if (!existing.rows[0]) {
+            return res.status(404).json({ error: '邮箱服务不存在' });
+        }
+
+        const payload = parseSmtpServicePayload(req.body, { requireAll: false });
+        const updates = [];
+        const params = [];
+        let index = 0;
+
+        if (payload.name !== undefined) { updates.push(`name = $${++index}`); params.push(payload.name); }
+        if (payload.host !== undefined) { updates.push(`host = $${++index}`); params.push(payload.host); }
+        if (payload.port !== undefined) { updates.push(`port = $${++index}`); params.push(payload.port); }
+        if (payload.secure !== undefined) { updates.push(`secure = $${++index}`); params.push(payload.secure); }
+        if (payload.username !== undefined) { updates.push(`username = $${++index}`); params.push(payload.username); }
+        if (payload.password !== undefined) { updates.push(`password = $${++index}`); params.push(payload.password); }
+        if (payload.fromEmail !== undefined) { updates.push(`from_email = $${++index}`); params.push(payload.fromEmail || payload.username || null); }
+        if (payload.fromName !== undefined) { updates.push(`from_name = $${++index}`); params.push(payload.fromName || 'TikTok Monitor'); }
+        if (payload.isActive !== undefined) { updates.push(`is_active = $${++index}`); params.push(payload.isActive); }
+        if (!updates.length) {
+            return res.status(400).json({ error: '没有可更新的字段' });
+        }
+
+        await client.query('BEGIN');
+        updates.push('updated_at = NOW()');
+        params.push(req.params.id);
+        await client.query(`UPDATE smtp_services SET ${updates.join(', ')} WHERE id = $${index + 1}`, params);
+
+        if (payload.isActive === false && existing.rows[0].is_default) {
+            await promoteNextDefaultSmtpService(client, Number(req.params.id));
+        }
+
+        await client.query('COMMIT');
+        emailService.resetTransporter(req.params.id);
+        res.json({ message: '邮箱服务已更新' });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[Admin] Update SMTP service error:', err.message);
+        res.status(err.statusCode || 500).json({ error: err.message || '更新邮箱服务失败' });
+    } finally {
+        client.release();
+    }
+});
+
+router.post('/smtp/services/:id/set-default', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+        const service = await client.query(
+            `SELECT id, is_active FROM smtp_services WHERE id = $1`,
+            [req.params.id]
+        );
+        if (!service.rows[0]) return res.status(404).json({ error: '邮箱服务不存在' });
+        if (!service.rows[0].is_active) return res.status(400).json({ error: '请先启用该邮箱服务，再设为默认' });
+
+        await client.query('BEGIN');
+        await client.query(`UPDATE smtp_services SET is_default = false, updated_at = NOW() WHERE is_default = true`);
+        await client.query(`UPDATE smtp_services SET is_default = true, updated_at = NOW() WHERE id = $1`, [req.params.id]);
+        await client.query('COMMIT');
+
+        emailService.resetTransporter();
+        res.json({ message: '默认邮箱服务已更新' });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[Admin] Set default SMTP service error:', err.message);
+        res.status(500).json({ error: '设置默认邮箱服务失败' });
+    } finally {
+        client.release();
+    }
+});
+
+router.delete('/smtp/services/:id', async (req, res) => {
+    const client = await db.pool.connect();
+    try {
+        const existing = await client.query(`SELECT id, is_default FROM smtp_services WHERE id = $1`, [req.params.id]);
+        if (!existing.rows[0]) {
+            return res.status(404).json({ error: '邮箱服务不存在' });
+        }
+
+        await client.query('BEGIN');
+        await client.query(`DELETE FROM smtp_services WHERE id = $1`, [req.params.id]);
+        if (existing.rows[0].is_default) {
+            await promoteNextDefaultSmtpService(client, Number(req.params.id));
+        }
+        await client.query('COMMIT');
+
+        emailService.resetTransporter(req.params.id);
+        res.json({ message: '邮箱服务已删除' });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[Admin] Delete SMTP service error:', err.message);
+        res.status(500).json({ error: '删除邮箱服务失败' });
+    } finally {
+        client.release();
+    }
+});
+
+router.post('/smtp/services/:id/test', async (req, res) => {
+    try {
+        emailService.resetTransporter(req.params.id);
+        await emailService.testSmtp(req.params.id);
+        res.json({ success: true, message: 'SMTP 连接成功' });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+router.post('/smtp/services/:id/test-send', [
+    body('email').isEmail().withMessage('请输入有效的邮箱地址'),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+
+    try {
+        emailService.resetTransporter(req.params.id);
+        await emailService.sendEmail(
+            req.body.email,
+            '测试邮件 - TikTok Monitor',
+            '<h2>SMTP 配置测试成功</h2><p>如果您收到此邮件，说明该 SMTP 服务可正常发送邮件。</p>',
+            { serviceId: req.params.id }
+        );
+        res.json({ success: true, message: '测试邮件已发送' });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
 /**
- * POST /api/admin/smtp/test - Test SMTP connection
+ * POST /api/admin/smtp/test - Test current default SMTP connection
  */
 router.post('/smtp/test', async (req, res) => {
     try {
@@ -1222,7 +1737,7 @@ router.post('/smtp/test', async (req, res) => {
 });
 
 /**
- * POST /api/admin/smtp/test-send - Send a test email
+ * POST /api/admin/smtp/test-send - Send test email with current default SMTP
  */
 router.post('/smtp/test-send', [
     body('email').isEmail().withMessage('请输入有效的邮箱地址'),
@@ -1235,7 +1750,7 @@ router.post('/smtp/test-send', [
         await emailService.sendEmail(
             req.body.email,
             '测试邮件 - TikTok Monitor',
-            '<h2>SMTP 配置测试成功</h2><p>如果您收到此邮件，说明 SMTP 配置正确。</p>'
+            '<h2>SMTP 配置测试成功</h2><p>如果您收到此邮件，说明当前默认 SMTP 服务可正常发送邮件。</p>'
         );
         res.json({ success: true, message: '测试邮件已发送' });
     } catch (err) {

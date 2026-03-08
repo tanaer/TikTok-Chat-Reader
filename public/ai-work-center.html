@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI工作中心 - TikTok Live Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/shared-shell.css">
+    <script src="/js/auth.js?v=20260308i"></script>
+    <style>
+        .ai-work-shell {
+            background: radial-gradient(circle at top left, rgba(99,102,241,0.18), transparent 36%), radial-gradient(circle at right bottom, rgba(168,85,247,0.14), transparent 30%);
+        }
+        .ai-work-card { transition: transform 0.18s ease, box-shadow 0.18s ease; }
+        .ai-work-card:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(15, 23, 42, 0.25); }
+        .mono-lite { font-variant-numeric: tabular-nums; }
+    </style>
+</head>
+<body class="bg-base-300 min-h-screen ai-work-shell">
+    <div class="navbar app-shell-nav z-20 flex-wrap gap-2 px-3 py-2">
+        <div class="flex-1 min-w-0 flex flex-wrap items-center gap-2">
+            <a class="btn btn-ghost text-xl font-bold px-2 app-shell-nav-brand" href="/">TikTok Monitor</a>
+            <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1 ml-0 md:ml-2"></ul>
+        </div>
+        <div class="w-full md:w-auto">
+            <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap justify-start md:justify-end px-0 gap-2"></ul>
+        </div>
+    </div>
+
+    <main class="max-w-7xl mx-auto px-4 py-6 space-y-6">
+        <section class="card bg-base-100 shadow-xl border border-base-300/70 overflow-hidden">
+            <div class="card-body md:flex-row md:items-center md:justify-between gap-6">
+                <div>
+                    <div class="badge badge-primary badge-outline">一级菜单 · AI工作中心</div>
+                    <h1 class="text-3xl font-black mt-3">AI 已启动，正在后台工作中。</h1>
+                    <p class="text-base-content/70 leading-7 mt-3 max-w-3xl">像 AI直播复盘 这类耗时较长的任务，提交后会自动进入后台处理。你不用一直停留在监控页，处理完成后会发送站内通知，这里也会自动刷新最新状态。</p>
+                </div>
+                <div class="rounded-box bg-base-200/80 p-4 text-sm leading-7 min-w-[18rem]">
+                    <div class="text-xs uppercase tracking-[0.18em] opacity-60">当前说明</div>
+                    <div class="mt-3">- 支持查看排队中 / 处理中 / 已完成 / 失败</div>
+                    <div>- AI直播复盘完成后可回监控中心查看完整内容</div>
+                    <div>- 如任务失败，可在监控中心重新发起</div>
+                </div>
+            </div>
+        </section>
+
+        <section class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div class="stat bg-base-100 rounded-box shadow border border-base-300/60">
+                <div class="stat-title">排队中</div>
+                <div class="stat-value text-warning mono-lite" id="count-queued">0</div>
+                <div class="stat-desc">等待后台 worker 调度</div>
+            </div>
+            <div class="stat bg-base-100 rounded-box shadow border border-base-300/60">
+                <div class="stat-title">处理中</div>
+                <div class="stat-value text-primary mono-lite" id="count-processing">0</div>
+                <div class="stat-desc">AI 正在生成结果</div>
+            </div>
+            <div class="stat bg-base-100 rounded-box shadow border border-base-300/60">
+                <div class="stat-title">已完成</div>
+                <div class="stat-value text-success mono-lite" id="count-completed">0</div>
+                <div class="stat-desc">可回监控中心查看复盘</div>
+            </div>
+            <div class="stat bg-base-100 rounded-box shadow border border-base-300/60">
+                <div class="stat-title">失败</div>
+                <div class="stat-value text-error mono-lite" id="count-failed">0</div>
+                <div class="stat-desc">建议查看原因后重新提交</div>
+            </div>
+        </section>
+
+        <section class="card bg-base-100 shadow border border-base-300/60">
+            <div class="card-body">
+                <div class="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                        <h2 class="card-title">任务列表</h2>
+                        <p class="text-sm text-base-content/60">默认每 15 秒自动刷新一次。</p>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-2">
+                        <select id="job-status-filter" class="select select-bordered select-sm">
+                            <option value="">全部状态</option>
+                            <option value="queued">排队中</option>
+                            <option value="processing">处理中</option>
+                            <option value="completed">已完成</option>
+                            <option value="failed">失败</option>
+                        </select>
+                        <button class="btn btn-primary btn-sm" onclick="loadAiWorkJobs(1)">刷新</button>
+                    </div>
+                </div>
+                <div id="ai-work-job-list" class="grid grid-cols-1 xl:grid-cols-2 gap-4 mt-4">
+                    <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载任务...</div>
+                </div>
+                <div id="ai-work-pagination" class="mt-4"></div>
+            </div>
+        </section>
+    </main>
+
+    <script>
+        let aiWorkPage = 1;
+        let aiWorkPagination = { page: 1, limit: 20, total: 0 };
+        let aiWorkPollTimer = null;
+
+        function escapeHtml(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        function formatDateTime(value) {
+            if (!value) return '--';
+            const date = new Date(value);
+            if (Number.isNaN(date.getTime())) return escapeHtml(String(value));
+            return date.toLocaleString('zh-CN');
+        }
+
+        function getStatusBadge(job) {
+            const status = String(job?.status || 'queued');
+            if (status === 'processing') return '<span class="badge badge-primary">处理中</span>';
+            if (status === 'completed') return '<span class="badge badge-success">已完成</span>';
+            if (status === 'failed') return '<span class="badge badge-error">失败</span>';
+            return '<span class="badge badge-warning">排队中</span>';
+        }
+
+        function renderCounts(counts = {}) {
+            document.getElementById('count-queued').textContent = Number(counts.queued || 0).toLocaleString();
+            document.getElementById('count-processing').textContent = Number(counts.processing || 0).toLocaleString();
+            document.getElementById('count-completed').textContent = Number(counts.completed || 0).toLocaleString();
+            document.getElementById('count-failed').textContent = Number(counts.failed || 0).toLocaleString();
+        }
+
+        function buildJobCard(job) {
+            const progress = Math.max(0, Math.min(100, Number(job.progressPercent || 0)));
+            const summaryText = job.status === 'failed'
+                ? (job.errorMessage || '处理失败，请稍后重试')
+                : (job.summary || (job.status === 'completed' ? '结果已生成，可回监控中心查看完整 AI直播复盘。' : 'AI 正在后台处理中，完成后会主动通知。'));
+            const actionText = job.status === 'completed'
+                ? '回监控中心查看'
+                : job.status === 'failed'
+                    ? '回监控中心重试'
+                    : '查看监控中心';
+            return `
+                <div class="card bg-base-100 border border-base-300 shadow ai-work-card">
+                    <div class="card-body gap-4">
+                        <div class="flex items-start justify-between gap-3">
+                            <div class="min-w-0">
+                                <div class="text-lg font-bold leading-7 break-words">${escapeHtml(job.title || 'AI 工作任务')}</div>
+                                <div class="text-xs text-base-content/55 mt-1">房间 ${escapeHtml(job.roomId || '-')} · 场次 ${escapeHtml(job.sessionId || '-')}</div>
+                            </div>
+                            ${getStatusBadge(job)}
+                        </div>
+                        <div>
+                            <div class="flex items-center justify-between text-sm">
+                                <span class="text-base-content/70">${escapeHtml(job.currentStep || '等待处理')}</span>
+                                <span class="mono-lite font-semibold">${progress}%</span>
+                            </div>
+                            <progress class="progress progress-primary w-full mt-2" value="${progress}" max="100"></progress>
+                        </div>
+                        <div class="text-sm leading-7 rounded-box bg-base-200/70 px-4 py-3">${escapeHtml(summaryText)}</div>
+                        <div class="flex flex-wrap gap-2 text-xs opacity-75">
+                            <span class="badge badge-ghost">价格 ${Number(job.pointCost || 0)} AI点</span>
+                            <span class="badge badge-ghost">已扣 ${Number(job.chargedPoints || 0)} AI点</span>
+                            <span class="badge badge-ghost">创建 ${escapeHtml(formatDateTime(job.createdAt))}</span>
+                            <span class="badge badge-ghost">完成 ${escapeHtml(formatDateTime(job.finishedAt))}</span>
+                        </div>
+                        <div class="card-actions justify-between items-center">
+                            <div class="text-xs text-base-content/55">通知状态：${job.notificationSent ? '已发送' : '待发送/未完成'}</div>
+                            <button class="btn btn-outline btn-sm" onclick="window.location.href='/monitor.html'">${actionText}</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderPagination(pagination) {
+            const container = document.getElementById('ai-work-pagination');
+            if (!container) return;
+            if (!pagination || Number(pagination.total || 0) <= Number(pagination.limit || 20)) {
+                container.innerHTML = '';
+                return;
+            }
+            const totalPages = Math.ceil(Number(pagination.total || 0) / Number(pagination.limit || 20));
+            let html = '<div class="join">';
+            for (let i = 1; i <= totalPages && i <= 10; i += 1) {
+                html += `<button class="join-item btn btn-sm ${i === Number(pagination.page || 1) ? 'btn-active' : ''}" onclick="loadAiWorkJobs(${i})">${i}</button>`;
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        async function loadAiWorkJobs(page = 1) {
+            aiWorkPage = page;
+            const status = document.getElementById('job-status-filter')?.value || '';
+            const params = new URLSearchParams({ page: String(page), limit: '20' });
+            if (status) params.set('status', status);
+            const list = document.getElementById('ai-work-job-list');
+            if (list) list.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60 xl:col-span-2">正在加载任务...</div>';
+
+            try {
+                const res = await Auth.apiFetch(`/api/user/ai-work/jobs?${params.toString()}`);
+                const data = await res.json();
+                if (!res.ok) throw new Error(data.error || '加载任务失败');
+
+                aiWorkPagination = data.pagination || { page: 1, limit: 20, total: 0 };
+                renderCounts(data.counts || {});
+                const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+                if (!jobs.length) {
+                    list.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60 xl:col-span-2">当前暂无 AI 工作任务。</div>';
+                } else {
+                    list.innerHTML = jobs.map(buildJobCard).join('');
+                }
+                renderPagination(aiWorkPagination);
+            } catch (err) {
+                console.error('Load AI work jobs error:', err);
+                if (list) {
+                    list.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-5 py-8 text-sm text-error xl:col-span-2">${escapeHtml(err.message || '加载任务失败')}</div>`;
+                }
+            }
+        }
+
+        function startAiWorkPolling() {
+            if (aiWorkPollTimer) window.clearInterval(aiWorkPollTimer);
+            aiWorkPollTimer = window.setInterval(() => {
+                loadAiWorkJobs(aiWorkPage || 1).catch(() => {});
+            }, 15000);
+        }
+
+        document.addEventListener('DOMContentLoaded', async () => {
+            if (typeof Auth === 'undefined') return;
+            if (!Auth.requireAuth()) return;
+            const sessionOk = await Auth.ensureSessionActive();
+            if (!sessionOk) return;
+            Auth.updateNavbar();
+            document.getElementById('job-status-filter')?.addEventListener('change', () => loadAiWorkJobs(1));
+            await loadAiWorkJobs(1);
+            startAiWorkPolling();
+        });
+
+        window.addEventListener('beforeunload', () => {
+            if (aiWorkPollTimer) window.clearInterval(aiWorkPollTimer);
+        });
+    </script>
+</body>
+</html>

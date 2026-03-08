@@ -7,7 +7,7 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/shared-shell.css">
-    <script src="/js/auth.js"></script>
+    <script src="/js/auth.js?v=20260308i"></script>
     <style>
         .doc-markdown h1, .doc-markdown h2, .doc-markdown h3, .doc-markdown h4 {
             font-weight: 700;
@@ -81,7 +81,11 @@
             <li><a onclick="showSection('gifts')">礼物配置</a></li>
             <li><a onclick="showSection('eulerKeys')">Euler API Keys</a></li>
             <li><a onclick="showSection('aiModels')">AI 通道配置</a></li>
+            <li><a onclick="showSection('sessionMaintenance')">场次运维</a></li>
             <li><a onclick="showSection('settings')">系统设置</a></li>
+            <li><a onclick="showSection('smtpServices')">邮箱服务</a></li>
+            <li><a onclick="showSection('aiWork')">AI工作中心</a></li>
+            <li><a onclick="showSection('prompts')">提示词管理</a></li>
             <li><a onclick="showSection('docs')">系统文档</a></li>
             <li class="mt-4"><a href="/" class="text-base-content/60">← 返回前台</a></li>
         </ul>
@@ -392,6 +396,299 @@
                 </div>
             </section>
 
+            <section id="sec-sessionMaintenance" class="hidden">
+                <div class="space-y-6">
+                    <div class="rounded-[1.75rem] border border-primary/20 bg-gradient-to-br from-primary/12 via-base-100 to-info/12 shadow-lg overflow-hidden">
+                        <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)] gap-6 px-6 py-6 lg:px-8">
+                            <div>
+                                <div class="flex flex-wrap items-center gap-2 mb-3">
+                                    <span class="badge badge-primary badge-outline">自动归档</span>
+                                    <span class="badge badge-info badge-outline">碎片合并</span>
+                                    <span class="badge badge-secondary badge-outline">可视化运维</span>
+                                </div>
+                                <h3 class="text-2xl font-bold leading-tight">场次运维控制台</h3>
+                                <p class="text-sm text-base-content/70 mt-3 leading-7">集中管理场次自动归档、断线续场、陈旧 LIVE 清理与碎片场次合并。参数统一配置、任务统一记录，保留手动执行入口，便于线上追踪与回溯。</p>
+                                <div id="session-maintenance-hero-meta" class="flex flex-wrap gap-3 mt-5 text-xs text-base-content/60">
+                                    <span class="badge badge-ghost badge-sm">正在读取当前策略...</span>
+                                </div>
+                            </div>
+                            <div class="rounded-[1.5rem] border border-base-300/70 bg-base-100/90 backdrop-blur px-5 py-5">
+                                <div class="flex items-start justify-between gap-3">
+                                    <div>
+                                        <div class="text-sm font-semibold">运维动作</div>
+                                        <p class="text-xs text-base-content/60 mt-1 leading-6">配置改动保存后即时生效，日志区会记录自动/手动运行结果。</p>
+                                    </div>
+                                    <button class="btn btn-sm btn-primary" onclick="loadSessionMaintenanceSection()">刷新面板</button>
+                                </div>
+                                <div id="session-maintenance-action-result" class="mt-4 rounded-2xl border border-base-300 bg-base-200/80 px-4 py-4 text-sm text-base-content/70 leading-7">尚未执行新的运维动作。</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(23rem,0.75fr)] gap-6 items-start">
+                        <div class="space-y-6">
+                            <div id="session-maintenance-overview-stats" class="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-4">
+                                <div class="rounded-box border border-base-300 bg-base-100 px-5 py-5 text-sm text-base-content/60">正在加载概览...</div>
+                            </div>
+
+                            <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.9fr)] gap-6 items-start">
+                                <div class="card bg-base-100 shadow">
+                                    <div class="card-body">
+                                        <div class="flex items-start justify-between gap-3 mb-3">
+                                            <div>
+                                                <h3 class="card-title">任务运行总览</h3>
+                                                <p class="text-sm text-base-content/60 mt-1">展示自动任务与最近一次执行状态，帮助快速判断链路是否健康。</p>
+                                            </div>
+                                            <button class="btn btn-ghost btn-sm" onclick="loadSessionMaintenanceOverview()">刷新</button>
+                                        </div>
+                                        <div id="session-maintenance-overview-panel" class="space-y-3">
+                                            <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">正在同步运行状态...</div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="card bg-base-100 shadow">
+                                    <div class="card-body">
+                                        <div class="flex items-start justify-between gap-3 mb-3">
+                                            <div>
+                                                <h3 class="card-title">计划任务节奏</h3>
+                                                <p class="text-sm text-base-content/60 mt-1">直观看到启动任务、定时清理、碎片扫描与断线保留窗口。</p>
+                                            </div>
+                                        </div>
+                                        <div id="session-maintenance-scheduler-panel" class="space-y-3">
+                                            <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">正在读取调度信息...</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card bg-base-100 shadow">
+                                <div class="card-body">
+                                    <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 class="card-title">最近运行日志</h3>
+                                            <p class="text-sm text-base-content/60 mt-1">记录自动与手动任务的执行轨迹，可用于复盘异常或确认修复结果。</p>
+                                        </div>
+                                        <div class="flex flex-wrap gap-2">
+                                            <select id="session-maintenance-log-task" class="select select-bordered select-sm" onchange="loadSessionMaintenanceLogs()">
+                                                <option value="">全部任务</option>
+                                                <option value="cleanup-stale-live">陈旧 LIVE 清理</option>
+                                                <option value="archive-room-stale">单房间归档</option>
+                                                <option value="consolidate-recent">碎片场次扫描</option>
+                                                <option value="merge-continuity">同日连续场次合并</option>
+                                                <option value="fix-orphaned">孤儿事件修复</option>
+                                                <option value="delete-empty">空场次清理</option>
+                                                <option value="rebuild-missing">缺失场次重建</option>
+                                                <option value="disconnect-pending-archive">断线待归档</option>
+                                                <option value="disconnect-resume">断线续场</option>
+                                                <option value="archive-session">自动归档</option>
+                                            </select>
+                                            <select id="session-maintenance-log-status" class="select select-bordered select-sm" onchange="loadSessionMaintenanceLogs()">
+                                                <option value="">全部状态</option>
+                                                <option value="running">执行中</option>
+                                                <option value="success">成功</option>
+                                                <option value="failed">失败</option>
+                                                <option value="scheduled">已计划</option>
+                                                <option value="skipped">跳过</option>
+                                            </select>
+                                            <select id="session-maintenance-log-limit" class="select select-bordered select-sm" onchange="loadSessionMaintenanceLogs()">
+                                                <option value="15">最近 15 条</option>
+                                                <option value="30" selected>最近 30 条</option>
+                                                <option value="50">最近 50 条</option>
+                                                <option value="100">最近 100 条</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                    <div id="session-maintenance-logs-wrap" class="overflow-x-auto">
+                                        <div class="rounded-box bg-base-200/80 px-4 py-5 text-sm text-base-content/60">正在加载日志...</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-6">
+                            <div class="card bg-base-100 shadow">
+                                <div class="card-body">
+                                    <div class="flex items-start justify-between gap-3 mb-4">
+                                        <div>
+                                            <h3 class="card-title">运维参数配置</h3>
+                                            <p class="text-sm text-base-content/60 mt-1">把断线保留、定时清理和碎片扫描窗口统一沉淀为可配置项。</p>
+                                        </div>
+                                        <button class="btn btn-ghost btn-sm" onclick="loadSessionMaintenanceConfig()">重载</button>
+                                    </div>
+                                    <div id="session-maintenance-config-form" class="space-y-4">
+                                        <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">正在读取配置...</div>
+                                    </div>
+                                    <div class="mt-5 flex justify-end">
+                                        <button class="btn btn-primary" onclick="saveSessionMaintenanceConfig()">保存运维配置</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card bg-base-100 shadow">
+                                <div class="card-body">
+                                    <div class="mb-4">
+                                        <h3 class="card-title">手动执行</h3>
+                                        <p class="text-sm text-base-content/60 mt-1">保留手动触发入口，适合紧急修复、回放线上问题或调试新参数。</p>
+                                    </div>
+                                    <div class="space-y-4">
+                                        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                            <button class="btn btn-outline btn-primary justify-start" onclick="runSessionMaintenanceAction('cleanup-stale-live')">执行陈旧 LIVE 清理</button>
+                                            <button class="btn btn-outline btn-primary justify-start" onclick="runSessionMaintenanceAction('consolidate-recent')">扫描最近碎片场次</button>
+                                            <button class="btn btn-outline btn-secondary justify-start" onclick="runSessionMaintenanceAction('merge-continuity')">执行同日连续场次合并</button>
+                                            <button class="btn btn-outline btn-secondary justify-start" onclick="runSessionMaintenanceAction('fix-orphaned')">修复孤儿事件</button>
+                                            <button class="btn btn-outline btn-warning justify-start" onclick="runSessionMaintenanceAction('delete-empty')">清理空场次</button>
+                                            <button class="btn btn-outline btn-warning justify-start" onclick="runSessionMaintenanceAction('rebuild-missing')">重建缺失场次</button>
+                                        </div>
+                                        <div class="rounded-[1.25rem] border border-base-300 bg-base-200/70 p-4">
+                                            <div class="flex flex-wrap items-end gap-3">
+                                                <label class="form-control flex-1 min-w-[12rem]">
+                                                    <span class="label-text text-sm">单房间强制归档</span>
+                                                    <input id="session-maintenance-room-id" type="text" class="input input-bordered" placeholder="输入 room_id，例如 blooming_live">
+                                                </label>
+                                                <button class="btn btn-accent" onclick="runSessionMaintenanceAction('archive-room-stale')">归档该房间陈旧 LIVE</button>
+                                            </div>
+                                            <div class="text-xs text-base-content/60 mt-3 leading-6">仅处理该房间当前未归档、已满足陈旧规则的事件，用于局部排障，不会影响其他房间。</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="sec-smtpServices" class="hidden">
+                <div class="space-y-6">
+                    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.45fr)_24rem] gap-6 items-start">
+                        <div class="card bg-base-100 shadow">
+                            <div class="card-body">
+                                <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                                    <div>
+                                        <h3 class="card-title">邮箱服务管理</h3>
+                                        <p class="text-sm text-base-content/60 mt-1">支持配置多个 SMTP 服务，默认优先，节点异常时自动切换到其他可用服务。</p>
+                                    </div>
+                                    <button class="btn btn-primary btn-sm" onclick="editSmtpService()">新增邮箱服务</button>
+                                </div>
+                                <div id="smtp-services-overview" class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5"></div>
+                                <div id="smtp-services-list" class="space-y-3">
+                                    <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载邮箱服务...</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="space-y-6">
+                            <div class="card bg-base-100 shadow">
+                                <div class="card-body">
+                                    <h3 class="card-title">邮件策略</h3>
+                                    <p class="text-sm text-base-content/60 mt-1">默认服务失败后，会自动跳过冷却中的节点并切换到其他启用服务。</p>
+                                    <div id="smtp-policy-summary" class="mt-4 text-sm text-base-content/70"></div>
+                                    <div id="smtp-email-settings-form" class="space-y-4 mt-4"></div>
+                                    <div class="mt-5">
+                                        <button class="btn btn-primary btn-sm" onclick="saveSmtpEmailSettings()">保存邮件策略</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card bg-base-100 shadow">
+                                <div class="card-body">
+                                    <div class="flex items-start justify-between gap-3 mb-3">
+                                        <div>
+                                            <h3 id="smtp-editor-title" class="card-title">新增邮箱服务</h3>
+                                            <p class="text-sm text-base-content/60 mt-1">修改后即时生效，可单独测试连接或发送测试邮件。</p>
+                                        </div>
+                                        <button class="btn btn-ghost btn-sm" onclick="resetSmtpServiceEditor()">清空</button>
+                                    </div>
+                                    <div id="smtp-service-editor" class="space-y-4"></div>
+                                    <div class="flex flex-wrap gap-2 mt-5">
+                                        <button class="btn btn-primary btn-sm" onclick="submitSmtpServiceForm()">保存邮箱服务</button>
+                                        <button class="btn btn-outline btn-sm" onclick="resetSmtpServiceEditor()">取消编辑</button>
+                                    </div>
+                                    <div id="smtp-editor-result" class="mt-3 text-sm text-base-content/60"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="sec-aiWork" class="hidden">
+                <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(24rem,0.8fr)] gap-6 items-start">
+                    <div class="card bg-base-100 shadow">
+                        <div class="card-body">
+                            <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+                                <div>
+                                    <h3 class="card-title">AI 工作任务</h3>
+                                    <p class="text-sm text-base-content/60 mt-1">查看每个 AI直播复盘任务的排队、执行、失败与完成状态，便于监听调试与优化。</p>
+                                </div>
+                                <button class="btn btn-sm btn-primary" onclick="loadAdminAiWorkJobs(1)">刷新</button>
+                            </div>
+                            <div class="flex flex-wrap gap-2 mb-4">
+                                <select id="admin-ai-work-status" class="select select-bordered select-sm">
+                                    <option value="">全部状态</option>
+                                    <option value="queued">排队中</option>
+                                    <option value="processing">处理中</option>
+                                    <option value="completed">已完成</option>
+                                    <option value="failed">失败</option>
+                                </select>
+                                <input id="admin-ai-work-search" class="input input-bordered input-sm flex-1 min-w-[16rem]" placeholder="搜索用户 / 房间 / 场次 / 标题">
+                                <button class="btn btn-outline btn-sm" onclick="loadAdminAiWorkJobs(1)">查询</button>
+                            </div>
+                            <div class="overflow-x-auto">
+                                <table class="table table-sm">
+                                    <thead>
+                                        <tr>
+                                            <th>ID</th>
+                                            <th>状态</th>
+                                            <th>用户</th>
+                                            <th>房间 / 场次</th>
+                                            <th>当前步骤</th>
+                                            <th>模型</th>
+                                            <th>创建时间</th>
+                                            <th>操作</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="admin-ai-work-tbody">
+                                        <tr><td colspan="8" class="text-center text-base-content/60">正在加载 AI 工作任务...</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                            <div id="admin-ai-work-pagination" class="mt-4"></div>
+                        </div>
+                    </div>
+                    <div class="card bg-base-100 shadow min-h-[32rem]">
+                        <div class="card-body">
+                            <div class="flex items-start justify-between gap-3 border-b border-base-300 pb-4 mb-4">
+                                <div>
+                                    <h3 class="text-xl font-bold">任务详情 / 调试日志</h3>
+                                    <p class="text-sm text-base-content/60 mt-1">点击左侧任务，可查看完整请求参数、结果与处理日志。</p>
+                                </div>
+                            </div>
+                            <div id="admin-ai-work-detail" class="space-y-4 text-sm text-base-content/75">
+                                <div class="rounded-box bg-base-200 px-4 py-8">请选择一条 AI 工作任务。</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <section id="sec-prompts" class="hidden">
+                <div class="card bg-base-100 shadow">
+                    <div class="card-body">
+                        <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
+                            <div>
+                                <h3 class="card-title">提示词管理</h3>
+                                <p class="text-sm text-base-content/60 mt-1">集中管理 AI直播复盘的弹幕筛选提示词和主分析提示词，保存后下次生成直接生效。</p>
+                            </div>
+                            <button class="btn btn-sm btn-primary" onclick="loadPromptTemplates(true)">刷新</button>
+                        </div>
+                        <div id="prompt-templates-list" class="space-y-6">
+                            <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载提示词...</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
             <!-- Docs Section -->
             <section id="sec-docs" class="hidden">
                 <div class="grid grid-cols-1 xl:grid-cols-[22rem_minmax(0,1fr)] gap-6 items-start">
@@ -648,6 +945,6 @@
         </div>
     </dialog>
 
-    <script src="/js/admin.js?v=20260308g"></script>
+    <script src="/js/admin.js?v=20260308h"></script>
 </body>
 </html>

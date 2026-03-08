@@ -100,6 +100,26 @@ async function initDb() {
             )
         `);
 
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS session_maintenance_log (
+                id SERIAL PRIMARY KEY,
+                task_key TEXT NOT NULL,
+                trigger_source TEXT NOT NULL,
+                room_id TEXT,
+                status TEXT NOT NULL DEFAULT 'success',
+                message TEXT,
+                config_json TEXT,
+                summary_json TEXT,
+                error_message TEXT,
+                started_at TIMESTAMP DEFAULT NOW(),
+                finished_at TIMESTAMP DEFAULT NOW(),
+                duration_ms INTEGER DEFAULT 0
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_maintenance_log_started_at ON session_maintenance_log(started_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_maintenance_log_task_status ON session_maintenance_log(task_key, status)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_maintenance_log_room_id ON session_maintenance_log(room_id)`);
+
         // Gift table for storing gift info with Chinese names
         await pool.query(`
             CREATE TABLE IF NOT EXISTS gift (
@@ -401,13 +421,85 @@ async function initDb() {
                 content TEXT DEFAULT '',
                 related_order_no TEXT DEFAULT '',
                 action_tab TEXT DEFAULT 'notifications',
+                action_url TEXT DEFAULT '',
                 is_read BOOLEAN DEFAULT FALSE,
                 created_at TIMESTAMP DEFAULT NOW(),
                 read_at TIMESTAMP
             )
         `);
+        await pool.query(`ALTER TABLE user_notifications ADD COLUMN IF NOT EXISTS action_url TEXT DEFAULT ''`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_notifications_user_created ON user_notifications(user_id, created_at DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_notifications_user_unread ON user_notifications(user_id, is_read, created_at DESC)`);
+
+        // AI async work center tables
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ai_work_job (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                job_type TEXT NOT NULL,
+                room_id TEXT NOT NULL DEFAULT '',
+                session_id TEXT NOT NULL DEFAULT '',
+                title TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'queued',
+                current_step TEXT DEFAULT '',
+                progress_percent INTEGER DEFAULT 0,
+                point_cost INTEGER DEFAULT 0,
+                charged_points INTEGER DEFAULT 0,
+                force_regenerate BOOLEAN DEFAULT FALSE,
+                is_admin BOOLEAN DEFAULT FALSE,
+                attempt_count INTEGER DEFAULT 0,
+                model_name TEXT DEFAULT '',
+                request_payload_json TEXT,
+                result_json TEXT,
+                error_message TEXT DEFAULT '',
+                notification_sent BOOLEAN DEFAULT FALSE,
+                queued_at TIMESTAMP DEFAULT NOW(),
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS ai_work_job_log (
+                id SERIAL PRIMARY KEY,
+                job_id INTEGER NOT NULL REFERENCES ai_work_job(id) ON DELETE CASCADE,
+                phase TEXT DEFAULT '',
+                level TEXT DEFAULT 'info',
+                message TEXT NOT NULL,
+                payload_json TEXT,
+                created_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS room_id TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS session_id TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS title TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'queued'`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS current_step TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS progress_percent INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS point_cost INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS charged_points INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS force_regenerate BOOLEAN DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS is_admin BOOLEAN DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS model_name TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS request_payload_json TEXT`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS result_json TEXT`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS notification_sent BOOLEAN DEFAULT FALSE`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS queued_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS started_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`ALTER TABLE ai_work_job ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`ALTER TABLE ai_work_job_log ADD COLUMN IF NOT EXISTS phase TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE ai_work_job_log ADD COLUMN IF NOT EXISTS level TEXT DEFAULT 'info'`);
+        await pool.query(`ALTER TABLE ai_work_job_log ADD COLUMN IF NOT EXISTS payload_json TEXT`);
+        await pool.query(`ALTER TABLE ai_work_job_log ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_work_job_user_created ON ai_work_job(user_id, created_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_work_job_status_created ON ai_work_job(status, created_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_work_job_user_room_session ON ai_work_job(user_id, room_id, session_id, created_at DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_work_job_log_job_created ON ai_work_job_log(job_id, created_at ASC)`);
 
         // Email verification codes table
         await pool.query(`
@@ -443,6 +535,35 @@ async function initDb() {
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         `);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS smtp_services (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                host TEXT NOT NULL,
+                port INTEGER DEFAULT 465,
+                secure BOOLEAN DEFAULT true,
+                username TEXT NOT NULL,
+                password TEXT NOT NULL,
+                from_email TEXT,
+                from_name TEXT,
+                is_active BOOLEAN DEFAULT true,
+                is_default BOOLEAN DEFAULT false,
+                call_count INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                fail_count INTEGER DEFAULT 0,
+                consecutive_failures INTEGER DEFAULT 0,
+                avg_latency_ms INTEGER DEFAULT 0,
+                last_used_at TIMESTAMP,
+                cooldown_until TIMESTAMP,
+                last_error TEXT,
+                last_status TEXT DEFAULT 'unknown',
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_smtp_services_single_default ON smtp_services (is_default) WHERE is_default = true`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_smtp_services_active_default ON smtp_services (is_active, is_default, id)`);
 
         // AI channels table (provider-level: api_url + api_key)
         await pool.query(`

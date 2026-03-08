@@ -16,6 +16,28 @@ const { router: userManagementRouter, startPeriodicTasks } = require('./routes/i
 const { optionalAuth, authenticate, requireAdmin } = require('./middleware/auth');
 const { checkRoomQuota, getUserQuota } = require('./middleware/quota');
 const db = require('./db');
+const {
+    PROMPT_TEMPLATE_PREFIX,
+    getPromptTemplate,
+    renderPromptTemplate,
+} = require('./services/aiPromptService');
+const {
+    AI_WORK_JOB_TYPE_SESSION_RECAP,
+    createAiWorkJob,
+    appendAiWorkJobLog,
+    updateAiWorkJob,
+    markAiWorkJobStarted,
+    markAiWorkJobCompleted,
+    markAiWorkJobFailed,
+    findReusableAiWorkJob,
+    getLatestSessionAiWorkJobForUser,
+    claimNextAiWorkJobs,
+} = require('./services/aiWorkService');
+const {
+    runSessionMaintenanceTask,
+    isSessionMaintenanceSettingKey,
+} = require('./services/sessionMaintenanceService');
+const notificationService = require('./services/notificationService');
 const keyManager = require('./utils/keyManager');
 
 // Helper: get user's room access context in a single query per request
@@ -82,6 +104,43 @@ async function canAccessRoom(req, roomId) {
     return { allowed: !!row };
 }
 
+async function getRoomFilterForUserScope(userId, isAdmin = false) {
+    if (!userId || isAdmin) return null;
+    const rows = await db.all(
+        'SELECT room_id FROM user_room WHERE user_id = ? AND deleted_at IS NULL ORDER BY created_at ASC',
+        [userId]
+    );
+    return rows.map(row => row.roomId).filter(Boolean);
+}
+
+function serializeSessionAiWorkJobForClient(job) {
+    if (!job || typeof job !== 'object') return null;
+    return {
+        id: Number(job.id || 0),
+        jobType: String(job.jobType || AI_WORK_JOB_TYPE_SESSION_RECAP),
+        title: String(job.title || ''),
+        roomId: String(job.roomId || ''),
+        sessionId: String(job.sessionId || ''),
+        status: String(job.status || 'queued'),
+        currentStep: String(job.currentStep || ''),
+        progressPercent: Number(job.progressPercent || 0),
+        pointCost: Number(job.pointCost || 0),
+        chargedPoints: Number(job.chargedPoints || 0),
+        forceRegenerate: Boolean(job.forceRegenerate),
+        modelName: String(job.modelName || ''),
+        summary: String(job.summary || ''),
+        hasResult: Boolean(job.hasResult),
+        resultReady: Boolean(job.resultReady),
+        errorMessage: String(job.errorMessage || ''),
+        notificationSent: Boolean(job.notificationSent),
+        queuedAt: job.queuedAt || '',
+        startedAt: job.startedAt || '',
+        finishedAt: job.finishedAt || '',
+        createdAt: job.createdAt || '',
+        updatedAt: job.updatedAt || ''
+    };
+}
+
 function normalizePlanFeatureFlags(rawFlags) {
     if (!rawFlags) return {};
     if (typeof rawFlags === 'string') {
@@ -136,6 +195,7 @@ const httpServer = createServer(app);
 const autoRecorder = new AutoRecorder();
 autoRecorder.setRecordingManager(recordingManager);
 recordingManager.startMonitoring(); // Start stall detection for recordings
+app.locals.autoRecorder = autoRecorder;
 
 // Enable CORS & request body parsing
 const REQUEST_BODY_LIMIT = '20mb';
@@ -395,14 +455,14 @@ const SENSITIVE_SETTING_KEYS = [
     'proxy_url', 'dynamic_tunnel_proxy', 'proxy_api_url',
     'session_id', 'port',
     'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_pass',
-    'smtp_from', 'smtp_from_name', 'email_verification_enabled',
+    'smtp_from', 'smtp_from_name', 'smtp_legacy_migrated', 'email_verification_enabled',
     'single_session_login_enabled'
 ];
 
 function filterSensitiveSettings(settings) {
     const filtered = {};
     for (const [key, value] of Object.entries(settings)) {
-        if (!SENSITIVE_SETTING_KEYS.includes(key)) {
+        if (!SENSITIVE_SETTING_KEYS.includes(key) && !String(key || '').startsWith(PROMPT_TEMPLATE_PREFIX)) {
             filtered[key] = value;
         }
     }
@@ -438,6 +498,9 @@ app.post('/api/settings', authenticate, requireAdmin, async (req, res) => {
         for (const [key, value] of Object.entries(settings)) {
             await manager.saveSetting(key, typeof value === 'boolean' ? String(value) : value);
         }
+        if (Object.keys(settings).some(k => k.startsWith('smtp_'))) {
+            await manager.saveSetting('smtp_legacy_migrated', 'false');
+        }
         // Refresh Euler API keys if they were updated
         if (settings.euler_keys !== undefined) {
             const dbSettings = await manager.getAllSettings();
@@ -446,6 +509,9 @@ app.post('/api/settings', authenticate, requireAdmin, async (req, res) => {
         // Reset email transporter if SMTP settings changed
         if (Object.keys(settings).some(k => k.startsWith('smtp_') || k === 'email_verification_enabled')) {
             try { require('./services/emailService').resetTransporter(); } catch (e) { }
+        }
+        if (Object.keys(settings).some(isSessionMaintenanceSettingKey)) {
+            await autoRecorder.refreshSessionMaintenanceConfig('settings-api-save');
         }
         res.json({ success: true });
     } catch (err) {
@@ -460,6 +526,9 @@ app.post('/api/config', authenticate, requireAdmin, async (req, res) => {
         for (const [key, value] of Object.entries(settings)) {
             await manager.saveSetting(key, typeof value === 'boolean' ? String(value) : value);
         }
+        if (Object.keys(settings).some(k => k.startsWith('smtp_'))) {
+            await manager.saveSetting('smtp_legacy_migrated', 'false');
+        }
         // Refresh Euler API keys if they were updated
         if (settings.euler_keys !== undefined) {
             const dbSettings = await manager.getAllSettings();
@@ -468,6 +537,9 @@ app.post('/api/config', authenticate, requireAdmin, async (req, res) => {
         // Reset email transporter if SMTP settings changed
         if (Object.keys(settings).some(k => k.startsWith('smtp_') || k === 'email_verification_enabled')) {
             try { require('./services/emailService').resetTransporter(); } catch (e) { }
+        }
+        if (Object.keys(settings).some(isSessionMaintenanceSettingKey)) {
+            await autoRecorder.refreshSessionMaintenanceConfig('config-api-save');
         }
         res.json({ success: true });
     } catch (err) {
@@ -508,11 +580,14 @@ app.get('/api/rooms/:id/sessions', optionalAuth, async (req, res) => {
 });
 
 // Archive Stale Live Events API (Fix for long sessions)
-app.post('/api/rooms/:id/archive_stale', async (req, res) => {
+app.post('/api/rooms/:id/archive_stale', authenticate, requireAdmin, async (req, res) => {
     try {
         console.log(`[API] Archiving stale events for room ${req.params.id}`);
-        const result = await manager.archiveStaleLiveEvents(req.params.id);
-        res.json(result);
+        const task = await runSessionMaintenanceTask('archive_stale_live_events_room', {
+            triggerSource: 'legacy-api',
+            roomId: req.params.id,
+        });
+        res.json(task.result);
     } catch (err) {
         console.error('Error archiving stale events:', err);
         res.status(500).json({ error: err.message });
@@ -520,11 +595,13 @@ app.post('/api/rooms/:id/archive_stale', async (req, res) => {
 });
 
 // Maintenance API: Rebuild missing session records from events
-app.post('/api/maintenance/rebuild_sessions', async (req, res) => {
+app.post('/api/maintenance/rebuild_sessions', authenticate, requireAdmin, async (req, res) => {
     try {
         console.log('[API] Rebuilding missing sessions...');
-        const result = await manager.rebuildMissingSessions();
-        res.json(result);
+        const task = await runSessionMaintenanceTask('rebuild_missing_sessions', {
+            triggerSource: 'legacy-api',
+        });
+        res.json(task.result);
     } catch (err) {
         console.error('Error rebuilding sessions:', err);
         res.status(500).json({ error: err.message });
@@ -532,11 +609,14 @@ app.post('/api/maintenance/rebuild_sessions', async (req, res) => {
 });
 
 // Maintenance API: Merge Short Sessions
-app.post('/api/maintenance/merge_sessions', async (req, res) => {
+app.post('/api/maintenance/merge_sessions', authenticate, requireAdmin, async (req, res) => {
     try {
         console.log('[API] Merging short sessions...');
-        const result = await manager.mergeContinuitySessions();
-        res.json(result);
+        const task = await runSessionMaintenanceTask('merge_continuity_sessions', {
+            triggerSource: 'legacy-api',
+            gapMinutes: req.body?.gapMinutes,
+        });
+        res.json(task.result);
     } catch (err) {
         console.error('Error merging sessions:', err);
         res.status(500).json({ error: err.message });
@@ -783,18 +863,9 @@ app.get('/api/rooms/:id/session-recap', optionalAuth, async (req, res) => {
         const cachedReview = req.user && sessionId !== 'live'
             ? await getCachedSessionAiReview(req.user.id, roomId, sessionId)
             : null;
-
-        const serializeValueCustomer = (item = {}) => ({
-            nickname: item.nickname || '匿名',
-            uniqueId: item.uniqueId || '',
-            sessionGiftValue: Number(item.sessionGiftValue || 0),
-            historicalValue: Number(item.historicalValue || 0),
-            chatCount: Number(item.chatCount || 0),
-            likeCount: Number(item.likeCount || 0),
-            enterCount: Number(item.enterCount || 0),
-            reason: item.reason || '',
-            action: item.action || ''
-        });
+        const latestAiJob = req.user && sessionId !== 'live'
+            ? await getLatestSessionAiWorkJobForUser(req.user.id, roomId, sessionId)
+            : null;
 
         res.json({
             sessionId,
@@ -844,7 +915,8 @@ app.get('/api/rooms/:id/session-recap', optionalAuth, async (req, res) => {
                 potential: Array.isArray(recap?.valueCustomers?.potential) ? recap.valueCustomers.potential.map(serializeValueCustomer) : [],
                 risk: Array.isArray(recap?.valueCustomers?.risk) ? recap.valueCustomers.risk.map(serializeValueCustomer) : []
             },
-            aiReview: cachedReview
+            aiReview: serializeSessionAiReview(cachedReview),
+            aiJob: serializeSessionAiWorkJobForClient(latestAiJob)
         });
     } catch (err) {
         console.error('[API] session recap error:', err);
@@ -873,11 +945,41 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
         if (!sessionId) return res.status(400).json({ error: '请选择场次' });
         if (sessionId === 'live') return res.status(400).json({ error: '请先切到已归档场次，再生成 AI 直播复盘' });
 
+        const session = await manager.getSession(sessionId);
+        if (!session) {
+            console.warn(`[AI] session-recap submit missing session row: room=${roomId}, session=${sessionId}`);
+        } else if (String(session.roomId || '') !== String(roomId)) {
+            console.warn(`[AI] session-recap submit room mismatch: requestRoom=${roomId}, sessionRoom=${session.roomId}, session=${sessionId}`);
+        }
+
         if (!force) {
             const cachedReview = await getCachedSessionAiReview(req.user.id, roomId, sessionId);
             if (cachedReview) {
-                return res.json({ review: cachedReview, cached: true, pointCost: SESSION_RECAP_AI_POINTS, chargedPoints: 0 });
+                return res.json({
+                    review: serializeSessionAiReview(cachedReview),
+                    cached: true,
+                    pointCost: SESSION_RECAP_AI_POINTS,
+                    chargedPoints: 0
+                });
             }
+        }
+
+        const existingJob = await findReusableAiWorkJob({
+            userId: req.user.id,
+            jobType: AI_WORK_JOB_TYPE_SESSION_RECAP,
+            roomId,
+            sessionId
+        });
+        if (existingJob) {
+            return res.status(202).json({
+                accepted: true,
+                queued: existingJob.status === 'queued',
+                processing: existingJob.status === 'processing',
+                reused: true,
+                pointCost: SESSION_RECAP_AI_POINTS,
+                job: serializeSessionAiWorkJobForClient(existingJob),
+                message: 'AI 已启动，正在后台工作中，无需一直等待，完成后会主动通知。'
+            });
         }
 
         const isAdmin = req.user.role === 'admin';
@@ -889,47 +991,41 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
             }
         }
 
-        const roomFilter = await getUserRoomFilter(req);
-        const recap = await manager.getSessionRecap(roomId, sessionId, roomFilter);
-        const generated = await generateSessionAiReviewFromRecap(roomId, sessionId, recap);
-        const review = {
-            summary: generated.summary,
-            highlights: normalizeAiReviewList(generated.highlights),
-            issues: normalizeAiReviewList(generated.issues),
-            actions: normalizeAiReviewList(generated.actions)
-        };
-        const chargedPoints = isAdmin || generated.usedFallback ? 0 : SESSION_RECAP_AI_POINTS;
-
-        const saveResult = await saveSessionAiReviewRecord(
-            req.user.id,
+        const job = await createAiWorkJob({
+            userId: req.user.id,
+            jobType: AI_WORK_JOB_TYPE_SESSION_RECAP,
             roomId,
             sessionId,
-            review,
-            generated.modelName,
-            chargedPoints
-        );
-
-        if (!saveResult.success) {
-            if (saveResult.insufficient) {
-                return res.status(409).json({ error: 'AI 点数不足，请稍后重试', code: 'AI_CREDITS_EXHAUSTED' });
+            pointCost: SESSION_RECAP_AI_POINTS,
+            forceRegenerate: force,
+            isAdmin,
+            requestPayload: {
+                trigger: 'user_submit',
+                roomId,
+                sessionId,
+                force,
+                pointCost: SESSION_RECAP_AI_POINTS
             }
-            throw new Error(saveResult.error || '保存 AI 复盘失败');
-        }
+        });
 
-        res.json({
-            review: {
-                ...review,
-                generatedAt: new Date().toISOString(),
-                creditsUsed: chargedPoints
-            },
+        await appendAiWorkJobLog(job.id, {
+            phase: 'queued',
+            level: 'info',
+            message: '任务已入队，等待后台调度',
+            payload: { roomId, sessionId, force, pointCost: SESSION_RECAP_AI_POINTS }
+        });
+
+        res.status(202).json({
+            accepted: true,
+            queued: true,
             cached: false,
             pointCost: SESSION_RECAP_AI_POINTS,
-            chargedPoints,
-            fallback: Boolean(generated.usedFallback)
+            job: serializeSessionAiWorkJobForClient(job),
+            message: 'AI 已启动，正在后台工作中，无需一直等待，完成后会主动通知。'
         });
     } catch (err) {
-        console.error('[AI] Session recap error:', err);
-        res.status(500).json({ error: '生成直播摘要失败，请稍后重试' });
+        console.error('[AI] Queue session recap error:', err);
+        res.status(500).json({ error: '创建 AI直播复盘任务失败，请稍后重试' });
     }
 });
 
@@ -1185,25 +1281,254 @@ async function getLatestMemberAnalysisMap(memberId, targetUserIds = []) {
     return new Map(rows.map(row => [row.targetUserId, row]));
 }
 
-const SESSION_RECAP_AI_POINTS = 10;
+const SESSION_RECAP_AI_POINTS = 20;
 
-function normalizeAiReviewList(value, limit = 3) {
+function clampNumber(value, min, max, fallback = 0) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return fallback;
+    return Math.min(max, Math.max(min, Math.round(numeric)));
+}
+
+function safeTrimString(value, maxLength = 300) {
+    return String(value || '').trim().slice(0, maxLength);
+}
+
+function normalizeAiReviewList(value, limit = 5) {
     if (!Array.isArray(value)) return [];
-    return value.map(item => String(item || '').trim()).filter(Boolean).slice(0, limit);
+    return value
+        .map(item => safeTrimString(item, 300))
+        .filter(Boolean)
+        .slice(0, limit);
+}
+
+function normalizeAiReviewTags(value, limit = 5) {
+    if (!Array.isArray(value)) return [];
+    return value
+        .map(tag => safeTrimString(tag, 40))
+        .filter(Boolean)
+        .map(tag => tag.startsWith('#') ? tag : `#${tag}`)
+        .slice(0, limit);
+}
+
+function findRadarValue(recap, label) {
+    const item = Array.isArray(recap?.radar)
+        ? recap.radar.find(entry => String(entry?.label || '').trim() === label)
+        : null;
+    return clampNumber(item?.value || 0, 0, 100, 0);
+}
+
+function scaleScoreParts(parts, targetTotal) {
+    const rawTotal = parts.reduce((sum, item) => sum + item.value, 0);
+    if (!rawTotal || !targetTotal) {
+        return Object.fromEntries(parts.map(item => [item.key, 0]));
+    }
+
+    const scaled = {};
+    let allocated = 0;
+    for (let index = 0; index < parts.length; index += 1) {
+        const part = parts[index];
+        const remainingTarget = targetTotal - allocated;
+        const remainingMax = parts.slice(index).reduce((sum, item) => sum + item.max, 0);
+        let nextValue = index === parts.length - 1
+            ? remainingTarget
+            : Math.round((part.value / rawTotal) * targetTotal);
+
+        nextValue = clampNumber(nextValue, 0, Math.min(part.max, remainingTarget), 0);
+        if (remainingMax < remainingTarget) nextValue = part.max;
+
+        scaled[part.key] = nextValue;
+        allocated += nextValue;
+    }
+
+    const diff = targetTotal - allocated;
+    if (diff !== 0) {
+        const adjustKey = parts[parts.length - 1].key;
+        scaled[adjustKey] = clampNumber((scaled[adjustKey] || 0) + diff, 0, parts[parts.length - 1].max, 0);
+    }
+
+    return scaled;
+}
+
+function buildFallbackScore(recap) {
+    const total = clampNumber(recap?.overview?.score || 0, 0, 100, 0);
+    const parts = [
+        { key: 'contentAttraction', value: Math.round((findRadarValue(recap, '互动') + findRadarValue(recap, '节奏')) / 10), max: 20 },
+        { key: 'userInteraction', value: Math.round(findRadarValue(recap, '互动') / 5), max: 20 },
+        { key: 'giftConversion', value: Math.round(findRadarValue(recap, '变现') * 0.35), max: 35 },
+        { key: 'retentionGrowth', value: Math.round(findRadarValue(recap, '客户') * 0.15), max: 15 },
+        { key: 'overallRhythm', value: Math.round(findRadarValue(recap, '节奏') * 0.1), max: 10 }
+    ];
+    const scaled = scaleScoreParts(parts, total);
+
+    return {
+        total,
+        contentAttraction: clampNumber(scaled.contentAttraction || 0, 0, 20, 0),
+        userInteraction: clampNumber(scaled.userInteraction || 0, 0, 20, 0),
+        giftConversion: clampNumber(scaled.giftConversion || 0, 0, 35, 0),
+        retentionGrowth: clampNumber(scaled.retentionGrowth || 0, 0, 15, 0),
+        overallRhythm: clampNumber(scaled.overallRhythm || 0, 0, 10, 0),
+        reason: safeTrimString(recap?.overview?.gradeLabel || '当前评分基于本场互动、变现、客户结构与节奏稳定性综合判断。', 160)
+    };
+}
+
+function normalizeAiReviewScore(value, fallbackRecap = null) {
+    const fallback = fallbackRecap ? buildFallbackScore(fallbackRecap) : {
+        total: 0,
+        contentAttraction: 0,
+        userInteraction: 0,
+        giftConversion: 0,
+        retentionGrowth: 0,
+        overallRhythm: 0,
+        reason: ''
+    };
+    if (!value || typeof value !== 'object') return fallback;
+
+    const normalized = {
+        total: clampNumber(value.total, 0, 100, fallback.total),
+        contentAttraction: clampNumber(value.contentAttraction, 0, 20, fallback.contentAttraction),
+        userInteraction: clampNumber(value.userInteraction, 0, 20, fallback.userInteraction),
+        giftConversion: clampNumber(value.giftConversion, 0, 35, fallback.giftConversion),
+        retentionGrowth: clampNumber(value.retentionGrowth, 0, 15, fallback.retentionGrowth),
+        overallRhythm: clampNumber(value.overallRhythm, 0, 10, fallback.overallRhythm),
+        reason: safeTrimString(value.reason, 160) || fallback.reason
+    };
+
+    const sum = normalized.contentAttraction
+        + normalized.userInteraction
+        + normalized.giftConversion
+        + normalized.retentionGrowth
+        + normalized.overallRhythm;
+    if (sum !== normalized.total) {
+        return fallbackRecap ? buildFallbackScore(fallbackRecap) : { ...fallback, total: sum };
+    }
+    return normalized;
+}
+
+function normalizeAiReviewValuableComments(value, limit = 10) {
+    if (!Array.isArray(value)) return [];
+    return value.map(item => {
+        if (!item) return null;
+        const text = safeTrimString(item.text || item.keyword || item.comment || item, 80);
+        if (!text) return null;
+        return {
+            text,
+            count: clampNumber(item.count, 0, 999999, 0),
+            reason: safeTrimString(item.reason || item.category || '', 120),
+            insight: safeTrimString(item.insight || item.suggestion || '', 120)
+        };
+    }).filter(Boolean).slice(0, limit);
+}
+
+function normalizeAiReviewCustomerArray(value, segment = 'core', limit = 8, fallbackItems = []) {
+    const source = Array.isArray(value) && value.length ? value : fallbackItems;
+    if (!Array.isArray(source)) return [];
+
+    return source.map(item => {
+        if (!item) return null;
+        return {
+            nickname: safeTrimString(item.nickname || '匿名', 60) || '匿名',
+            uniqueId: safeTrimString(item.uniqueId || '', 80),
+            totalGiftValue: clampNumber(item.totalGiftValue ?? item.sessionGiftValue, 0, 999999999, 0),
+            giftCount: clampNumber(item.giftCount, 0, 999999, 0),
+            sessionGiftValue: clampNumber(item.sessionGiftValue ?? item.totalGiftValue, 0, 999999999, 0),
+            historicalValue: clampNumber(item.historicalValue, 0, 999999999, 0),
+            chatCount: clampNumber(item.chatCount, 0, 999999, 0),
+            likeCount: clampNumber(item.likeCount, 0, 999999999, 0),
+            enterCount: clampNumber(item.enterCount, 0, 999999, 0),
+            enterTime: safeTrimString(item.enterTime || item.firstEnterAt || '', 40),
+            leaveTime: safeTrimString(item.leaveTime || item.lastActiveAt || '', 40),
+            keyBehavior: safeTrimString(item.keyBehavior || item.reason || '', 160),
+            maintenanceSuggestion: safeTrimString(item.maintenanceSuggestion || item.action || '', 160),
+            conversionScript: safeTrimString(item.conversionScript || '', 160),
+            riskReason: safeTrimString(item.riskReason || item.reason || '', 160),
+            recoveryStrategy: safeTrimString(item.recoveryStrategy || item.action || '', 160)
+        };
+    }).filter(Boolean).slice(0, limit).map(item => {
+        if (segment === 'core') {
+            return {
+                ...item,
+                keyBehavior: item.keyBehavior || '本场贡献突出，值得重点维护。',
+                maintenanceSuggestion: item.maintenanceSuggestion || '建议下场继续重点点名和情绪反馈。'
+            };
+        }
+        if (segment === 'potential') {
+            return {
+                ...item,
+                keyBehavior: item.keyBehavior || '互动高但转化偏弱，具备承接空间。',
+                maintenanceSuggestion: item.maintenanceSuggestion || '建议在互动高点补轻成交引导。',
+                conversionScript: item.conversionScript || '你刚刚问得很细，说明你是真关注这个点的，我先帮你把重点说透，你觉得合适我再给你一个更省心的下单方式。'
+            };
+        }
+        return {
+            ...item,
+            keyBehavior: item.keyBehavior || '本场活跃后转弱，存在流失风险。',
+            riskReason: item.riskReason || '本场承接不足，导致高价值客户参与感下降。',
+            recoveryStrategy: item.recoveryStrategy || '建议下场提前预热并做定向召回。'
+        };
+    });
+}
+
+function serializeValueCustomer(item = {}) {
+    return {
+        nickname: item.nickname || '匿名',
+        uniqueId: item.uniqueId || '',
+        sessionGiftValue: Number(item.sessionGiftValue || 0),
+        giftCount: Number(item.giftCount || 0),
+        historicalValue: Number(item.historicalValue || 0),
+        chatCount: Number(item.chatCount || 0),
+        likeCount: Number(item.likeCount || 0),
+        enterCount: Number(item.enterCount || 0),
+        firstEnterAt: item.firstEnterAt || null,
+        lastActiveAt: item.lastActiveAt || null,
+        reason: item.reason || '',
+        action: item.action || ''
+    };
+}
+
+function serializeSessionAiReview(review) {
+    if (!review) return null;
+    const normalized = parseSessionAiReview(review);
+    if (!normalized) return null;
+    return {
+        summary: normalized.summary,
+        bossSummary: normalized.bossSummary,
+        highlights: normalizeAiReviewList(normalized.highlights, 2),
+        issues: normalizeAiReviewList(normalized.issues, 5),
+        actions: normalizeAiReviewList(normalized.actions, 5),
+        tags: normalizeAiReviewTags(normalized.tags, 5),
+        score: normalizeAiReviewScore(normalized.score),
+        valuableComments: normalizeAiReviewValuableComments(normalized.valuableComments, 10),
+        customers: {
+            core: normalizeAiReviewCustomerArray(normalized.customers?.core, 'core', 8),
+            potential: normalizeAiReviewCustomerArray(normalized.customers?.potential, 'potential', 8),
+            risk: normalizeAiReviewCustomerArray(normalized.customers?.risk, 'risk', 8)
+        },
+        generatedAt: review.generatedAt || null,
+        creditsUsed: Number(review.creditsUsed || 0)
+    };
 }
 
 function buildFallbackSessionAiReview(recap) {
     const overview = recap?.overview || {};
     const firstMoment = Array.isArray(recap?.keyMoments) ? recap.keyMoments[0] : null;
     const summary = overview.score
-        ? `本场复盘评分 ${overview.score}/100，${overview.gradeLabel || '整体表现稳定'}。${firstMoment ? `重点关注 ${firstMoment.timeRange} 的${firstMoment.title}。` : ''}`
-        : '本场数据量有限，建议先积累更多单场内容后再生成 AI 摘要。';
+        ? `本场评分 ${overview.score}/100，当前判断为${overview.gradeLabel || '稳态场'}。${firstMoment ? `重点关注 ${firstMoment.timeRange} 的${firstMoment.title}。` : ''}`
+        : '本场数据量有限，建议先积累更多单场内容后再生成 AI直播复盘。';
 
     return {
         summary,
-        highlights: normalizeAiReviewList(recap?.insights?.highlights),
-        issues: normalizeAiReviewList(recap?.insights?.issues),
-        actions: normalizeAiReviewList(recap?.insights?.actions)
+        bossSummary: summary,
+        highlights: normalizeAiReviewList(recap?.insights?.highlights, 2),
+        issues: normalizeAiReviewList(recap?.insights?.issues, 5),
+        actions: normalizeAiReviewList(recap?.insights?.actions, 5),
+        tags: normalizeAiReviewTags(recap?.overview?.tags, 5),
+        score: buildFallbackScore(recap),
+        valuableComments: normalizeAiReviewValuableComments(recap?.commentSignals?.valuableComments || recap?.commentSignals?.topComments, 8),
+        customers: {
+            core: normalizeAiReviewCustomerArray(recap?.valueCustomers?.core, 'core', 8),
+            potential: normalizeAiReviewCustomerArray(recap?.valueCustomers?.potential, 'potential', 8),
+            risk: normalizeAiReviewCustomerArray(recap?.valueCustomers?.risk, 'risk', 8)
+        }
     };
 }
 
@@ -1221,12 +1546,32 @@ function parseSessionAiReview(rawReview, fallbackRecap = null) {
 
     try {
         const parsed = typeof rawReview === 'string' ? JSON.parse(rawReview) : rawReview;
-        const fallback = fallbackRecap ? buildFallbackSessionAiReview(fallbackRecap) : { summary: '', highlights: [], issues: [], actions: [] };
+        const fallback = fallbackRecap ? buildFallbackSessionAiReview(fallbackRecap) : {
+            summary: '',
+            bossSummary: '',
+            highlights: [],
+            issues: [],
+            actions: [],
+            tags: [],
+            score: normalizeAiReviewScore(null),
+            valuableComments: [],
+            customers: { core: [], potential: [], risk: [] }
+        };
+        const bossSummary = safeTrimString(parsed?.bossSummary || parsed?.summary || fallback.bossSummary || fallback.summary, 220);
         return {
-            summary: String(parsed?.summary || fallback.summary || '').trim(),
-            highlights: normalizeAiReviewList(parsed?.highlights || fallback.highlights),
-            issues: normalizeAiReviewList(parsed?.issues || fallback.issues),
-            actions: normalizeAiReviewList(parsed?.actions || fallback.actions)
+            summary: bossSummary || fallback.summary,
+            bossSummary: bossSummary || fallback.bossSummary,
+            highlights: normalizeAiReviewList(parsed?.highlights || fallback.highlights, 2),
+            issues: normalizeAiReviewList(parsed?.issues || fallback.issues, 5),
+            actions: normalizeAiReviewList(parsed?.actions || fallback.actions, 5),
+            tags: normalizeAiReviewTags(parsed?.tags || fallback.tags, 5),
+            score: normalizeAiReviewScore(parsed?.score || fallback.score, fallbackRecap),
+            valuableComments: normalizeAiReviewValuableComments(parsed?.valuableComments || fallback.valuableComments, 10),
+            customers: {
+                core: normalizeAiReviewCustomerArray(parsed?.coreCustomers || parsed?.customers?.core, 'core', 8, fallback.customers?.core),
+                potential: normalizeAiReviewCustomerArray(parsed?.potentialCustomers || parsed?.customers?.potential, 'potential', 8, fallback.customers?.potential),
+                risk: normalizeAiReviewCustomerArray(parsed?.riskCustomers || parsed?.customers?.risk, 'risk', 8, fallback.customers?.risk)
+            }
         };
     } catch {
         return fallbackRecap ? buildFallbackSessionAiReview(fallbackRecap) : null;
@@ -1407,6 +1752,15 @@ function normalizeAiRuntimeError(err) {
     return err instanceof Error ? err.message : String(err || 'Unknown error');
 }
 
+async function emitAiTrace(trace, entry = {}) {
+    if (typeof trace !== 'function') return;
+    try {
+        await trace(entry);
+    } catch (err) {
+        console.warn('[AI] Trace write failed:', err.message);
+    }
+}
+
 function getSessionAiFallbackReason(err) {
     const message = normalizeAiRuntimeError(err).toLowerCase();
     if (message.includes('high risk') || message.includes('high-risk') || message.includes('considered high risk') || message.includes('风控') || message.includes('风险') || message.includes('safety') || message.includes('moderation')) {
@@ -1418,7 +1772,7 @@ function getSessionAiFallbackReason(err) {
     return 'upstream-error';
 }
 
-async function requestAiChatCompletion({ messages, requestLabel }) {
+async function requestAiChatCompletion({ messages, requestLabel, trace = null }) {
     const runtimes = await listAiRuntimeCandidates();
     if (runtimes.length === 0) {
         throw new Error('AI API Key not configured');
@@ -1433,6 +1787,18 @@ async function requestAiChatCompletion({ messages, requestLabel }) {
 
         try {
             console.log(`[AI] ${requestLabel} attempt ${index + 1}/${runtimes.length} with ${runtime.runtimeLabel}`);
+            await emitAiTrace(trace, {
+                phase: 'ai_request',
+                level: 'info',
+                message: '发起 AI 请求',
+                payload: {
+                    requestLabel,
+                    attempt: index + 1,
+                    totalAttempts: runtimes.length,
+                    runtimeLabel: runtime.runtimeLabel,
+                    modelName: runtime.modelName
+                }
+            });
             const aiBaseUrl = runtime.apiUrl.endsWith('/') ? runtime.apiUrl : `${runtime.apiUrl}/`;
             const response = await fetch(`${aiBaseUrl}chat/completions`, {
                 method: 'POST',
@@ -1457,6 +1823,18 @@ async function requestAiChatCompletion({ messages, requestLabel }) {
             }
 
             await markAiModelSuccess(runtime.aiModelId, latencyMs);
+            await emitAiTrace(trace, {
+                phase: 'ai_request',
+                level: 'info',
+                message: 'AI 请求成功',
+                payload: {
+                    requestLabel,
+                    attempt: index + 1,
+                    runtimeLabel: runtime.runtimeLabel,
+                    modelName: runtime.modelName,
+                    latencyMs
+                }
+            });
 
             if (index > 0) {
                 console.log(`[AI] ${requestLabel} switched to fallback model ${runtime.runtimeLabel}`);
@@ -1472,6 +1850,18 @@ async function requestAiChatCompletion({ messages, requestLabel }) {
             const errorMessage = normalizeAiRuntimeError(err);
             await markAiModelFailure(runtime.aiModelId, errorMessage);
             errors.push(`${runtime.runtimeLabel}: ${errorMessage}`);
+            await emitAiTrace(trace, {
+                phase: 'ai_request',
+                level: 'error',
+                message: 'AI 请求失败',
+                payload: {
+                    requestLabel,
+                    attempt: index + 1,
+                    runtimeLabel: runtime.runtimeLabel,
+                    modelName: runtime.modelName,
+                    error: errorMessage
+                }
+            });
             console.error(`[AI] ${requestLabel} failed for ${runtime.runtimeLabel}: ${errorMessage}`);
         }
     }
@@ -1479,48 +1869,220 @@ async function requestAiChatCompletion({ messages, requestLabel }) {
     throw new Error(`AI API Error: ${errors.join(' | ')}`);
 }
 
-async function generateSessionAiReviewFromRecap(roomId, sessionId, recap) {
-    const promptPayload = {
-        roomId,
-        sessionId,
-        overview: {
-            score: recap?.overview?.score || 0,
-            gradeLabel: recap?.overview?.gradeLabel || '',
-            totalGiftValue: recap?.overview?.totalGiftValue || 0,
-            totalComments: recap?.overview?.totalComments || 0,
-            totalLikes: recap?.overview?.totalLikes || 0,
-            totalVisits: recap?.overview?.totalVisits || 0,
-            duration: recap?.overview?.duration || 0,
-            tags: recap?.overview?.tags || []
-        },
-        keyMoments: Array.isArray(recap?.keyMoments) ? recap.keyMoments.slice(0, 3) : [],
-        insights: recap?.insights || {},
-        valueCustomers: {
-            core: Array.isArray(recap?.valueCustomers?.core) ? recap.valueCustomers.core.slice(0, 3).map(item => ({ nickname: item.nickname, sessionGiftValue: item.sessionGiftValue, historicalValue: item.historicalValue, reason: item.reason })) : [],
-            potential: Array.isArray(recap?.valueCustomers?.potential) ? recap.valueCustomers.potential.slice(0, 3).map(item => ({ nickname: item.nickname, chatCount: item.chatCount, likeCount: item.likeCount, reason: item.reason })) : [],
-            risk: Array.isArray(recap?.valueCustomers?.risk) ? recap.valueCustomers.risk.slice(0, 3).map(item => ({ nickname: item.nickname, historicalValue: item.historicalValue, sessionGiftValue: item.sessionGiftValue, reason: item.reason })) : []
-        }
-    };
+function isLowValueCommentSignal(text) {
+    const normalized = String(text || '').trim().toLowerCase();
+    if (!normalized) return true;
+    if (normalized.length <= 1) return true;
+    if (/^[\d\W_]+$/.test(normalized)) return true;
+
+    const stopPhrases = new Set([
+        '111', '1', '6', '66', '666', '777', '888', '999', '哈哈', '哈哈哈', 'hhhh', 'hh', '啊啊啊', '来了',
+        '在吗', '看看', '支持', '冲', '顶', '真棒', '好看', '好美', '喜欢', '爱了', '么么哒', '姐姐好美',
+        '主播好美', '晚安', '早点休息', '路过', '卡了', '进来了', '在', '滴', '收到'
+    ]);
+
+    return stopPhrases.has(normalized);
+}
+
+function buildHeuristicValuableComments(commentCandidates = []) {
+    return commentCandidates
+        .map(item => ({
+            text: safeTrimString(item.text || item.comment || '', 80),
+            count: clampNumber(item.count, 0, 999999, 0)
+        }))
+        .filter(item => item.text && item.count > 0)
+        .filter(item => !isLowValueCommentSignal(item.text))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 12)
+        .map(item => ({
+            text: item.text,
+            count: item.count,
+            reason: '高频出现且具备明确语义，适合用于复盘内容反馈。',
+            insight: '可用于判断用户真实关注点、异议点或情绪反馈。'
+        }));
+}
+
+async function filterSessionRecapCommentSignals(roomId, sessionId, commentCandidates = [], { trace = null } = {}) {
+    const topCandidates = Array.isArray(commentCandidates)
+        ? commentCandidates
+            .map(item => ({
+                text: safeTrimString(item.text || item.comment || '', 80),
+                count: clampNumber(item.count, 0, 999999, 0)
+            }))
+            .filter(item => item.text && item.count > 0)
+            .slice(0, 50)
+        : [];
+
+    if (!topCandidates.length) return [];
+
+    const fallback = buildHeuristicValuableComments(topCandidates);
+    await emitAiTrace(trace, {
+        phase: 'comment_filter',
+        level: 'info',
+        message: '开始筛选高价值弹幕',
+        payload: { candidateCount: topCandidates.length, fallbackCount: fallback.length }
+    });
 
     try {
+        const template = await getPromptTemplate('session_recap_comment_filter');
+        const promptText = renderPromptTemplate(template?.content || '', {
+            topCommentCandidatesJson: JSON.stringify(topCandidates, null, 2)
+        });
+        await emitAiTrace(trace, {
+            phase: 'comment_filter',
+            level: 'info',
+            message: '高频弹幕筛选提示词已渲染',
+            payload: { templateKey: 'session_recap_comment_filter', promptLength: promptText.length }
+        });
+        const { completion } = await requestAiChatCompletion({
+            trace,
+            requestLabel: `session recap comment filter ${roomId}/${sessionId}`,
+            messages: [
+                {
+                    role: 'system',
+                    content: '你是直播复盘数据清洗助手。严格按照用户提示词筛选高价值弹幕，并且只输出合法 JSON。'
+                },
+                {
+                    role: 'user',
+                    content: promptText
+                }
+            ]
+        });
+        const rawContent = completion.choices?.[0]?.message?.content || '';
+        const extracted = extractFirstJsonObject(rawContent);
+        const parsed = extracted ? JSON.parse(extracted) : JSON.parse(rawContent);
+        const normalized = normalizeAiReviewValuableComments(parsed?.valuableComments, 12);
+        await emitAiTrace(trace, {
+            phase: 'comment_filter',
+            level: 'info',
+            message: '高价值弹幕筛选完成',
+            payload: { resultCount: normalized.length || fallback.length, usedFallback: normalized.length === 0 }
+        });
+        return normalized.length ? normalized : fallback;
+    } catch (err) {
+        const errorMessage = normalizeAiRuntimeError(err);
+        await emitAiTrace(trace, {
+            phase: 'comment_filter',
+            level: 'warning',
+            message: '高价值弹幕筛选失败，回退启发式结果',
+            payload: { error: errorMessage, fallbackCount: fallback.length }
+        });
+        console.warn(`[AI] Session recap comment filter ${roomId}/${sessionId} fallback: ${errorMessage}`);
+        return fallback;
+    }
+}
+
+function buildSessionRecapPromptPayload(roomId, sessionId, recap, valuableComments = []) {
+    return {
+        roomId,
+        sessionId,
+        metrics: {
+            durationSeconds: Number(recap?.overview?.duration || 0),
+            totalVisits: Number(recap?.overview?.totalVisits || 0),
+            peakOnline: Number(recap?.traffic?.peakOnline || 0),
+            avgOnline: Number(recap?.traffic?.avgOnline || 0),
+            totalGiftValue: Number(recap?.overview?.totalGiftValue || 0),
+            totalComments: Number(recap?.overview?.totalComments || 0),
+            totalLikes: Number(recap?.overview?.totalLikes || 0),
+            participantCount: Number(recap?.overview?.participantCount || 0),
+            payingUsers: Number(recap?.overview?.payingUsers || 0),
+            chattingUsers: Number(recap?.overview?.chattingUsers || 0),
+            topGiftShare: Number(recap?.overview?.topGiftShare || 0),
+            score: Number(recap?.overview?.score || 0),
+            gradeLabel: recap?.overview?.gradeLabel || '',
+            tags: Array.isArray(recap?.overview?.tags) ? recap.overview.tags : []
+        },
+        traffic: {
+            biggestDrop: recap?.traffic?.biggestDrop || null,
+            trend: Array.isArray(recap?.timeline) ? recap.timeline.slice(0, 24).map(item => ({
+                timeRange: item.time_range,
+                income: Number(item.income || 0),
+                comments: Number(item.comments || 0),
+                maxOnline: Number(item.max_online || 0)
+            })) : []
+        },
+        keyMoments: Array.isArray(recap?.keyMoments) ? recap.keyMoments.slice(0, 5) : [],
+        highlights: normalizeAiReviewList(recap?.insights?.highlights, 5),
+        issues: normalizeAiReviewList(recap?.insights?.issues, 5),
+        actions: normalizeAiReviewList(recap?.insights?.actions, 5),
+        highFrequencyComments: Array.isArray(recap?.commentSignals?.topComments) ? recap.commentSignals.topComments.slice(0, 50) : [],
+        valuableComments,
+        coreCustomers: Array.isArray(recap?.valueCustomers?.core) ? recap.valueCustomers.core.slice(0, 8).map(serializeValueCustomer) : [],
+        potentialCustomers: Array.isArray(recap?.valueCustomers?.potential) ? recap.valueCustomers.potential.slice(0, 8).map(serializeValueCustomer) : [],
+        riskCustomers: Array.isArray(recap?.valueCustomers?.risk) ? recap.valueCustomers.risk.slice(0, 8).map(serializeValueCustomer) : [],
+        topGifters: Array.isArray(recap?.giftSignals?.topGifters) ? recap.giftSignals.topGifters.slice(0, 20) : [],
+        topGiftDetails: Array.isArray(recap?.giftSignals?.topGiftDetails) ? recap.giftSignals.topGiftDetails.slice(0, 20) : [],
+        dataNotes: [
+            '如果输入没有 GMV、留存率、分享率、关注增长，请不要编造。',
+            '客户结论优先结合礼物、弹幕、点赞、进房、历史价值等现有数据判断。'
+        ]
+    };
+}
+
+async function generateSessionAiReviewFromRecap(roomId, sessionId, recap, { trace = null } = {}) {
+    await emitAiTrace(trace, {
+        phase: 'review',
+        level: 'info',
+        message: '开始生成 AI 直播复盘',
+        payload: {
+            roomId,
+            sessionId,
+            totalGiftValue: Number(recap?.overview?.totalGiftValue || 0),
+            totalComments: Number(recap?.overview?.totalComments || 0),
+            totalLikes: Number(recap?.overview?.totalLikes || 0),
+            timelineCount: Array.isArray(recap?.timeline) ? recap.timeline.length : 0,
+            topCommentCount: Array.isArray(recap?.commentSignals?.topComments) ? recap.commentSignals.topComments.length : 0
+        }
+    });
+    const valuableComments = await filterSessionRecapCommentSignals(roomId, sessionId, recap?.commentSignals?.topComments || [], { trace });
+    const promptPayload = buildSessionRecapPromptPayload(roomId, sessionId, recap, valuableComments);
+    if (recap?.commentSignals) {
+        recap.commentSignals.valuableComments = valuableComments;
+    }
+
+    try {
+        const template = await getPromptTemplate('session_recap_review');
+        const promptText = renderPromptTemplate(template?.content || '', {
+            sessionDataJson: JSON.stringify(promptPayload, null, 2)
+        });
+        await emitAiTrace(trace, {
+            phase: 'review',
+            level: 'info',
+            message: '主分析提示词已渲染',
+            payload: {
+                templateKey: 'session_recap_review',
+                promptLength: promptText.length,
+                payloadLength: JSON.stringify(promptPayload).length,
+                valuableCommentCount: valuableComments.length
+            }
+        });
         const { completion, modelName, latencyMs: aiLatency } = await requestAiChatCompletion({
+            trace,
             requestLabel: `session recap ${roomId}/${sessionId}`,
             messages: [
                 {
                     role: 'system',
-                    content: '你是资深直播运营总监。请根据单场直播结构化数据，输出给老板看的简洁复盘。必须返回严格 JSON，对象结构为 {"summary":"...","highlights":["..."],"issues":["..."],"actions":["..."]}。每个数组最多 3 条，每条一句中文，不要 markdown，不要代码块。'
+                    content: '你是直播复盘结构化输出助手。你必须严格遵守用户提示词，并且只输出合法 JSON。'
                 },
                 {
                     role: 'user',
-                    content: `请基于以下单场复盘数据生成直播摘要：
-${JSON.stringify(promptPayload)}`
+                    content: promptText
                 }
             ]
         });
         const rawContent = completion.choices?.[0]?.message?.content || '';
 
         const extracted = extractFirstJsonObject(rawContent);
+        if (!extracted && !String(rawContent || '').trim().startsWith('{')) {
+            throw new Error('AI 返回内容不是合法 JSON');
+        }
         const parsed = parseSessionAiReview(extracted || rawContent, recap) || buildFallbackSessionAiReview(recap);
+        await emitAiTrace(trace, {
+            phase: 'review',
+            level: 'info',
+            message: 'AI 复盘解析完成',
+            payload: { modelName, latencyMs: aiLatency, highlightCount: parsed.highlights?.length || 0, issueCount: parsed.issues?.length || 0 }
+        });
 
         return {
             ...parsed,
@@ -1530,6 +2092,12 @@ ${JSON.stringify(promptPayload)}`
         };
     } catch (err) {
         const fallbackReason = getSessionAiFallbackReason(err);
+        await emitAiTrace(trace, {
+            phase: 'review',
+            level: 'warning',
+            message: '主分析失败，已回退到规则复盘',
+            payload: { fallbackReason, error: normalizeAiRuntimeError(err) }
+        });
         console.warn(`[AI] Session recap ${roomId}/${sessionId} downgraded to fallback (${fallbackReason})`);
         return {
             ...buildFallbackSessionAiReview(recap),
@@ -1538,6 +2106,216 @@ ${JSON.stringify(promptPayload)}`
             usedFallback: true
         };
     }
+}
+
+const AI_WORKER_POLL_MS = Math.max(3000, parseInt(process.env.AI_WORKER_POLL_MS || '5000', 10) || 5000);
+const AI_WORKER_MAX_CONCURRENCY = Math.max(1, Math.min(2, parseInt(process.env.AI_WORKER_MAX_CONCURRENCY || '1', 10) || 1));
+const aiWorkRuntime = {
+    timer: null,
+    activeJobs: new Set(),
+    ticking: false
+};
+
+async function appendAiWorkTrace(jobId, { phase = '', level = 'info', message = '', payload = null } = {}) {
+    if (!jobId || !message) return;
+    try {
+        await appendAiWorkJobLog(jobId, { phase, level, message, payload });
+    } catch (err) {
+        console.error('[AI_WORK] append log error:', err.message);
+    }
+}
+
+async function sendAiWorkJobNotification(job, { success = true, summary = '', errorMessage = '' } = {}) {
+    if (!job || !job.userId || job.notificationSent) return;
+
+    try {
+        const title = success ? 'AI直播复盘已完成' : 'AI直播复盘处理失败';
+        const content = success
+            ? `${job.title || 'AI直播复盘'} 已处理完成，点击可直达该房间的 AI复盘。${summary ? ` 摘要：${String(summary).slice(0, 80)}` : ''}`
+            : `${job.title || 'AI直播复盘'} 处理失败${errorMessage ? `：${String(errorMessage).slice(0, 120)}` : ''}，点击可回到该房间的 AI复盘。`;
+        const actionUrl = `/monitor.html?roomId=${encodeURIComponent(job.roomId || '')}&sessionId=${encodeURIComponent(job.sessionId || '')}&detailTab=timeStats`;
+
+        await notificationService.createUserNotification({
+            userId: job.userId,
+            type: 'ai_work',
+            level: success ? 'success' : 'error',
+            title,
+            content,
+            actionTab: 'notifications',
+            actionUrl
+        });
+        await updateAiWorkJob(job.id, { notificationSent: true });
+    } catch (err) {
+        console.error('[AI_WORK] send notification error:', err.message);
+    }
+}
+
+async function processSessionRecapAiWorkJob(job) {
+    const isAdmin = Boolean(job.isAdmin);
+    const trace = async ({ phase = '', level = 'info', message = '', payload = null } = {}) => {
+        await appendAiWorkTrace(job.id, { phase, level, message, payload });
+    };
+
+    try {
+        await markAiWorkJobStarted(job.id, '正在读取场次数据');
+        await trace({ phase: 'job', level: 'info', message: '任务开始执行', payload: { roomId: job.roomId, sessionId: job.sessionId, attemptCount: job.attemptCount } });
+
+        const session = await manager.getSession(job.sessionId);
+        if (!session) {
+            await trace({ phase: 'job', level: 'warning', message: 'session 表中未找到该场次，继续按事件数据尝试生成', payload: { roomId: job.roomId, sessionId: job.sessionId } });
+        } else if (String(session.roomId || '') !== String(job.roomId || '')) {
+            await trace({ phase: 'job', level: 'warning', message: '场次房间与任务房间不一致，继续尝试按任务房间生成', payload: { requestRoomId: job.roomId, sessionRoomId: session.roomId, sessionId: job.sessionId } });
+        }
+
+        const roomFilter = await getRoomFilterForUserScope(job.userId, isAdmin);
+        await updateAiWorkJob(job.id, { currentStep: '正在汇总复盘数据', progressPercent: 18 });
+        const recap = await manager.getSessionRecap(job.roomId, job.sessionId, roomFilter);
+        await trace({
+            phase: 'recap',
+            level: 'info',
+            message: '场次复盘数据加载完成',
+            payload: {
+                score: Number(recap?.overview?.score || 0),
+                totalGiftValue: Number(recap?.overview?.totalGiftValue || 0),
+                totalComments: Number(recap?.overview?.totalComments || 0),
+                totalLikes: Number(recap?.overview?.totalLikes || 0),
+                timelineCount: Array.isArray(recap?.timeline) ? recap.timeline.length : 0,
+                keyMomentCount: Array.isArray(recap?.keyMoments) ? recap.keyMoments.length : 0
+            }
+        });
+
+        await updateAiWorkJob(job.id, {
+            currentStep: '正在筛选高价值弹幕并生成复盘',
+            progressPercent: 42,
+            requestPayload: {
+                trigger: 'async_worker',
+                roomId: job.roomId,
+                sessionId: job.sessionId,
+                pointCost: Number(job.pointCost || SESSION_RECAP_AI_POINTS),
+                forceRegenerate: Boolean(job.forceRegenerate),
+                recapMetrics: {
+                    score: Number(recap?.overview?.score || 0),
+                    totalGiftValue: Number(recap?.overview?.totalGiftValue || 0),
+                    totalComments: Number(recap?.overview?.totalComments || 0),
+                    totalLikes: Number(recap?.overview?.totalLikes || 0),
+                    participantCount: Number(recap?.overview?.participantCount || 0),
+                    payingUsers: Number(recap?.overview?.payingUsers || 0)
+                },
+                topCommentCount: Array.isArray(recap?.commentSignals?.topComments) ? recap.commentSignals.topComments.length : 0,
+                topGiftUserCount: Array.isArray(recap?.giftSignals?.topGifters) ? recap.giftSignals.topGifters.length : 0
+            }
+        });
+
+        const generated = await generateSessionAiReviewFromRecap(job.roomId, job.sessionId, recap, { trace });
+        const review = parseSessionAiReview(generated, recap) || buildFallbackSessionAiReview(recap);
+        const chargedPoints = isAdmin || generated.usedFallback ? 0 : Number(job.pointCost || SESSION_RECAP_AI_POINTS);
+
+        await updateAiWorkJob(job.id, { currentStep: '正在保存复盘结果', progressPercent: 78, modelName: generated.modelName || '' });
+        const saveResult = await saveSessionAiReviewRecord(
+            job.userId,
+            job.roomId,
+            job.sessionId,
+            review,
+            generated.modelName,
+            chargedPoints
+        );
+
+        if (!saveResult.success) {
+            if (saveResult.insufficient) {
+                throw new Error('AI 点数不足，任务执行时扣点失败');
+            }
+            throw new Error(saveResult.error || '保存 AI 复盘失败');
+        }
+
+        await trace({
+            phase: 'result',
+            level: 'info',
+            message: 'AI 复盘结果已落库',
+            payload: {
+                chargedPoints,
+                usedFallback: Boolean(generated.usedFallback),
+                modelName: generated.modelName || '',
+                latencyMs: Number(generated.latencyMs || 0)
+            }
+        });
+
+        const completedJob = await markAiWorkJobCompleted(job.id, {
+            chargedPoints,
+            modelName: generated.modelName || '',
+            currentStep: '处理完成',
+            resultPayload: {
+                review,
+                usedFallback: Boolean(generated.usedFallback),
+                latencyMs: Number(generated.latencyMs || 0),
+                modelName: generated.modelName || '',
+                chargedPoints
+            }
+        });
+
+        await trace({ phase: 'job', level: 'info', message: '任务处理完成', payload: { jobId: job.id, chargedPoints } });
+        await sendAiWorkJobNotification(completedJob || { ...job, chargedPoints }, { success: true, summary: review?.bossSummary || review?.summary || '' });
+    } catch (err) {
+        const errorMessage = err?.message || '处理失败';
+        await trace({ phase: 'job', level: 'error', message: '任务执行失败', payload: { error: errorMessage } });
+        const failedJob = await markAiWorkJobFailed(job.id, {
+            errorMessage,
+            currentStep: '处理失败',
+            modelName: String(job.modelName || '')
+        });
+        await sendAiWorkJobNotification(failedJob || job, { success: false, errorMessage });
+    }
+}
+
+async function processAiWorkJob(job) {
+    if (!job) return;
+    if (job.jobType === AI_WORK_JOB_TYPE_SESSION_RECAP) {
+        await processSessionRecapAiWorkJob(job);
+        return;
+    }
+    throw new Error(`暂不支持的 AI 工作类型: ${job.jobType}`);
+}
+
+async function tickAiWorkQueue() {
+    if (aiWorkRuntime.ticking) return;
+    if (aiWorkRuntime.activeJobs.size >= AI_WORKER_MAX_CONCURRENCY) return;
+
+    aiWorkRuntime.ticking = true;
+    try {
+        const slots = AI_WORKER_MAX_CONCURRENCY - aiWorkRuntime.activeJobs.size;
+        if (slots <= 0) return;
+
+        const jobs = await claimNextAiWorkJobs(slots, 20);
+        for (const job of jobs) {
+            if (!job || aiWorkRuntime.activeJobs.has(job.id)) continue;
+            aiWorkRuntime.activeJobs.add(job.id);
+            appendAiWorkTrace(job.id, { phase: 'job', level: 'info', message: '任务已被后台 worker 领取', payload: { status: job.status, attemptCount: job.attemptCount } }).catch(() => {});
+            processAiWorkJob(job)
+                .catch(err => {
+                    console.error('[AI_WORK] process job error:', err.message);
+                })
+                .finally(() => {
+                    aiWorkRuntime.activeJobs.delete(job.id);
+                    setTimeout(() => {
+                        tickAiWorkQueue().catch(() => {});
+                    }, 100);
+                });
+        }
+    } catch (err) {
+        console.error('[AI_WORK] tick queue error:', err.message);
+    } finally {
+        aiWorkRuntime.ticking = false;
+    }
+}
+
+function startAiWorkQueueProcessor() {
+    if (aiWorkRuntime.timer) return;
+    setTimeout(() => {
+        tickAiWorkQueue().catch(err => console.error('[AI_WORK] initial tick error:', err.message));
+    }, 3000);
+    aiWorkRuntime.timer = setInterval(() => {
+        tickAiWorkQueue().catch(err => console.error('[AI_WORK] interval tick error:', err.message));
+    }, AI_WORKER_POLL_MS);
+    console.log(`[AI_WORK] Queue processor started (poll=${AI_WORKER_POLL_MS}ms, concurrency=${AI_WORKER_MAX_CONCURRENCY})`);
 }
 
 function getSimulatedAiDelayMs() {
@@ -2344,7 +3122,7 @@ app.post('/api/socks5_proxies/:id/test', async (req, res) => {
 
 
 // Debug API - Force clear a stale connection (for testing)
-app.delete('/api/debug/connections/:id', async (req, res) => {
+app.delete('/api/debug/connections/:id', authenticate, requireAdmin, async (req, res) => {
     const roomId = req.params.id;
     console.log(`[Debug] Force clearing connection for ${roomId}`);
     const result = await autoRecorder.disconnectRoom(roomId);
@@ -2352,7 +3130,7 @@ app.delete('/api/debug/connections/:id', async (req, res) => {
 });
 
 // Migrate events from numeric room_id to username room_id
-app.post('/api/migrate-events', async (req, res) => {
+app.post('/api/migrate-events', authenticate, requireAdmin, async (req, res) => {
     try {
         await manager.migrateEventRoomIds();
         res.json({ success: true, message: 'Events migrated successfully' });
@@ -2362,30 +3140,36 @@ app.post('/api/migrate-events', async (req, res) => {
 });
 
 // Fix orphaned events - create sessions for events without session_id
-app.post('/api/fix-orphaned-events', async (req, res) => {
+app.post('/api/fix-orphaned-events', authenticate, requireAdmin, async (req, res) => {
     try {
-        const result = await manager.fixOrphanedEvents();
-        res.json({ success: true, ...result });
+        const task = await runSessionMaintenanceTask('fix_orphaned_events', {
+            triggerSource: 'legacy-api',
+        });
+        res.json({ success: true, ...task.result });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
 // Delete empty sessions (sessions with 0 events)
-app.post('/api/delete-empty-sessions', async (req, res) => {
+app.post('/api/delete-empty-sessions', authenticate, requireAdmin, async (req, res) => {
     try {
-        const result = await manager.deleteEmptySessions();
-        res.json({ success: true, ...result });
+        const task = await runSessionMaintenanceTask('delete_empty_sessions', {
+            triggerSource: 'legacy-api',
+        });
+        res.json({ success: true, ...task.result });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
 // Rebuild missing session records (for events with session_id but no session record)
-app.post('/api/rebuild-missing-sessions', async (req, res) => {
+app.post('/api/rebuild-missing-sessions', authenticate, requireAdmin, async (req, res) => {
     try {
-        const result = await manager.rebuildMissingSessions();
-        res.json({ success: true, ...result });
+        const task = await runSessionMaintenanceTask('rebuild_missing_sessions', {
+            triggerSource: 'legacy-api',
+        });
+        res.json({ success: true, ...task.result });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -2449,11 +3233,14 @@ const PORT = process.env.PORT || 8081;
 httpServer.listen(PORT, async () => {
     console.log(`Server started on http://localhost:${PORT}`);
 
+    await db.initDb();
+
     // Cleanup orphaned recording tasks from previous session (crashed or force-closed)
     await recordingManager.cleanupOrphanedTasks();
 
     // Start user management periodic tasks (subscription expiry, token cleanup)
     startPeriodicTasks();
+    startAiWorkQueueProcessor();
 
     // Scheduled jobs
     // Run user language analysis every hour
@@ -2463,16 +3250,6 @@ httpServer.listen(PORT, async () => {
             await manager.analyzeUserLanguages(2000);
         } catch (err) {
             console.error('[CRON] Language analysis error:', err.message);
-        }
-    }, 60 * 60 * 1000); // Every hour
-
-    // Run session consolidation every hour
-    setInterval(async () => {
-        try {
-            console.log('[CRON] Running hourly session consolidation...');
-            await manager.consolidateRecentSessions(48, 60);
-        } catch (err) {
-            console.error('[CRON] Session consolidation error:', err.message);
         }
     }, 60 * 60 * 1000); // Every hour
 

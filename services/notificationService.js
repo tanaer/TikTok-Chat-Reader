@@ -13,8 +13,17 @@ function normalizeNotificationType(value) {
 
 function normalizeNotificationActionTab(value) {
     const raw = String(value || '').trim().toLowerCase();
-    if (['overview', 'orders', 'balance', 'subscription', 'settings', 'notifications'].includes(raw)) return raw;
+    if (['overview', 'orders', 'balance', 'subscription', 'settings', 'notifications', 'ai_work'].includes(raw)) return raw;
     return 'notifications';
+}
+
+function normalizeNotificationActionUrl(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    if (!raw.startsWith('/')) return '';
+    if (raw.startsWith('//')) return '';
+    if (/^\/?javascript:/i.test(raw)) return '';
+    return raw.slice(0, 500);
 }
 
 function serializeUserNotification(row) {
@@ -27,22 +36,23 @@ function serializeUserNotification(row) {
         content: String(item.content || ''),
         relatedOrderNo: String(item.relatedOrderNo || ''),
         actionTab: normalizeNotificationActionTab(item.actionTab),
+        actionUrl: normalizeNotificationActionUrl(item.actionUrl),
         isRead: item.isRead === true,
         createdAt: item.createdAt || '',
         readAt: item.readAt || ''
     };
 }
 
-async function createUserNotification({ executor = db.pool, userId, type = 'system', level = 'info', title, content = '', relatedOrderNo = '', actionTab = 'notifications' }) {
+async function createUserNotification({ executor = db.pool, userId, type = 'system', level = 'info', title, content = '', relatedOrderNo = '', actionTab = 'notifications', actionUrl = '' }) {
     const safeUserId = Number(userId || 0);
     if (!safeUserId) throw new Error('缺少通知用户');
     const safeTitle = String(title || '').trim();
     if (!safeTitle) throw new Error('缺少通知标题');
 
     const result = await executor.query(
-        `INSERT INTO user_notifications (user_id, type, level, title, content, related_order_no, action_tab, is_read, created_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, FALSE, NOW())
-         RETURNING id, type, level, title, content, related_order_no, action_tab, is_read, created_at, read_at`,
+        `INSERT INTO user_notifications (user_id, type, level, title, content, related_order_no, action_tab, action_url, is_read, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, NOW())
+         RETURNING id, type, level, title, content, related_order_no, action_tab, action_url, is_read, created_at, read_at`,
         [
             safeUserId,
             normalizeNotificationType(type),
@@ -50,7 +60,8 @@ async function createUserNotification({ executor = db.pool, userId, type = 'syst
             safeTitle,
             String(content || '').trim(),
             String(relatedOrderNo || '').trim(),
-            normalizeNotificationActionTab(actionTab)
+            normalizeNotificationActionTab(actionTab),
+            normalizeNotificationActionUrl(actionUrl)
         ]
     );
 
@@ -64,7 +75,7 @@ async function listUserNotifications(userId, { page = 1, limit = 20 } = {}) {
 
     const [rowsResult, countResult, unreadResult] = await Promise.all([
         db.pool.query(
-            `SELECT id, type, level, title, content, related_order_no, action_tab, is_read, created_at, read_at
+            `SELECT id, type, level, title, content, related_order_no, action_tab, action_url, is_read, created_at, read_at
              FROM user_notifications
              WHERE user_id = $1
              ORDER BY is_read ASC, created_at DESC, id DESC
@@ -92,7 +103,7 @@ async function markUserNotificationRead(userId, notificationId) {
          SET is_read = TRUE,
              read_at = COALESCE(read_at, NOW())
          WHERE id = $1 AND user_id = $2
-         RETURNING id, type, level, title, content, related_order_no, action_tab, is_read, created_at, read_at`,
+         RETURNING id, type, level, title, content, related_order_no, action_tab, action_url, is_read, created_at, read_at`,
         [notificationId, userId]
     );
 

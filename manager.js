@@ -559,7 +559,7 @@ class Manager {
 
             if (!existing) {
                 // Create new session
-                await run(`INSERT INTO session (session_id, room_id, created_at, info) VALUES (?, ?, ?, ?)`, [
+                await run(`INSERT INTO session (session_id, room_id, created_at, snapshot_json) VALUES (?, ?, ?, ?)`, [
                     sessionId,
                     room_id,
                     event_date + ' 00:00:00',
@@ -688,9 +688,12 @@ class Manager {
     // OPTIMIZED: Uses LEFT JOIN instead of N+1 subqueries
     async mergeContinuitySessions(gapMinutes = 10) {
         await this.ensureDb();
-        const gapMs = gapMinutes * 60 * 1000;
+        const safeGapMinutes = Number.isFinite(Number(gapMinutes)) && Number(gapMinutes) > 0
+            ? Number(gapMinutes)
+            : 10;
+        const gapMs = safeGapMinutes * 60 * 1000;
 
-        console.log(`[Manager] Checking for sessions to merge (Gap < ${gapMinutes}m)...`);
+        console.log(`[Manager] Checking for sessions to merge (Gap < ${safeGapMinutes}m)...`);
 
         // Pre-compute ALL session boundaries in one query (MUCH faster than N+1)
         const allSessions = await query(`
@@ -717,17 +720,23 @@ class Manager {
         }
 
         console.log(`[Manager] Merged ${mergedCount} sessions.`);
-        return { mergedCount };
+        return { mergedCount, gapMinutes: safeGapMinutes };
     }
 
     // New optimized method for hourly job: Only check recent sessions
     // OPTIMIZED: Uses LEFT JOIN instead of N+1 subqueries
     async consolidateRecentSessions(hours = 48, gapMinutes = 60) {
         await this.ensureDb();
-        const timeLimit = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
-        const gapMs = gapMinutes * 60 * 1000;
+        const safeHours = Number.isFinite(Number(hours)) && Number(hours) > 0
+            ? Number(hours)
+            : 48;
+        const safeGapMinutes = Number.isFinite(Number(gapMinutes)) && Number(gapMinutes) > 0
+            ? Number(gapMinutes)
+            : 60;
+        const timeLimit = new Date(Date.now() - safeHours * 60 * 60 * 1000).toISOString();
+        const gapMs = safeGapMinutes * 60 * 1000;
 
-        console.log(`[Manager] Consolidating sessions from last ${hours}h with gap < ${gapMinutes}m...`);
+        console.log(`[Manager] Consolidating sessions from last ${safeHours}h with gap < ${safeGapMinutes}m...`);
 
         // Pre-compute ALL recent session boundaries in one query
         const recentSessions = await query(`
@@ -757,7 +766,7 @@ class Manager {
         if (totalMerged > 0) {
             console.log(`[Manager] Consolidate job merged ${totalMerged} fragmented sessions.`);
         }
-        return { mergedCount: totalMerged };
+        return { mergedCount: totalMerged, lookbackHours: safeHours, gapMinutes: safeGapMinutes };
     }
 
     async _mergeSessionList(sessions, gapMs) {
@@ -820,26 +829,31 @@ class Manager {
     }
 
     // Startup Cleanup: Archive any "live" events that are old (orphaned from crash)
-    async cleanupAllStaleEvents() {
+    async cleanupAllStaleEvents(options = {}) {
         await this.ensureDb();
         console.log('[Manager] Checking for orphaned live events...');
 
+        const splitOlderThanMinutes = Number.isFinite(Number(options.splitOlderThanMinutes)) && Number(options.splitOlderThanMinutes) > 0
+            ? Number(options.splitOlderThanMinutes)
+            : 120;
+
         const rooms = await query('SELECT room_id FROM room WHERE is_monitor_enabled = 1');
         let totalArchived = 0;
+        let scannedRooms = 0;
 
         for (const room of rooms) {
-            // Check for stale events > 2 hours old that are still "live"
-            const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
+            scannedRooms++;
+            const staleBefore = new Date(Date.now() - splitOlderThanMinutes * 60 * 1000).toISOString();
 
             // Just count them first to see if we need to act
             const staleCountRow = await get(`
                 SELECT COUNT(*) as c FROM event
                 WHERE room_id = ? AND session_id IS NULL AND timestamp < ?
-            `, [room.room_id, twoHoursAgo]);
+            `, [room.room_id, staleBefore]);
 
             if (staleCountRow && staleCountRow.c > 0) {
                 console.log(`[Manager] Found ${staleCountRow.c} orphaned events for ${room.room_id}. Archiving...`);
-                const result = await this.archiveStaleLiveEvents(room.room_id);
+                const result = await this.archiveStaleLiveEvents(room.room_id, options);
                 totalArchived += result.archived;
             }
         }
@@ -847,6 +861,12 @@ class Manager {
         if (totalArchived > 0) {
             console.log(`[Manager] Cleanup complete. Archived ${totalArchived} orphaned events.`);
         }
+
+        return {
+            archived: totalArchived,
+            scannedRooms,
+            splitOlderThanMinutes,
+        };
     }
 
     async getSessionEvents(sessionId) {
@@ -937,9 +957,12 @@ class Manager {
                 MAX(nickname) as nickname,
                 MAX(unique_id) as uniqueId,
                 SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as sessionGiftValue,
+                SUM(CASE WHEN type = 'gift' THEN COALESCE(repeat_count, 1) ELSE 0 END) as giftCount,
                 COUNT(*) FILTER (WHERE type = 'chat') as chatCount,
                 SUM(CASE WHEN type = 'like' THEN COALESCE(like_count, 0) ELSE 0 END) as likeCount,
-                COUNT(*) FILTER (WHERE type = 'member') as enterCount
+                COUNT(*) FILTER (WHERE type = 'member') as enterCount,
+                MIN(timestamp) FILTER (WHERE type = 'member') as firstEnterAt,
+                MAX(timestamp) as lastActiveAt
             FROM event
             ${whereClause} AND COALESCE(NULLIF(user_id, ''), NULLIF(unique_id, ''), nickname) IS NOT NULL
             GROUP BY participantKey
@@ -957,7 +980,7 @@ class Manager {
             SELECT *
             FROM (${participantAggSql}) participant_base
             ORDER BY sessionGiftValue DESC, chatCount DESC, likeCount DESC
-            LIMIT 18
+            LIMIT 48
         `, params);
 
         if (!participants.length) {
@@ -972,6 +995,7 @@ class Manager {
         const enriched = await Promise.all(participants.map(async (participant) => {
             const history = participant.userId ? await this.getUserAnalysis(participant.userId, roomFilter) : null;
             const sessionGiftValue = parseInt(participant.sessionGiftValue) || 0;
+            const giftCount = parseInt(participant.giftCount) || 0;
             const chatCount = parseInt(participant.chatCount) || 0;
             const likeCount = parseInt(participant.likeCount) || 0;
             const enterCount = parseInt(participant.enterCount) || 0;
@@ -983,9 +1007,12 @@ class Manager {
                 nickname: participant.nickname || participant.uniqueId || '匿名',
                 uniqueId: participant.uniqueId || '',
                 sessionGiftValue,
+                giftCount,
                 chatCount,
                 likeCount,
                 enterCount,
+                firstEnterAt: participant.firstEnterAt || null,
+                lastActiveAt: participant.lastActiveAt || null,
                 historicalValue,
                 activeDays: parseInt(history?.activeDays) || 0,
                 dailyAvg: Math.round(Number(history?.dailyAvg) || 0),
@@ -1006,10 +1033,13 @@ class Manager {
             nickname: item.nickname,
             uniqueId: item.uniqueId,
             sessionGiftValue: item.sessionGiftValue,
+            giftCount: item.giftCount,
             historicalValue: item.historicalValue,
             chatCount: item.chatCount,
             likeCount: item.likeCount,
             enterCount: item.enterCount,
+            firstEnterAt: item.firstEnterAt,
+            lastActiveAt: item.lastActiveAt,
             fanLevel: item.fanLevel,
             commonLanguage: item.commonLanguage,
             topGiftRoom: item.topGiftRoom,
@@ -1020,7 +1050,7 @@ class Manager {
         const core = enriched
             .filter(item => item.sessionGiftValue > 0)
             .sort((a, b) => (b.sessionGiftValue - a.sessionGiftValue) || (b.historicalValue - a.historicalValue))
-            .slice(0, 3)
+            .slice(0, 5)
             .map(item => asCard(
                 item,
                 `本场贡献 💎${item.sessionGiftValue.toLocaleString()}，历史累计 💎${item.historicalValue.toLocaleString()}`,
@@ -1033,7 +1063,7 @@ class Manager {
             .filter(item => !used.has(item.participantKey))
             .filter(item => item.weightedInteraction >= 12 && item.sessionGiftValue <= Math.max(0, Math.round(item.historicalValue * 0.03)))
             .sort((a, b) => (b.weightedInteraction - a.weightedInteraction) || (a.sessionGiftValue - b.sessionGiftValue))
-            .slice(0, 3)
+            .slice(0, 5)
             .map(item => asCard(
                 item,
                 `互动信号强（${item.chatCount}条弹幕 / ${item.likeCount}点赞），但本场转化仍偏低。`,
@@ -1046,7 +1076,7 @@ class Manager {
             .filter(item => !used.has(item.participantKey))
             .filter(item => item.historicalValue >= 1000 && item.sessionGiftValue === 0)
             .sort((a, b) => (b.historicalValue - a.historicalValue) || (b.enterCount - a.enterCount))
-            .slice(0, 3)
+            .slice(0, 5)
             .map(item => asCard(
                 item,
                 `历史累计 💎${item.historicalValue.toLocaleString()}，但本场未形成有效出手。`,
@@ -1058,7 +1088,7 @@ class Manager {
                 .filter(item => !used.has(item.participantKey))
                 .filter(item => item.historicalValue >= 1000 && item.sessionGiftValue < Math.max(50, Math.round(item.historicalValue * 0.02)))
                 .sort((a, b) => (b.historicalValue - a.historicalValue) || (a.sessionGiftValue - b.sessionGiftValue))
-                .slice(0, 3)
+                .slice(0, 5)
                 .map(item => asCard(
                     item,
                     `历史价值高，但本场贡献仅 💎${item.sessionGiftValue.toLocaleString()}，明显偏弱。`,
@@ -1085,6 +1115,27 @@ class Manager {
         const timeline = await this.getTimeStats(roomId, sessionId);
         const valueCustomers = await this.getSessionValueCustomers(roomId, sessionId, roomFilter);
 
+        let commentWhereClause = `WHERE room_id = ? AND type = 'chat' AND comment IS NOT NULL AND LENGTH(TRIM(comment)) > 0`;
+        const commentParams = [roomId];
+        if (sessionId === 'live' || !sessionId) {
+            commentWhereClause += ' AND session_id IS NULL';
+        } else {
+            commentWhereClause += ' AND session_id = ?';
+            commentParams.push(sessionId);
+        }
+
+        const topComments = await query(`
+            SELECT
+                TRIM(comment) as comment,
+                COUNT(*) as count,
+                MAX(timestamp) as lastSeenAt
+            FROM event
+            ${commentWhereClause}
+            GROUP BY TRIM(comment)
+            ORDER BY count DESC, lastSeenAt DESC
+            LIMIT 80
+        `, commentParams);
+
         const totalGiftValue = Number(detail?.summary?.totalGiftValue || 0);
         const totalComments = Number(detail?.summary?.totalComments || 0);
         const totalLikes = Number(detail?.summary?.totalLikes || 0);
@@ -1098,6 +1149,10 @@ class Manager {
         const activeBuckets = timeline.filter(item => (item.income || 0) > 0 || (item.comments || 0) > 0 || (item.max_online || 0) > 0);
         const hasViewerSnapshots = timeline.some(item => Number(item.viewer_samples || 0) > 0);
         const trafficMetricLabel = hasViewerSnapshots ? '在线波动' : '流量波动';
+        const peakOnline = timeline.reduce((max, item) => Math.max(max, Number(item.max_online || 0)), 0);
+        const avgOnline = activeBuckets.length
+            ? Math.round(activeBuckets.reduce((sum, item) => sum + Number(item.max_online || 0), 0) / activeBuckets.length)
+            : 0;
         let biggestDrop = null;
         if (hasViewerSnapshots) {
             for (let i = 1; i < timeline.length; i += 1) {
@@ -1227,10 +1282,38 @@ class Manager {
             timeline,
             radar,
             keyMoments: keyMoments.slice(0, 3),
+            traffic: {
+                peakOnline,
+                avgOnline,
+                topRange: topOnlineBucket?.time_range || '',
+                biggestDrop
+            },
             insights: {
                 highlights: highlights.slice(0, 3),
                 issues: issues.slice(0, 3),
                 actions: actions.slice(0, 3)
+            },
+            commentSignals: {
+                topComments: Array.isArray(topComments) ? topComments.slice(0, 50).map(item => ({
+                    text: item.comment,
+                    count: parseInt(item.count) || 0,
+                    lastSeenAt: item.lastSeenAt || null
+                })) : []
+            },
+            giftSignals: {
+                topGifters: Array.isArray(detail?.leaderboards?.gifters) ? detail.leaderboards.gifters.slice(0, 20).map(item => ({
+                    nickname: item.nickname || '匿名',
+                    userId: item.userId || '',
+                    totalGiftValue: parseInt(item.value) || 0
+                })) : [],
+                topGiftDetails: Array.isArray(detail?.leaderboards?.giftDetails) ? detail.leaderboards.giftDetails.slice(0, 40).map(item => ({
+                    nickname: item.nickname || '匿名',
+                    uniqueId: item.uniqueId || '',
+                    giftName: item.giftName || '',
+                    giftCount: parseInt(item.count) || 0,
+                    unitPrice: parseInt(item.unitPrice) || 0,
+                    totalValue: parseInt(item.totalValue) || 0
+                })) : []
             },
             valueCustomers
         };
@@ -2666,11 +2749,20 @@ class Manager {
     // Two strategies:
     // 1. If there's a large time gap (1 hour), split the events at the gap
     // 2. Force archive any events older than 2 hours (prevents 20+ hour "live" sessions)
-    async archiveStaleLiveEvents(roomId) {
+    async archiveStaleLiveEvents(roomId, options = {}) {
         await this.ensureDb();
 
         const now = Date.now();
-        const twoHoursAgo = new Date(now - 2 * 60 * 60 * 1000).toISOString();
+        const gapThresholdMinutes = Number.isFinite(Number(options.gapThresholdMinutes)) && Number(options.gapThresholdMinutes) > 0
+            ? Number(options.gapThresholdMinutes)
+            : 60;
+        const splitOlderThanMinutes = Number.isFinite(Number(options.splitOlderThanMinutes)) && Number(options.splitOlderThanMinutes) > 0
+            ? Number(options.splitOlderThanMinutes)
+            : 120;
+        const archiveAllOlderThanMinutes = Number.isFinite(Number(options.archiveAllOlderThanMinutes)) && Number(options.archiveAllOlderThanMinutes) > 0
+            ? Number(options.archiveAllOlderThanMinutes)
+            : 30;
+        const splitOlderThanTimestamp = now - splitOlderThanMinutes * 60 * 1000;
 
         // Get all timestamps of current live events
         const events = await query(`
@@ -2682,7 +2774,7 @@ class Manager {
 
         if (events.length === 0) return { archived: 0 };
 
-        const GAP_THRESHOLD_MS = 60 * 60 * 1000; // 1 hour gap counts as new session
+        const GAP_THRESHOLD_MS = gapThresholdMinutes * 60 * 1000;
         let lastTime = new Date(events[0].timestamp).getTime();
         let splitIndex = -1;
 
@@ -2707,16 +2799,17 @@ class Manager {
             const ageOfOldest = now - oldestEventTime;
             const ageOfNewest = now - newestEventTime;
 
-            if (ageOfOldest > 2 * 60 * 60 * 1000 && ageOfNewest < 10 * 60 * 1000) {
+            if (ageOfOldest > splitOlderThanMinutes * 60 * 1000 && ageOfNewest < 10 * 60 * 1000) {
                 // Archive events older than 2 hours as a separate session
                 for (let i = 0; i < events.length; i++) {
-                    if (events[i].timestamp > twoHoursAgo) {
+                    const eventTimestamp = new Date(events[i].timestamp).getTime();
+                    if (eventTimestamp > splitOlderThanTimestamp) {
                         splitIndex = i;
                         break;
                     }
                 }
                 if (splitIndex > 0) {
-                    console.log(`[Manager] Forcing archive of ${splitIndex} old events for ${roomId} (Age-based split)`);
+                    console.log(`[Manager] Forcing archive of ${splitIndex} old events for ${roomId} (Age-based split > ${splitOlderThanMinutes}m)`);
                 }
             }
         }
@@ -2726,12 +2819,12 @@ class Manager {
         if (splitIndex === -1) {
             const newestEventTime = new Date(events[events.length - 1].timestamp).getTime();
             const ageOfNewest = now - newestEventTime;
-            const STALE_THRESHOLD_MS = 30 * 60 * 1000; // 30 minutes
+            const STALE_THRESHOLD_MS = archiveAllOlderThanMinutes * 60 * 1000;
 
             if (ageOfNewest > STALE_THRESHOLD_MS) {
                 // All events are stale - archive everything
                 splitIndex = events.length; // Archive all
-                console.log(`[Manager] Archiving all ${events.length} stale events for ${roomId} (All events > 30 min old)`);
+                console.log(`[Manager] Archiving all ${events.length} stale events for ${roomId} (All events > ${archiveAllOlderThanMinutes} min old)`);
             }
         }
 
@@ -2775,7 +2868,13 @@ class Manager {
                 WHERE room_id = ? AND session_id IS NULL AND timestamp <= ?
             `, [finalSessionId, roomId, lastT]);
 
-            return { archived: staleEvents.length, sessionId: finalSessionId };
+            return {
+                archived: staleEvents.length,
+                sessionId: finalSessionId,
+                gapThresholdMinutes,
+                splitOlderThanMinutes,
+                archiveAllOlderThanMinutes,
+            };
         }
 
         return { archived: 0 };
