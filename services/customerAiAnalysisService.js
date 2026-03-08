@@ -3,6 +3,14 @@ const { buildCustomerContext, CUSTOMER_CONTEXT_VERSION } = require('./aiContextS
 
 const CUSTOMER_ANALYSIS_PROMPT_KEY = 'customer_analysis_review';
 
+const CUSTOMER_ANALYSIS_SYSTEM_GUARDRAILS = [
+    '你是严格的客户分析 JSON 输出器。',
+    '结构化上下文是最高优先级事实来源，聊天语料只能补充解释，不能推翻系统结果。',
+    '所有数值、时间、排行、模型标签都由系统提供；你不得新增、修改、换算或重命名。',
+    'valueLevelCurrentRoom 和 valueLevelGlobal 必须直接沿用系统已有标签；没有依据时写“当前未提供该项数据”。',
+    '只能输出合法 JSON，不要输出 Markdown、代码块或额外说明。'
+].join('\n');
+
 function stripMarkdownCodeFence(text) {
     const normalized = String(text || '').trim();
     return normalized
@@ -132,7 +140,7 @@ async function runCustomerAnalysis({ preparedInput, requestAiChatCompletion, tra
         messages: [
             {
                 role: 'system',
-                content: '你必须严格遵守输入里的系统事实，只输出合法 JSON，不得补造数值、时间、排行和模型标签。'
+                content: CUSTOMER_ANALYSIS_SYSTEM_GUARDRAILS
             },
             {
                 role: 'user',
