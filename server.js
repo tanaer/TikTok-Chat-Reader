@@ -2703,13 +2703,13 @@ async function appendAiWorkTrace(jobId, { phase = '', level = 'info', message = 
     }
 }
 
-async function sendAiWorkJobNotification(job, { success = true, summary = '', errorMessage = '' } = {}) {
+async function sendAiWorkJobNotification(job, { success = true, errorMessage = '' } = {}) {
     if (!job || !job.userId || job.notificationSent) return;
 
     try {
         const title = success ? 'AI直播复盘已完成' : 'AI直播复盘处理失败';
         const content = success
-            ? `${job.title || 'AI直播复盘'} 已处理完成，点击可直达该房间的 AI复盘。${summary ? ` 摘要：${String(summary).slice(0, 80)}` : ''}`
+            ? `${job.title || 'AI直播复盘'} 已处理完成，点击可直达该房间的 AI复盘。`
             : `${job.title || 'AI直播复盘'} 处理失败${errorMessage ? `：${String(errorMessage).slice(0, 120)}` : ''}，点击可回到该房间的 AI复盘。`;
         const actionUrl = `/monitor.html?roomId=${encodeURIComponent(job.roomId || '')}&sessionId=${encodeURIComponent(job.sessionId || '')}&detailTab=timeStats`;
 
@@ -2831,7 +2831,7 @@ async function processSessionRecapAiWorkJob(job) {
         });
 
         await trace({ phase: 'job', level: 'info', message: '任务处理完成', payload: { jobId: job.id, chargedPoints } });
-        await sendAiWorkJobNotification(completedJob || { ...job, chargedPoints }, { success: true, summary: review?.bossSummary || review?.summary || '' });
+        await sendAiWorkJobNotification(completedJob || { ...job, chargedPoints }, { success: true });
     } catch (err) {
         const errorMessage = err?.message || '处理失败';
         await trace({ phase: 'job', level: 'error', message: '任务执行失败', payload: { error: errorMessage } });
