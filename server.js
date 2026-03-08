@@ -54,6 +54,7 @@ const {
 const { WorkerProcessManager } = require('./services/workerProcessManager');
 const cacheService = require('./services/cacheService');
 const { disconnectRedisClient } = require('./services/redisClient');
+const liveStateService = require('./services/liveStateService');
 
 let schemeAConfig = getSchemeAConfig();
 let recordingStorageService = new RecordingStorageService({ schemeAConfig });
@@ -414,6 +415,60 @@ async function invalidateRoomListCaches(reason = 'manual') {
         cacheBackend: cacheService.isRoomCacheEnabled() ? 'redis' : 'memory',
         clearedCount,
     });
+}
+
+async function getEffectiveLiveRoomIds() {
+    const liveRoomIdSet = new Set(autoRecorder.getLiveRoomIds());
+
+    if (liveStateService.isLiveStateEnabled()) {
+        const redisLiveRoomIds = await liveStateService.listLiveRoomIds();
+        for (const roomId of redisLiveRoomIds) {
+            if (roomId) liveRoomIdSet.add(roomId);
+        }
+    }
+
+    return Array.from(liveRoomIdSet);
+}
+
+function applyLiveStateToRoomPayload(payload, liveRoomIds = [], options = {}) {
+    if (!payload || !Array.isArray(payload.data)) {
+        return payload;
+    }
+
+    const liveRoomIdSet = new Set((liveRoomIds || []).map(roomId => String(roomId || '').trim()).filter(Boolean));
+    const nextPayload = {
+        ...payload,
+        data: payload.data.map((room) => ({
+            ...room,
+            isLive: liveRoomIdSet.has(String(room.roomId || '').trim()),
+        })),
+    };
+
+    if (options.sortLiveFirst) {
+        nextPayload.data.sort((a, b) => {
+            if (a.isLive && !b.isLive) return -1;
+            if (!a.isLive && b.isLive) return 1;
+            return 0;
+        });
+    }
+
+    return nextPayload;
+}
+
+async function getEffectiveRoomLiveFlag(roomId) {
+    const normalizedRoomId = String(roomId || '').trim();
+    if (!normalizedRoomId) return false;
+
+    if (autoRecorder.getLiveRoomIds().includes(normalizedRoomId)) {
+        return true;
+    }
+
+    if (!liveStateService.isLiveStateEnabled()) {
+        return false;
+    }
+
+    const liveState = await liveStateService.getLiveState(normalizedRoomId);
+    return liveStateService.isRoomLive(liveState);
 }
 
 function buildRoomListMetricContext(endpoint, req, params = {}) {
@@ -1055,14 +1110,18 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
     const sort = req.query.sort || 'default';
 
     try {
-        const liveRoomIds = autoRecorder.getLiveRoomIds();
         const roomStatsCache = await readRoomListCache('stats', req, { page, limit, search, sort });
         if (roomStatsCache.payload) {
-            logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, roomStatsCache.payload, true);
-            return res.json(roomStatsCache.payload);
+            const liveRoomIds = await getEffectiveLiveRoomIds();
+            const cachedPayload = applyLiveStateToRoomPayload(roomStatsCache.payload, liveRoomIds, {
+                sortLiveFirst: sort === 'default' || sort === 'updated_at',
+            });
+            logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, cachedPayload, true);
+            return res.json(cachedPayload);
         }
 
         const { roomFilter, userRoomData } = await getUserRoomAccessContext(req);
+        const liveRoomIds = await getEffectiveLiveRoomIds();
 
         console.log(`[API] /api/rooms/stats - user: ${req.user?.username || 'anonymous'}, role: ${req.user?.role || 'none'}, roomFilter: ${roomFilter === null ? 'null(admin)' : roomFilter?.length + ' rooms'}`);
 
@@ -1111,15 +1170,16 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
     try {
         const roomsCache = await readRoomListCache('rooms', req, { page, limit, search });
         if (roomsCache.payload) {
-            logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, roomsCache.payload, true);
-            return res.json(roomsCache.payload);
+            const liveRoomIds = await getEffectiveLiveRoomIds();
+            const cachedPayload = applyLiveStateToRoomPayload(roomsCache.payload, liveRoomIds);
+            logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, cachedPayload, true);
+            return res.json(cachedPayload);
         }
 
         const { roomFilter, userRoomData } = await getUserRoomAccessContext(req);
         const result = await manager.getRooms({ page, limit, search, roomFilter });
 
-        // Merge isLive status from autoRecorder activeConnections
-        const liveRoomIds = autoRecorder.getLiveRoomIds();
+        const liveRoomIds = await getEffectiveLiveRoomIds();
         result.data = result.data.map(room => {
             const copy = userRoomData ? userRoomData[room.roomId] : null;
             return {
@@ -1193,8 +1253,7 @@ app.get('/api/rooms/:id/stats_detail', optionalAuth, async (req, res) => {
         const data = await manager.getRoomDetailStats(roomId, sessionId);
 
         // Get isLive status
-        const liveRoomIds = autoRecorder.getLiveRoomIds();
-        const isLive = liveRoomIds.includes(roomId);
+        const isLive = await getEffectiveRoomLiveFlag(roomId);
 
         // Get last session for fallback
         const sessions = await manager.getSessions(roomId);
@@ -3854,6 +3913,7 @@ async function gracefulShutdown(signal) {
         // Stop all active recordings and save their state
         await recordingManager.stopAllRecordings();
 
+        liveStateService.shutdownLiveStateService();
         await disconnectRedisClient();
 
         // Close HTTP server

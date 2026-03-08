@@ -8,6 +8,7 @@ const {
 } = require('./services/sessionMaintenanceService');
 const keyManager = require('./utils/keyManager');
 const dynamicProxyManager = require('./utils/DynamicProxyManager');
+const liveStateService = require('./services/liveStateService');
 
 
 class AutoRecorder {
@@ -634,11 +635,14 @@ class AutoRecorder {
             wrapper.on('connected', async state => {
                 console.log(`[AutoRecorder] ${uniqueId} is LIVE! Connected. RoomID: ${state.roomId}`);
 
+                let shouldResetLiveState = true;
+
                 // Check if already in activeConnections (reconnect case)
                 const existing = this.activeConnections.get(uniqueId);
                 if (existing) {
                     // Reconnect - update lastEventTime but keep existing data
                     existing.lastEventTime = Date.now();
+                    shouldResetLiveState = false;
                     console.log(`[AutoRecorder] ${uniqueId} reconnected, refreshing event listeners`);
                 } else {
                     // Initial connection - check if we should resume from recent disconnect
@@ -722,6 +726,7 @@ class AutoRecorder {
                         }
 
                         // Use resumed startTime if available, otherwise new Date()
+                        shouldResetLiveState = !shouldResume;
                         const sessionStartTime = resumedStartTime || new Date();
                         this.activeConnections.set(uniqueId, {
                             wrapper: wrapper,
@@ -743,6 +748,10 @@ class AutoRecorder {
                         });
                     }
                 }
+
+                await liveStateService.markRoomLive(uniqueId, {
+                    resetAggregates: shouldResetLiveState,
+                });
 
                 // Reset failure count on success
                 this.failureCount.delete(uniqueId);
@@ -895,12 +904,30 @@ class AutoRecorder {
         console.log(`[AutoRecorder] Setting up event logging for ${uniqueId}`);
         let eventCount = { member: 0, chat: 0, gift: 0, like: 0 };
 
-        // Helper to update lastEventTime for heartbeat tracking
-        const updateLastEventTime = () => {
-            const conn = this.activeConnections.get(uniqueId);
-            if (conn) {
-                conn.lastEventTime = Date.now();
+        const syncLiveState = (patch = {}) => {
+            liveStateService.touchRoomLive(uniqueId, patch);
+        };
+
+        const trackGiftLiveValue = (giftData) => {
+            const giftValue = Math.max(0, Number(giftData?.diamondCount || 0) * Number(giftData?.repeatCount || 1));
+            if (giftValue > 0) {
+                syncLiveState({ giftValueDelta: giftValue });
+            } else {
+                syncLiveState();
             }
+        };
+
+        // Helper to update lastEventTime for heartbeat tracking
+        const updateLastEventTime = (patch = {}) => {
+            const conn = this.activeConnections.get(uniqueId);
+            const lastEventTime = Date.now();
+            if (conn) {
+                conn.lastEventTime = lastEventTime;
+            }
+            syncLiveState({
+                ...patch,
+                lastEventAt: new Date(lastEventTime).toISOString(),
+            });
         };
 
         // Track DB writes so we can flush before archiving (prevents missing last-second events)
@@ -945,7 +972,7 @@ class AutoRecorder {
         });
 
         wrapper.connection.on('chat', msg => {
-            updateLastEventTime();
+            updateLastEventTime({ chatCountDelta: 1 });
             eventCount.chat++;
             // Only log first chat event as confirmation room is receiving data
             if (eventCount.chat === 1) console.log(`[AutoRecorder] ✓ ${uniqueId} receiving events`);
@@ -1020,6 +1047,7 @@ class AutoRecorder {
 
                     // If repeatEnd is true, this is the final event - log it and cleanup
                     if (msg.repeatEnd) {
+                        trackGiftLiveValue(existing.data);
                         logEvent('gift', existing.data);
                         activeGiftCombos.delete(groupId);
                     }
@@ -1029,6 +1057,7 @@ class AutoRecorder {
 
                     // If repeatEnd is true immediately (single gift or instant combo end), log it
                     if (msg.repeatEnd) {
+                        trackGiftLiveValue(data);
                         logEvent('gift', data);
                         activeGiftCombos.delete(groupId);
                     }
@@ -1041,6 +1070,7 @@ class AutoRecorder {
                     if (now - combo.timestamp > GIFT_COMBO_TIMEOUT_MS) {
                         // Log stale combo with last known repeatCount
                         console.log(`[Gift] Logging stale combo ${gid} (${combo.data.giftName}) with repeatCount=${combo.data.repeatCount} 💎${combo.data.diamondCount * combo.data.repeatCount}`);
+                        trackGiftLiveValue(combo.data);
                         logEvent('gift', combo.data);
                         activeGiftCombos.delete(gid);
                     }
@@ -1057,6 +1087,7 @@ class AutoRecorder {
             }
 
             // Log non-combo gifts immediately, or combo gifts when repeatEnd=true
+            trackGiftLiveValue(data);
             logEvent('gift', data);
         });
 
@@ -1076,7 +1107,6 @@ class AutoRecorder {
 
 
         wrapper.connection.on('roomUser', msg => {
-            updateLastEventTime();
             const viewerCount = Number(
                 msg?.viewerCount
                 ?? msg?.viewer_count
@@ -1086,6 +1116,7 @@ class AutoRecorder {
                 ?? msg?.viewer?.count
                 ?? 0
             ) || 0;
+            updateLastEventTime({ viewerCount });
             logEvent('roomUser', {
                 viewerCount,
                 comment: viewerCount > 0 ? `viewer:${viewerCount}` : null
@@ -1190,7 +1221,7 @@ class AutoRecorder {
                             }
                         }, connectTimeoutMs);
 
-                        wrapper.once('connected', state => {
+                        wrapper.once('connected', async state => {
                             connected = true;
                             clearTimeout(timeout);
                             console.log(`[AutoRecorder] ${uniqueId} is LIVE! Connected on attempt ${attempt}. RoomID: ${state.roomId}`);
@@ -1200,6 +1231,10 @@ class AutoRecorder {
                                 lastEventTime: Date.now(),
                                 pendingWrites: new Set(),
                                 roomId: state.roomId
+                            });
+
+                            await liveStateService.markRoomLive(uniqueId, {
+                                resetAggregates: true,
                             });
 
                             if (state.roomId) {
@@ -1336,6 +1371,9 @@ class AutoRecorder {
                 } catch (e) { }
 
                 this.activeConnections.delete(uniqueId);
+                await liveStateService.markRoomOffline(uniqueId, {
+                    lastEventAt: conn.lastEventTime ? new Date(conn.lastEventTime).toISOString() : undefined,
+                });
 
                 // Stop Recording if active
                 if (this.recordingManager) {
