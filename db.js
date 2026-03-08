@@ -420,6 +420,43 @@ async function initDb() {
             )
         `);
 
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS room_minute_stats (
+                room_id TEXT NOT NULL,
+                stat_minute TIMESTAMP NOT NULL,
+                chat_count INTEGER DEFAULT 0,
+                gift_value BIGINT DEFAULT 0,
+                member_count INTEGER DEFAULT 0,
+                like_count BIGINT DEFAULT 0,
+                max_viewer_count INTEGER DEFAULT 0,
+                gift_user_count INTEGER DEFAULT 0,
+                chat_user_count INTEGER DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (room_id, stat_minute)
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_minute_stats_stat_minute ON room_minute_stats(stat_minute DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_minute_stats_room_minute ON room_minute_stats(room_id, stat_minute DESC)`);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS session_summary (
+                session_id TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL,
+                start_time TIMESTAMP,
+                end_time TIMESTAMP,
+                duration_secs INTEGER DEFAULT 0,
+                chat_count INTEGER DEFAULT 0,
+                gift_value BIGINT DEFAULT 0,
+                member_count INTEGER DEFAULT 0,
+                max_viewer_count INTEGER DEFAULT 0,
+                top_gifter_user_id TEXT,
+                top_gifter_value BIGINT DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_summary_room_end_time ON session_summary(room_id, end_time DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_summary_end_time ON session_summary(end_time DESC)`);
+
         // Add recording fields to room table
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS is_recording_enabled INTEGER DEFAULT 0`);
         await pool.query(`ALTER TABLE room ADD COLUMN IF NOT EXISTS recording_account_id INTEGER`);

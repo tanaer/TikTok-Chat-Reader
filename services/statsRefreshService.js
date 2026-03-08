@@ -1,5 +1,6 @@
 const { manager } = require('../manager');
 const { runJob } = require('./jobRunner');
+const { runIncrementalStatsCycle } = require('./statsAggregationService');
 
 const STATS_WORKER_SCHEDULE = {
     room: {
@@ -13,6 +14,10 @@ const STATS_WORKER_SCHEDULE = {
     global: {
         startupDelayMs: 20000,
         intervalMs: 30 * 60 * 1000,
+    },
+    incremental: {
+        startupDelayMs: 25000,
+        intervalMs: 60 * 1000,
     },
 };
 
@@ -43,9 +48,19 @@ async function runGlobalStatsRefreshJob(trigger = 'manual') {
     });
 }
 
+async function runIncrementalStatsAggregationJob(trigger = 'manual') {
+    return runJob({
+        jobName: 'stats.incremental_aggregation',
+        lockKey: 'stats.incremental_aggregation',
+        trigger,
+        handler: async () => runIncrementalStatsCycle(trigger),
+    });
+}
+
 module.exports = {
     STATS_WORKER_SCHEDULE,
     runRoomStatsRefreshJob,
     runUserStatsRefreshJob,
     runGlobalStatsRefreshJob,
+    runIncrementalStatsAggregationJob,
 };
