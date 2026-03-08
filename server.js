@@ -372,6 +372,8 @@ app.locals.autoRecorder = autoRecorder;
 const REQUEST_BODY_LIMIT = '20mb';
 const ROOM_LIST_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ROOM_LIST_CACHE_TTL_MS || '10000', 10) || 10000);
 const ALLTIME_LEADERBOARDS_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ALLTIME_LEADERBOARDS_CACHE_TTL_MS || '15000', 10) || 15000);
+const ROOM_SESSIONS_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 15000);
+const ARCHIVED_STATS_DETAIL_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 30000);
 const ROOM_LIST_CACHE_MAX_ENTRIES = 200;
 const roomListResponseCache = new Map();
 const ROOM_LIST_CACHE_NAMESPACE = 'room_list';
@@ -401,6 +403,51 @@ function buildRoomListRedisKey(cacheKey) {
 
 function buildAllTimeLeaderboardsCacheKey(roomId) {
     return cacheService.buildCacheKey('room_detail', 'alltime_leaderboards', roomId);
+}
+
+function buildRoomSessionsCacheKey(roomId) {
+    return cacheService.buildCacheKey('room_detail', 'sessions', roomId);
+}
+
+function buildArchivedStatsDetailCacheKey(roomId, sessionId) {
+    return cacheService.buildCacheKey('room_detail', 'stats_detail', roomId, sessionId);
+}
+
+async function getCachedRoomSessions(roomId) {
+    if (!roomId || !cacheService.isRoomCacheEnabled() || ROOM_SESSIONS_CACHE_TTL_MS <= 0) {
+        return manager.getSessions(roomId);
+    }
+
+    const cacheKey = buildRoomSessionsCacheKey(roomId);
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const sessions = await manager.getSessions(roomId);
+    await cacheService.setJson(cacheKey, sessions, { ttlMs: ROOM_SESSIONS_CACHE_TTL_MS });
+    return sessions;
+}
+
+async function getCachedArchivedStatsDetail(roomId, sessionId) {
+    if (!roomId || !sessionId || sessionId === 'live' || !cacheService.isRoomCacheEnabled() || ARCHIVED_STATS_DETAIL_CACHE_TTL_MS <= 0) {
+        return manager.getRoomDetailStats(roomId, sessionId);
+    }
+
+    const cacheKey = buildArchivedStatsDetailCacheKey(roomId, sessionId);
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const data = await manager.getRoomDetailStats(roomId, sessionId);
+    await cacheService.setJson(cacheKey, data, { ttlMs: ARCHIVED_STATS_DETAIL_CACHE_TTL_MS });
+    return data;
+}
+
+async function invalidateRoomDetailCaches(roomId, sessionId = null) {
+    if (!roomId || !cacheService.isRoomCacheEnabled()) return;
+
+    await cacheService.del(buildRoomSessionsCacheKey(roomId));
+    if (sessionId) {
+        await cacheService.del(buildArchivedStatsDetailCacheKey(roomId, sessionId));
+    }
 }
 
 function readLocalRoomListCache(cacheKey) {
@@ -1059,7 +1106,7 @@ app.get('/api/rooms/:id/sessions', optionalAuth, async (req, res) => {
     try {
         const access = await canAccessRoom(req, req.params.id);
         if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
-        const sessions = await manager.getSessions(req.params.id);
+        const sessions = await getCachedRoomSessions(req.params.id);
         res.json(sessions);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1333,13 +1380,13 @@ app.get('/api/rooms/:id/stats_detail', optionalAuth, async (req, res) => {
         const sessionId = req.query.sessionId || null;
 
         // Get stats
-        const data = await manager.getRoomDetailStats(roomId, sessionId);
+        const data = await getCachedArchivedStatsDetail(roomId, sessionId);
 
         // Get isLive status
         const isLive = await getEffectiveRoomLiveFlag(roomId);
 
         // Get last session for fallback
-        const sessions = await manager.getSessions(roomId);
+        const sessions = await getCachedRoomSessions(roomId);
         const lastSession = sessions && sessions.length > 0 ? sessions[0] : null;
 
         res.json({
@@ -1579,6 +1626,8 @@ app.post('/api/sessions/end', async (req, res) => {
         // Tag all untagged events for this room with the new session_id
         await manager.tagEventsWithSession(roomId, sessionId, startTime);
 
+        await invalidateRoomDetailCaches(roomId, sessionId);
+
         console.log(`[SESSION] Ended session ${sessionId} for room ${roomId}, events tagged`);
         res.json({ success: true, sessionId });
     } catch (err) {
@@ -1593,7 +1642,7 @@ app.get('/api/sessions', optionalAuth, async (req, res) => {
             const access = await canAccessRoom(req, roomId);
             if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
         }
-        const sessions = await manager.getSessions(roomId);
+        const sessions = roomId ? await getCachedRoomSessions(roomId) : await manager.getSessions(roomId);
         res.json(sessions);
     } catch (err) {
         res.status(500).json({ error: err.message });
