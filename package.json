@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "node scripts/start_dev.js",
     "start": "node server.js",
-    "worker:recording-upload": "node bin/start_recording_upload_worker.js"
+    "worker:recording-upload": "node bin/start_recording_upload_worker.js",
+    "worker:stats": "node bin/start_stats_worker.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",

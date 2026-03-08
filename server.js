@@ -55,10 +55,16 @@ const { WorkerProcessManager } = require('./services/workerProcessManager');
 const cacheService = require('./services/cacheService');
 const { disconnectRedisClient } = require('./services/redisClient');
 const liveStateService = require('./services/liveStateService');
+const {
+    runRoomStatsRefreshJob,
+    runUserStatsRefreshJob,
+    runGlobalStatsRefreshJob,
+} = require('./services/statsRefreshService');
 
 let schemeAConfig = getSchemeAConfig();
 let recordingStorageService = new RecordingStorageService({ schemeAConfig });
 let recordingUploadWorkerProcess = null;
+let statsWorkerProcess = null;
 const processFallbackRecordingAccessTokenSecret = crypto.randomBytes(32).toString('hex');
 let hasWarnedMissingRecordingAccessSecret = false;
 
@@ -90,10 +96,11 @@ async function refreshSchemeARuntimeConfig(reason = 'manual') {
         recordingUploadDaemonEnabled: schemeAConfig.worker.enableRecordingUploadDaemon,
     });
 
-    if (recordingUploadWorkerProcess?.isRunning()) {
+    if (recordingUploadWorkerProcess?.isRunning() || statsWorkerProcess?.isRunning()) {
         await stopManagedWorkers('SIGTERM');
     }
     ensureRecordingUploadWorkerDaemon();
+    ensureStatsWorkerDaemon();
     return nextConfig;
 }
 
@@ -138,9 +145,35 @@ function ensureRecordingUploadWorkerDaemon() {
     return recordingUploadWorkerProcess;
 }
 
+function ensureStatsWorkerDaemon() {
+    if (!schemeAConfig.worker.enableStats) {
+        return null;
+    }
+
+    if (!statsWorkerProcess) {
+        statsWorkerProcess = new WorkerProcessManager({
+            name: 'stats',
+            enabled: true,
+            scriptPath: path.join(__dirname, 'bin/start_stats_worker.js'),
+            cwd: __dirname,
+            env: {
+                WORKER_ROLE: 'stats',
+            },
+            restartDelayMs: 5000,
+            maxRestarts: 0,
+        });
+    }
+
+    statsWorkerProcess.start();
+    return statsWorkerProcess;
+}
+
 async function stopManagedWorkers(signal = 'SIGTERM') {
     if (recordingUploadWorkerProcess) {
         await recordingUploadWorkerProcess.stop(signal);
+    }
+    if (statsWorkerProcess) {
+        await statsWorkerProcess.stop(signal);
     }
 }
 
@@ -3664,86 +3697,9 @@ app.post('/api/rebuild-missing-sessions', authenticate, requireAdmin, requireAdm
 
 const ENABLE_PERIODIC_STATS_REFRESH = String(process.env.ENABLE_PERIODIC_STATS_REFRESH || 'false').toLowerCase() === 'true';
 const ENABLE_STARTUP_STATS_WARMUP = String(process.env.ENABLE_STARTUP_STATS_WARMUP || 'false').toLowerCase() === 'true';
-let isRoomStatsRefreshRunning = false;
-let isUserStatsRefreshRunning = false;
-let isGlobalStatsRefreshRunning = false;
 
-async function runRoomStatsRefreshJob(trigger = 'manual') {
-    if (isRoomStatsRefreshRunning) {
-        console.log(`[CRON] Skip room stats refresh (${trigger}) because a previous run is still active`);
-        metricsService.emitLog('warn', 'stats.room_refresh', {
-            trigger,
-            status: 'skipped',
-            reason: 'already_running',
-        });
-        return { skipped: true, trigger };
-    }
-    isRoomStatsRefreshRunning = true;
-    try {
-        console.log(`[CRON] Running room stats refresh (${trigger})...`);
-        return await manager.refreshRoomStats();
-    } catch (err) {
-        metricsService.emitLog('error', 'stats.room_refresh', {
-            trigger,
-            status: 'error',
-            error: metricsService.safeErrorMessage(err),
-        });
-        throw err;
-    } finally {
-        isRoomStatsRefreshRunning = false;
-    }
-}
-
-async function runUserStatsRefreshJob(trigger = 'manual') {
-    if (isUserStatsRefreshRunning) {
-        console.log(`[CRON] Skip user stats refresh (${trigger}) because a previous run is still active`);
-        metricsService.emitLog('warn', 'stats.user_refresh', {
-            trigger,
-            status: 'skipped',
-            reason: 'already_running',
-        });
-        return { skipped: true, trigger };
-    }
-    isUserStatsRefreshRunning = true;
-    try {
-        console.log(`[CRON] Running user stats refresh (${trigger})...`);
-        return await manager.refreshUserStats();
-    } catch (err) {
-        metricsService.emitLog('error', 'stats.user_refresh', {
-            trigger,
-            status: 'error',
-            error: metricsService.safeErrorMessage(err),
-        });
-        throw err;
-    } finally {
-        isUserStatsRefreshRunning = false;
-    }
-}
-
-async function runGlobalStatsRefreshJob(trigger = 'manual') {
-    if (isGlobalStatsRefreshRunning) {
-        console.log(`[CRON] Skip global stats refresh (${trigger}) because a previous run is still active`);
-        metricsService.emitLog('warn', 'stats.global_refresh', {
-            trigger,
-            status: 'skipped',
-            reason: 'already_running',
-        });
-        return { skipped: true, trigger };
-    }
-    isGlobalStatsRefreshRunning = true;
-    try {
-        console.log(`[CRON] Running global stats refresh (${trigger})...`);
-        return await manager.refreshGlobalStats();
-    } catch (err) {
-        metricsService.emitLog('error', 'stats.global_refresh', {
-            trigger,
-            status: 'error',
-            error: metricsService.safeErrorMessage(err),
-        });
-        throw err;
-    } finally {
-        isGlobalStatsRefreshRunning = false;
-    }
+function shouldRunStatsJobsInWebProcess() {
+    return !schemeAConfig.worker.enableStats;
 }
 
 // Manually refresh room_stats cache (for immediate update after changes)
@@ -3788,6 +3744,9 @@ httpServer.listen(PORT, async () => {
             daemonRestartDelayMs: schemeAConfig.worker.recordingUploadDaemonRestartDelayMs,
             daemonMaxRestarts: schemeAConfig.worker.recordingUploadDaemonMaxRestarts,
         },
+        statsWorker: {
+            enabled: schemeAConfig.worker.enableStats,
+        },
     });
 
     // Cleanup orphaned recording tasks from previous session (crashed or force-closed)
@@ -3796,6 +3755,7 @@ httpServer.listen(PORT, async () => {
     // Start user management periodic tasks (subscription expiry, token cleanup)
     startPeriodicTasks();
     startAiWorkQueueProcessor();
+    ensureStatsWorkerDaemon();
 
     // Scheduled jobs
     // Run user language analysis every hour
@@ -3811,6 +3771,7 @@ httpServer.listen(PORT, async () => {
     if (ENABLE_PERIODIC_STATS_REFRESH) {
         // Refresh room_stats cache every 30 minutes (for fast API responses)
         setInterval(async () => {
+            if (!shouldRunStatsJobsInWebProcess()) return;
             try {
                 await runRoomStatsRefreshJob('interval');
             } catch (err) {
@@ -3820,6 +3781,7 @@ httpServer.listen(PORT, async () => {
 
         // Refresh user_stats cache every 30 minutes (for fast user analysis API)
         setInterval(async () => {
+            if (!shouldRunStatsJobsInWebProcess()) return;
             try {
                 await runUserStatsRefreshJob('interval');
             } catch (err) {
@@ -3843,6 +3805,7 @@ httpServer.listen(PORT, async () => {
     if (ENABLE_STARTUP_STATS_WARMUP) {
         // Refresh room stats on startup (for API performance)
         setTimeout(async () => {
+            if (!shouldRunStatsJobsInWebProcess()) return;
             try {
                 await runRoomStatsRefreshJob('startup');
             } catch (err) {
@@ -3852,6 +3815,7 @@ httpServer.listen(PORT, async () => {
 
         // Refresh user stats on startup (for API performance)
         setTimeout(async () => {
+            if (!shouldRunStatsJobsInWebProcess()) return;
             try {
                 await runUserStatsRefreshJob('startup');
             } catch (err) {
@@ -3864,6 +3828,7 @@ httpServer.listen(PORT, async () => {
 
     // Refresh global stats on startup (for /api/analysis/stats performance)
     setTimeout(async () => {
+        if (!shouldRunStatsJobsInWebProcess()) return;
         try {
             console.log('[CRON] Initial global stats refresh...');
             await runGlobalStatsRefreshJob('startup');
@@ -3874,6 +3839,7 @@ httpServer.listen(PORT, async () => {
 
     // Refresh global_stats cache every 30 minutes (for fast /api/analysis/stats responses)
     setInterval(async () => {
+        if (!shouldRunStatsJobsInWebProcess()) return;
         try {
             console.log('[CRON] Refreshing global stats cache...');
             await runGlobalStatsRefreshJob('interval');
