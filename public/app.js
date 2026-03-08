@@ -1002,6 +1002,19 @@ function buildSessionRecapInfoCard({ badge, title, description, rightPanel = '',
     `;
 }
 
+function buildSessionRecapStatusOnlyCard({ panel = '', tone = 'primary' } = {}) {
+    const toneClass = tone === 'warning'
+        ? 'from-warning/12 via-base-100 to-base-100 border-warning/20'
+        : tone === 'neutral'
+            ? 'from-base-200/80 via-base-100 to-base-100 border-base-300'
+            : 'from-primary/12 via-base-100 to-secondary/10 border-primary/20';
+    return `
+        <div class="rounded-box border bg-gradient-to-br ${toneClass} p-6 shadow-sm overflow-hidden">
+            <div class="w-full max-w-xl rounded-box border border-base-300 bg-base-100/80 p-4 shadow-sm">${panel}</div>
+        </div>
+    `;
+}
+
 function showSessionRecapTeaser(recap = {}) {
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
     const pointCost = Number(recap?.pointCost || DEFAULT_SESSION_RECAP_POINTS);
@@ -1066,7 +1079,10 @@ function showSessionRecapTeaser(recap = {}) {
 function showSessionRecapGenerating(delayMs = 7000) {
     const seconds = Math.max(5, Math.ceil(delayMs / 1000));
     const rightPanel = `
-        <div class="text-xs uppercase tracking-[0.18em] opacity-60">生成中</div>
+        <div class="flex items-center justify-between gap-3">
+            <div class="text-xs uppercase tracking-[0.18em] opacity-60">后台工作状态</div>
+            <span class="badge badge-primary badge-outline">生成中</span>
+        </div>
         <div class="mt-3 space-y-3 text-sm leading-7 opacity-80">
             ${SESSION_RECAP_LOADING_TIPS.map((tip, index) => `
                 <div class="flex items-center gap-3 rounded-box bg-base-200/60 px-3 py-3">
@@ -1078,12 +1094,8 @@ function showSessionRecapGenerating(delayMs = 7000) {
         <div class="mt-4 rounded-box bg-base-200/70 px-4 py-3 text-sm leading-6">大概还需要 ${seconds} 秒左右，AI 正在整理老板摘要和直播复盘重点。</div>
     `;
 
-    setSessionRecapEmptyHtml(buildSessionRecapInfoCard({
-        badge: 'AI 正在出结论',
-        title: '正在为你生成 AI直播复盘，请稍候片刻。',
-        description: '系统正在抽取礼物高峰、互动转折、价值客户、高价值弹幕与关键建议。等这轮跑完，会一次性把完整内容铺开。',
-        chips: ['老板摘要生成中', '关键时刻提炼中', '价值客户识别中', '通常 5-10 秒'],
-        rightPanel,
+    setSessionRecapEmptyHtml(buildSessionRecapStatusOnlyCard({
+        panel: rightPanel,
         tone: 'primary'
     }));
 
@@ -1166,7 +1178,6 @@ function showSessionRecapQueued(recap = {}) {
     const isProcessing = String(aiJob.status || '') === 'processing';
     const progressPercent = Math.max(5, Math.min(99, Number(aiJob.progressPercent || (isProcessing ? 35 : 10))));
     const currentStep = aiJob.currentStep || (isProcessing ? '正在后台处理中' : '等待后台调度');
-    const pointCost = Number(recap?.pointCost || DEFAULT_SESSION_RECAP_POINTS);
     const rightPanel = `
         <div class="text-xs uppercase tracking-[0.18em] opacity-60">后台工作状态</div>
         <div class="mt-3 rounded-box bg-base-200/70 px-4 py-3">
@@ -1180,17 +1191,8 @@ function showSessionRecapQueued(recap = {}) {
         <div class="mt-4 text-sm leading-7 opacity-80">AI 已启动，正在后台工作中，无需一直在此等待。任务完成后会有站内通知。</div>
     `;
 
-    setSessionRecapEmptyHtml(buildSessionRecapInfoCard({
-        badge: isProcessing ? 'AI 后台处理中' : 'AI 已加入队列',
-        title: isProcessing ? 'AI直播复盘正在后台生成。' : 'AI直播复盘已提交，等待后台开始处理。',
-        description: '你不用一直停留在这里。系统会继续在后台跑完整个复盘流程，完成后会通过消息通知提醒，可直接点击通知跳转到该房间的 AI复盘。',
-        chips: [
-            `任务 #${Number(aiJob.id || 0) || '-'}`,
-            `当前步骤 ${currentStep}`,
-            `本场价格 ${pointCost}AI点`,
-            '完成后主动通知'
-        ],
-        rightPanel,
+    setSessionRecapEmptyHtml(buildSessionRecapStatusOnlyCard({
+        panel: rightPanel,
         tone: 'neutral'
     }));
 
