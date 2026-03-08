@@ -299,7 +299,7 @@ const Auth = {
                 this.buildNavLink('/monitor.html', '监控中心', { active: currentPath === '/monitor.html' })
             ];
             if (this.isAdmin()) {
-                items.push(this.buildNavLink('/admin.html', '管理后台', { active: currentPath === '/admin.html' }));
+                items.push(this.buildNavLink('/tanaer.html', '管理后台', { active: currentPath === '/tanaer.html' }));
             }
             globalNav.innerHTML = items.join('');
         } else {
@@ -333,7 +333,7 @@ const Auth = {
                 <ul tabindex="0" class="dropdown-content menu menu-sm z-[80] mt-2 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
                     <li class="menu-title"><span class="truncate">${displayName}</span></li>
                     <li><a href="/user-center.html">用户中心</a></li>
-                    ${this.isAdmin() ? '<li><a href="/admin.html">管理后台</a></li>' : ''}
+                    ${this.isAdmin() ? '<li><a href="/tanaer.html">管理后台</a></li>' : ''}
                     <li><a href="#" class="text-error" onclick="return Auth.handleLogoutFromMenu(event)">退出登录</a></li>
                 </ul>
             </li>
@@ -598,7 +598,7 @@ const Auth = {
             if (!hasGlobalNav) {
                 items.push(this.buildNavLink('/monitor.html', '监控中心', { button: true, tone: 'default', active: currentPath === '/monitor.html' }));
                 if (this.isAdmin()) {
-                    items.push(this.buildNavLink('/admin.html', '管理后台', { button: true, tone: 'warning', active: currentPath === '/admin.html' }));
+                    items.push(this.buildNavLink('/tanaer.html', '管理后台', { button: true, tone: 'warning', active: currentPath === '/tanaer.html' }));
                 }
             }
             if (shellOptions.showMessages) {
