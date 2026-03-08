@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "scripts": {
     "dev": "node scripts/start_dev.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "worker:recording-upload": "node bin/start_recording_upload_worker.js"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",

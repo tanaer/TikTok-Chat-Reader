@@ -6,6 +6,8 @@ const { SocksProxyAgent } = require('socks-proxy-agent');
 const db = require('./db');
 const { getStreamUrl } = require('./utils/tiktok_spider');
 const ffmpegManager = require('./utils/ffmpeg_manager');
+const metricsService = require('./services/metricsService');
+const { getSchemeAConfig } = require('./services/featureFlagService');
 
 
 // Helper for Beijing Time
@@ -15,6 +17,41 @@ function getBeijingTime() {
     const date = new Date(utc + (3600000 * 8));
     const pad = n => n < 10 ? '0' + n : n;
     return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+}
+
+function getFileSizeBytesSafe(filePath) {
+    try {
+        if (!filePath || !fs.existsSync(filePath)) return 0;
+        return fs.statSync(filePath).size;
+    } catch (error) {
+        return 0;
+    }
+}
+
+function getRecordingLifecycleState({ isSuccess = true, schemeAConfig }) {
+    const uploadEnabled = Boolean(schemeAConfig?.worker?.enableRecordingUpload);
+
+    if (!isSuccess) {
+        return {
+            status: 'failed',
+            uploadStatus: 'skipped',
+            cleanupStatus: 'skipped',
+        };
+    }
+
+    if (uploadEnabled) {
+        return {
+            status: 'local_completed',
+            uploadStatus: 'pending',
+            cleanupStatus: 'blocked',
+        };
+    }
+
+    return {
+        status: 'completed',
+        uploadStatus: 'disabled',
+        cleanupStatus: 'skipped',
+    };
 }
 
 class RecordingManager {
@@ -54,6 +91,7 @@ class RecordingManager {
         }
 
         console.log(`[Recorder] Starting recording for ${uniqueId} (${roomId})...`);
+        const schemeAConfig = getSchemeAConfig();
 
         try {
             // Get Stream URL via Spider (Curl-based)
@@ -88,8 +126,18 @@ class RecordingManager {
 
             if (!streamUrl) {
                 console.error(`[Recorder] Failed to get stream URL for ${uniqueId}`);
-                await db.run(`INSERT INTO recording_task (room_id, account_id, start_time, status, error_msg) VALUES ($1, $2, $3, $4, $5)`,
-                    [roomId, accountId || null, getBeijingTime(), 'failed', 'Stream URL not found']);
+                metricsService.incrementCounter('recording.local_start.failure', 1, { reason: 'stream_url_missing' }, { log: false });
+                metricsService.emitLog('error', 'recording.local_capture', {
+                    status: 'error',
+                    stage: 'prepare',
+                    roomId,
+                    hasAccountId: Boolean(accountId),
+                    error: 'Stream URL not found',
+                });
+                await db.run(`INSERT INTO recording_task (
+                        room_id, account_id, start_time, status, error_msg, upload_status, cleanup_status
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                    [roomId, accountId || null, getBeijingTime(), 'failed', 'Stream URL not found', 'skipped', 'skipped']);
                 return { success: false, error: 'Stream URL not found' };
             }
 
@@ -114,8 +162,21 @@ class RecordingManager {
 
             // DB Update
             console.log(`[Recorder] Saving to DB: roomId="${roomId}", filePath="${filePath}"`);
-            db.run(`INSERT INTO recording_task (room_id, account_id, start_time, status, file_path) VALUES ($1, $2, $3, $4, $5)`,
-                [roomId, accountId || null, getBeijingTime(), 'recording', filePath]);
+            db.run(`INSERT INTO recording_task (
+                    room_id, account_id, start_time, status, file_path, upload_status, cleanup_status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [roomId, accountId || null, getBeijingTime(), 'recording', filePath, 'not_requested', 'not_requested']);
+
+            metricsService.incrementCounter('recording.local_start.success', 1, {}, { log: false });
+            metricsService.emitLog('info', 'recording.local_capture', {
+                status: 'started',
+                stage: 'local_write',
+                roomId,
+                hasAccountId: Boolean(accountId),
+                outputFile: path.basename(filePath),
+                uploadFeatureEnabled: schemeAConfig.worker.enableRecordingUpload,
+                objectStorageConfigured: Boolean(schemeAConfig.objectStorage.endpoint && schemeAConfig.objectStorage.bucket),
+            });
 
             return { success: true };
 
@@ -131,6 +192,15 @@ class RecordingManager {
                     errorMsg += "\n[Hint] SSL/Proxy Error. Check your proxy connectivity.";
                 }
             }
+
+            metricsService.incrementCounter('recording.local_start.failure', 1, { reason: 'start_exception' }, { log: false });
+            metricsService.emitLog('error', 'recording.local_capture', {
+                status: 'error',
+                stage: 'start',
+                roomId,
+                hasAccountId: Boolean(accountId),
+                error: metricsService.safeErrorMessage(err),
+            });
 
             return { success: false, error: errorMsg };
         }
@@ -180,8 +250,10 @@ class RecordingManager {
         // Handle Curl Errors (initial startup)
         curlProcess.on('error', (err) => {
             console.error(`[Recorder] Curl failed to start: ${err.message}`);
-            db.run(`INSERT INTO recording_task (room_id, account_id, start_time, status, error_msg) VALUES ($1, $2, $3, $4, $5)`,
-                [roomId, accountId || null, getBeijingTime(), 'failed', `Curl Error: ${err.message}`]);
+            db.run(`INSERT INTO recording_task (
+                    room_id, account_id, start_time, status, error_msg, upload_status, cleanup_status
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+                [roomId, accountId || null, getBeijingTime(), 'failed', `Curl Error: ${err.message}`, 'skipped', 'skipped']);
         });
 
         // Log curl stderr for debugging
@@ -268,6 +340,7 @@ class RecordingManager {
         // Wait for FFmpeg exit (which happens when curl stops stream or error)
         ffmpeg.on('close', async (code) => {
             console.log(`[Recorder] FFmpeg exited for ${roomId} with code ${code}`);
+            const schemeAConfig = getSchemeAConfig();
 
             // Retrieve recording state before deleting
             const recordingState = this.activeRecordings.get(roomId);
@@ -280,8 +353,34 @@ class RecordingManager {
             if (recordingState.manualStop) {
                 this.activeRecordings.delete(roomId);
                 const endTime = getBeijingTime();
-                await db.run(`UPDATE recording_task SET status = $1, end_time = $2 WHERE room_id = $3 AND status = 'recording'`,
-                    ['completed', endTime, roomId]);
+                const lifecycleState = getRecordingLifecycleState({ isSuccess: true, schemeAConfig });
+                await db.run(`UPDATE recording_task
+                    SET status = $1,
+                        end_time = $2,
+                        upload_status = $3,
+                        cleanup_status = $4,
+                        upload_error_msg = NULL,
+                        cleanup_error_msg = NULL
+                    WHERE room_id = $5 AND status = 'recording'`,
+                    [lifecycleState.status, endTime, lifecycleState.uploadStatus, lifecycleState.cleanupStatus, roomId]);
+
+                const durationMs = Date.now() - recordingState.startTime.getTime();
+                metricsService.incrementCounter('recording.local_complete.success', 1, {}, { log: false });
+                metricsService.recordTiming('recording.local_complete.duration_ms', durationMs, { outcome: 'success' }, { log: false });
+                metricsService.emitLog('info', 'recording.local_capture', {
+                    status: lifecycleState.status,
+                    stage: 'local_write',
+                    roomId,
+                    durationMs,
+                    outputFile: path.basename(filePath),
+                    fileSizeBytes: getFileSizeBytesSafe(filePath),
+                    nextStage: schemeAConfig.worker.enableRecordingUpload ? 'ready_for_worker' : 'local_retained',
+                });
+                metricsService.emitLog('info', 'recording.upload_stage', {
+                    roomId,
+                    status: schemeAConfig.worker.enableRecordingUpload ? 'ready_for_worker' : 'disabled',
+                    cleanupStatus: schemeAConfig.worker.enableRecordingUpload ? 'blocked_on_upload' : 'skipped',
+                });
 
                 // Process Highlights if completed
                 this.checkAndClipHighlights(roomId, recordingState.startTime, new Date(), filePath).catch(e =>
@@ -296,6 +395,14 @@ class RecordingManager {
 
             if (attempts < this.MAX_RECONNECT_ATTEMPTS) {
                 console.log(`[Recorder] ⚡ Auto-reconnect for ${roomId} (attempt ${attempts + 1}/${this.MAX_RECONNECT_ATTEMPTS})...`);
+                metricsService.emitLog('warn', 'recording.local_capture', {
+                    status: 'reconnecting',
+                    stage: 'local_write',
+                    roomId,
+                    attempt: attempts + 1,
+                    maxAttempts: this.MAX_RECONNECT_ATTEMPTS,
+                    exitCode: code,
+                });
 
                 // Kill old curl just in case
                 try { curlProcess.kill(); } catch (e) { }
@@ -337,6 +444,14 @@ class RecordingManager {
                             await db.run(`UPDATE recording_task SET file_path = $1 WHERE room_id = $2 AND status = 'recording'`,
                                 [newFilePath, roomId]);
 
+                            metricsService.emitLog('info', 'recording.local_capture', {
+                                status: 'reconnected',
+                                stage: 'local_write',
+                                roomId,
+                                attempt: attempts + 1,
+                                outputFile: path.basename(newFilePath),
+                            });
+
                             return; // Successfully reconnected
                         }
                     } else {
@@ -357,11 +472,53 @@ class RecordingManager {
 
             // Determine Status: Success if code 0, 255 (kill)
             const isSuccess = (code === 0 || code === 255);
-            const status = isSuccess ? 'completed' : 'failed';
+            const lifecycleState = getRecordingLifecycleState({ isSuccess, schemeAConfig });
             const endTime = getBeijingTime();
 
-            await db.run(`UPDATE recording_task SET status = $1, end_time = $2 WHERE room_id = $3 AND status = 'recording'`,
-                [status, endTime, roomId]);
+            await db.run(`UPDATE recording_task
+                SET status = $1,
+                    end_time = $2,
+                    upload_status = $3,
+                    cleanup_status = $4,
+                    upload_error_msg = CASE WHEN $3 = 'failed' THEN COALESCE(upload_error_msg, '录播结束异常，未进入上传') ELSE NULL END,
+                    cleanup_error_msg = NULL
+                WHERE room_id = $5 AND status = 'recording'`,
+                [lifecycleState.status, endTime, lifecycleState.uploadStatus, lifecycleState.cleanupStatus, roomId]);
+
+            const durationMs = recordingState ? (Date.now() - recordingState.startTime.getTime()) : 0;
+            metricsService.incrementCounter(
+                isSuccess ? 'recording.local_complete.success' : 'recording.local_complete.failure',
+                1,
+                {},
+                { log: false }
+            );
+            metricsService.recordTiming(
+                'recording.local_complete.duration_ms',
+                durationMs,
+                { outcome: isSuccess ? 'success' : 'error' },
+                { log: false }
+            );
+            metricsService.emitLog(isSuccess ? 'info' : 'error', 'recording.local_capture', {
+                status: lifecycleState.status,
+                stage: 'local_write',
+                roomId,
+                durationMs,
+                exitCode: code,
+                outputFile: path.basename(filePath),
+                fileSizeBytes: getFileSizeBytesSafe(filePath),
+                nextStage: isSuccess
+                    ? (schemeAConfig.worker.enableRecordingUpload ? 'ready_for_worker' : 'local_retained')
+                    : 'none',
+            });
+            metricsService.emitLog(isSuccess ? 'info' : 'warn', 'recording.upload_stage', {
+                roomId,
+                status: isSuccess
+                    ? (schemeAConfig.worker.enableRecordingUpload ? 'ready_for_worker' : 'disabled')
+                    : 'skipped',
+                cleanupStatus: isSuccess
+                    ? (schemeAConfig.worker.enableRecordingUpload ? 'blocked_on_upload' : 'skipped')
+                    : 'skipped',
+            });
 
             // Process Highlights if completed
             if (isSuccess && recordingState) {
@@ -535,9 +692,17 @@ class RecordingManager {
                     try { recording.curlProcess?.kill(); } catch (e) { }
 
                     // Update DB
+                    const lifecycleState = getRecordingLifecycleState({ isSuccess: true, schemeAConfig: getSchemeAConfig() });
                     await db.run(
-                        `UPDATE recording_task SET status = $1, end_time = $2 WHERE room_id = $3 AND status = 'recording'`,
-                        ['completed', endTime, roomId]
+                        `UPDATE recording_task
+                            SET status = $1,
+                                end_time = $2,
+                                upload_status = $3,
+                                cleanup_status = $4,
+                                upload_error_msg = NULL,
+                                cleanup_error_msg = NULL
+                        WHERE room_id = $5 AND status = 'recording'`,
+                        [lifecycleState.status, endTime, lifecycleState.uploadStatus, lifecycleState.cleanupStatus, roomId]
                     );
 
                     console.log(`[Recorder] Saved recording for ${roomId}`);
@@ -557,7 +722,12 @@ class RecordingManager {
     async cleanupOrphanedTasks() {
         try {
             const result = await db.run(
-                `UPDATE recording_task SET status = 'interrupted', end_time = $1 WHERE status = 'recording'`,
+                `UPDATE recording_task
+                    SET status = 'interrupted',
+                        end_time = $1,
+                        upload_status = 'skipped',
+                        cleanup_status = 'skipped'
+                    WHERE status = 'recording'`,
                 [getBeijingTime()]
             );
 

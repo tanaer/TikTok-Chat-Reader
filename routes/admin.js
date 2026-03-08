@@ -37,6 +37,12 @@ const {
     updateAdminRole,
     deleteAdminRole,
 } = require('../services/rbacService');
+const {
+    buildAdminSettingsResponse,
+    sanitizeAdminSettingsPayload,
+    shouldPreserveSecretSetting,
+    SCHEME_A_RUNTIME_SETTING_KEYS,
+} = require('../services/adminSettingsService');
 
 const router = express.Router();
 
@@ -855,7 +861,7 @@ router.delete('/addons/:id', async (req, res) => {
 router.get('/settings', async (req, res) => {
     try {
         const settings = await db.getSystemSettings();
-        res.json({ settings });
+        res.json(buildAdminSettingsResponse(settings));
     } catch (err) {
         res.status(500).json({ error: '获取设置失败' });
     }
@@ -871,11 +877,19 @@ router.put('/settings', async (req, res) => {
             return res.status(400).json({ error: '无效的设置数据' });
         }
 
-        for (const [key, value] of Object.entries(settings)) {
+        const normalizedSettings = sanitizeAdminSettingsPayload(settings);
+        const incomingKeys = Object.keys(normalizedSettings);
+        const savedKeys = [];
+
+        for (const [key, value] of Object.entries(normalizedSettings)) {
+            if (shouldPreserveSecretSetting(key, value)) {
+                continue;
+            }
             await manager.saveSetting(key, typeof value === 'boolean' ? String(value) : value);
+            savedKeys.push(key);
         }
 
-        if (Object.keys(settings).some(key => String(key).startsWith('smtp_'))) {
+        if (savedKeys.some(key => String(key).startsWith('smtp_'))) {
             await db.pool.query(
                 `INSERT INTO settings (key, value, updated_at) VALUES ('smtp_legacy_migrated', 'false', NOW())
                  ON CONFLICT (key) DO UPDATE SET value = 'false', updated_at = NOW()`
@@ -883,7 +897,7 @@ router.put('/settings', async (req, res) => {
             emailService.resetTransporter();
         }
 
-        if (Object.keys(settings).some(isSessionMaintenanceSettingKey)) {
+        if (savedKeys.some(isSessionMaintenanceSettingKey)) {
             try {
                 await req.app.locals.autoRecorder?.refreshSessionMaintenanceConfig?.('admin-settings-save');
             } catch (refreshErr) {
@@ -891,7 +905,22 @@ router.put('/settings', async (req, res) => {
             }
         }
 
-        res.json({ message: '设置已保存' });
+        let warning = '';
+        if (savedKeys.some(key => SCHEME_A_RUNTIME_SETTING_KEYS.includes(key))) {
+            try {
+                await req.app.locals.refreshSchemeARuntimeConfig?.('admin-settings-save');
+            } catch (refreshErr) {
+                console.error('[Admin] Refresh scheme A runtime config error:', refreshErr.message);
+                warning = '设置已保存，但方案A运行时刷新失败，建议重启服务后再检查。';
+            }
+        }
+
+        res.json({
+            message: '设置已保存',
+            savedKeys,
+            preservedSecretKeys: incomingKeys.filter(key => shouldPreserveSecretSetting(key, normalizedSettings[key])),
+            ...(warning ? { warning } : {}),
+        });
     } catch (err) {
         console.error('[Admin] Save settings error:', err.message);
         res.status(500).json({ error: '保存失败' });

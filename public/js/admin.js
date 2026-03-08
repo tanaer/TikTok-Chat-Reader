@@ -949,56 +949,90 @@ async function deleteAddon(id) {
 }
 
 // ==================== Settings ====================
-const settingDefs = [
-    { key: 'scan_interval', label: '扫描间隔 (分钟)', type: 'number' },
-    { key: 'auto_monitor_enabled', label: '自动监控', type: 'toggle' },
-    { key: 'proxy_url', label: '代理地址', type: 'text' },
-    { key: 'session_id', label: 'TikTok Session ID', type: 'text' },
-    { key: 'port', label: '服务端口 (需重启)', type: 'number' },
-    { key: 'dynamic_tunnel_proxy', label: '动态隧道代理', type: 'text' },
-    { key: 'proxy_api_url', label: '代理API地址', type: 'text' },
-    { key: 'default_room_limit', label: '默认房间上限 (未订阅, -1无限)', type: 'number' },
-    { key: 'min_recharge_amount', label: '最低充值金额', type: 'number' },
-    { key: 'site_name', label: '网站名称', type: 'text' },
-    // 注册赠送设置
-    { key: 'gift_room_limit', label: '注册赠送房间数 (空=不送)', type: 'number' },
-    { key: 'gift_open_room_limit', label: '赠送可打开房间数 (空=同房间数)', type: 'number' },
-    { key: 'gift_duration_days', label: '注册赠送天数 (空=不送)', type: 'number' },
-];
+let adminSettingsGroups = [];
+let adminSettingsSecretConfigured = {};
 
-const authSettingDefs = [
-    { key: 'single_session_login_enabled', label: '单点登录（新登录踢掉旧登录）', type: 'toggle' },
-];
+function renderAdminSettingField(field, settings) {
+    const rawValue = settings[field.key] !== undefined ? settings[field.key] : '';
+    const value = rawValue === null || rawValue === undefined ? '' : rawValue;
+    const hintText = [field.hint || '', field.restartRequired ? '保存后通常需要重启主服务或重拉子 worker。' : '']
+        .filter(Boolean)
+        .join(' ');
+
+    if (field.type === 'toggle') {
+        const checked = value === true || value === 'true' || value === 1 || value === '1';
+        return `
+            <label class="label cursor-pointer justify-start gap-4 rounded-2xl border border-base-300 bg-base-100 px-4 py-3">
+                <input type="checkbox" class="toggle toggle-primary" data-key="${escapeHtml(field.key)}" ${checked ? 'checked' : ''}>
+                <span class="flex-1">
+                    <span class="block font-medium">${escapeHtml(field.label)}</span>
+                    <span class="block text-xs text-base-content/60 mt-1 leading-6">${escapeHtml(hintText)}</span>
+                </span>
+            </label>
+        `;
+    }
+
+    if (field.type === 'select') {
+        const options = Array.isArray(field.options) ? field.options : [];
+        return `
+            <label class="form-control rounded-2xl border border-base-300 bg-base-100 px-4 py-3">
+                <span class="label-text font-medium">${escapeHtml(field.label)}</span>
+                <select class="select select-bordered mt-2" data-key="${escapeHtml(field.key)}">
+                    ${options.map(option => `<option value="${escapeHtml(option.value)}" ${String(value) === String(option.value) ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
+                </select>
+                <span class="label-text-alt text-base-content/60 mt-2 leading-6">${escapeHtml(hintText)}</span>
+            </label>
+        `;
+    }
+
+    const isSecret = field.secret === true;
+    const hasSecret = adminSettingsSecretConfigured[field.key] === true;
+    const inputType = field.type === 'number' ? 'number' : (field.type === 'password' || isSecret ? 'password' : 'text');
+    const placeholder = isSecret && hasSecret && `${value}` === ''
+        ? '已配置，留空表示保持现有值'
+        : (field.placeholder || '');
+    const displayValue = isSecret ? '' : `${value}`;
+
+    return `
+        <label class="form-control rounded-2xl border border-base-300 bg-base-100 px-4 py-3">
+            <span class="label-text font-medium">${escapeHtml(field.label)}</span>
+            <input
+                type="${escapeHtml(inputType)}"
+                class="input input-bordered mt-2"
+                data-key="${escapeHtml(field.key)}"
+                value="${escapeHtml(displayValue)}"
+                placeholder="${escapeHtml(placeholder)}"
+            >
+            <span class="label-text-alt text-base-content/60 mt-2 leading-6">${escapeHtml(hintText)}</span>
+        </label>
+    `;
+}
+
+function renderAdminSettingsForm(groups, settings) {
+    const form = document.getElementById('settings-form');
+    if (!form) return;
+
+    form.innerHTML = groups.map(group => `
+        <div class="rounded-[1.25rem] border border-base-300 bg-base-200/50 p-4">
+            <div class="mb-4">
+                <h4 class="font-semibold">${escapeHtml(group.title || '')}</h4>
+                <p class="text-xs text-base-content/60 mt-1 leading-6">${escapeHtml(group.description || '')}</p>
+            </div>
+            <div class="space-y-4">
+                ${(Array.isArray(group.fields) ? group.fields : []).map(field => renderAdminSettingField(field, settings)).join('')}
+            </div>
+        </div>
+    `).join('');
+}
 
 async function loadSettingsForm() {
     const res = await Auth.apiFetch('/api/admin/settings');
     const data = await res.json();
-    const settings = data.settings || {};
-    const form = document.getElementById('settings-form');
+    if (!res.ok) throw new Error(data.error || '加载系统设置失败');
 
-    function renderSettingFields(defs) {
-        return defs.map(d => {
-            const val = settings[d.key] !== undefined ? settings[d.key] : '';
-            if (d.type === 'toggle') {
-                return `<div class="form-control"><label class="label cursor-pointer justify-start gap-4">
-                    <span class="label-text w-48">${d.label}</span>
-                    <input type="checkbox" class="toggle toggle-primary" data-key="${d.key}" ${val === true || val === 'true' || val === 1 ? 'checked' : ''}>
-                </label></div>`;
-            }
-            return `<div class="form-control"><label class="label"><span class="label-text">${d.label}</span></label>
-                <input type="${d.type === 'number' ? 'number' : 'text'}" class="input input-bordered" data-key="${d.key}" value="${val}" placeholder="${d.placeholder || ''}">
-            </div>`;
-        }).join('');
-    }
-
-    form.innerHTML = `
-        <h4 class="text-lg font-bold mb-2">基础设置</h4>
-        ${renderSettingFields(settingDefs)}
-        <div class="divider"></div>
-        <h4 class="text-lg font-bold mb-2">登录与安全</h4>
-        <p class="text-sm text-base-content/60 mb-3">开启后，同一账号再次登录会让旧登录立即失效。</p>
-        ${renderSettingFields(authSettingDefs)}
-    `;
+    adminSettingsGroups = Array.isArray(data.groups) ? data.groups : [];
+    adminSettingsSecretConfigured = data.secretConfigured || {};
+    renderAdminSettingsForm(adminSettingsGroups, data.settings || {});
 }
 
 async function saveSettings() {
@@ -1013,8 +1047,14 @@ async function saveSettings() {
         method: 'PUT', body: JSON.stringify({ settings })
     });
     const data = await res.json();
-    if (res.ok) alert(data.message);
-    else alert(data.error || '保存失败');
+    if (res.ok) {
+        alert(data.warning ? `${data.message}
+
+${data.warning}` : data.message);
+        await loadSettingsForm();
+        return;
+    }
+    alert(data.error || '保存失败');
 }
 
 // ==================== Session Maintenance ====================

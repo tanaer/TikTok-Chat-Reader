@@ -26,7 +26,7 @@
     <script src="room_list.js?v=20260308h"></script>
     <script src="user_analysis.js?v=20260308f"></script>
     <script src="room_analysis.js?v=20260308f"></script>
-    <script src="recording_ui.js?v=20260308f"></script>
+    <script src="recording_ui.js?v=20260308g"></script>
     <script src="app.js?v=20260308n"></script>
 
 
@@ -930,8 +930,14 @@
                             onchange="loadRecordingTasks()">
                             <option value="">全部</option>
                             <option value="recording">录制中</option>
-                            <option value="completed">已完成</option>
+                            <option value="local_completed">本地完成</option>
+                            <option value="uploading">上传中</option>
+                            <option value="uploaded">已上传</option>
+                            <option value="local_deleted">本地已清理</option>
+                            <option value="upload_failed">上传失败</option>
+                            <option value="completed">已完成(兼容旧数据)</option>
                             <option value="failed">失败</option>
+                            <option value="interrupted">中断</option>
                         </select>
                     </div>
                     <div class="form-control">

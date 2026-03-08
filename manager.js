@@ -5,6 +5,7 @@
 const fs = require('fs');
 const path = require('path');
 const { initDb, query, run, get } = require('./db');
+const metricsService = require('./services/metricsService');
 
 const PRICE_FILE = path.join(__dirname, 'prices.json');
 
@@ -2991,6 +2992,15 @@ class Manager {
             const rooms = await query(`SELECT room_id FROM room`);
             if (rooms.length === 0) {
                 console.log('[Manager] No rooms to refresh');
+                const elapsed = Date.now() - startTime;
+                metricsService.incrementCounter('stats.room_refresh.success', 1, { outcome: 'noop' }, { log: false });
+                metricsService.recordTiming('stats.room_refresh.duration_ms', elapsed, { outcome: 'noop' }, { log: false });
+                metricsService.emitLog('info', 'stats.room_refresh', {
+                    status: 'noop',
+                    durationMs: elapsed,
+                    refreshed: 0,
+                    roomCount: 0,
+                });
                 return { refreshed: 0 };
             }
 
@@ -3155,9 +3165,25 @@ class Manager {
 
             const elapsed = Date.now() - startTime;
             console.log(`[Manager] Room stats refreshed: ${refreshed} rooms in ${elapsed}ms`);
+            metricsService.incrementCounter('stats.room_refresh.success', 1, { outcome: 'success' }, { log: false });
+            metricsService.recordTiming('stats.room_refresh.duration_ms', elapsed, { outcome: 'success' }, { log: false });
+            metricsService.emitLog('info', 'stats.room_refresh', {
+                status: 'success',
+                durationMs: elapsed,
+                refreshed,
+                roomCount: roomIds.length,
+            });
             return { refreshed, elapsedMs: elapsed };
 
         } catch (err) {
+            const elapsed = Date.now() - startTime;
+            metricsService.incrementCounter('stats.room_refresh.failure', 1, {}, { log: false });
+            metricsService.recordTiming('stats.room_refresh.duration_ms', elapsed, { outcome: 'error' }, { log: false });
+            metricsService.emitLog('error', 'stats.room_refresh', {
+                status: 'error',
+                durationMs: elapsed,
+                error: metricsService.safeErrorMessage(err),
+            });
             console.error('[Manager] Error refreshing room_stats:', err);
             throw err;
         }
@@ -3183,6 +3209,15 @@ class Manager {
             `);
             if (users.length === 0) {
                 console.log('[Manager] No gifting users to refresh');
+                const elapsed = Date.now() - startTime;
+                metricsService.incrementCounter('stats.user_refresh.success', 1, { outcome: 'noop' }, { log: false });
+                metricsService.recordTiming('stats.user_refresh.duration_ms', elapsed, { outcome: 'noop' }, { log: false });
+                metricsService.emitLog('info', 'stats.user_refresh', {
+                    status: 'noop',
+                    durationMs: elapsed,
+                    refreshed: 0,
+                    userCount: 0,
+                });
                 return { refreshed: 0 };
             }
 
@@ -3311,9 +3346,25 @@ class Manager {
 
             const elapsed = Date.now() - startTime;
             console.log(`[Manager] User stats refreshed: ${totalRefreshed} users in ${elapsed}ms`);
+            metricsService.incrementCounter('stats.user_refresh.success', 1, { outcome: 'success' }, { log: false });
+            metricsService.recordTiming('stats.user_refresh.duration_ms', elapsed, { outcome: 'success' }, { log: false });
+            metricsService.emitLog('info', 'stats.user_refresh', {
+                status: 'success',
+                durationMs: elapsed,
+                refreshed: totalRefreshed,
+                userCount: userIds.length,
+            });
             return { refreshed: totalRefreshed, elapsedMs: elapsed };
 
         } catch (err) {
+            const elapsed = Date.now() - startTime;
+            metricsService.incrementCounter('stats.user_refresh.failure', 1, {}, { log: false });
+            metricsService.recordTiming('stats.user_refresh.duration_ms', elapsed, { outcome: 'error' }, { log: false });
+            metricsService.emitLog('error', 'stats.user_refresh', {
+                status: 'error',
+                durationMs: elapsed,
+                error: metricsService.safeErrorMessage(err),
+            });
             console.error('[Manager] Error refreshing user_stats:', err);
             throw err;
         }
@@ -3402,9 +3453,23 @@ class Manager {
 
             const elapsed = Date.now() - startTime;
             console.log(`[Manager] Global stats refreshed in ${elapsed}ms`);
+            metricsService.incrementCounter('stats.global_refresh.success', 1, { outcome: 'success' }, { log: false });
+            metricsService.recordTiming('stats.global_refresh.duration_ms', elapsed, { outcome: 'success' }, { log: false });
+            metricsService.emitLog('info', 'stats.global_refresh', {
+                status: 'success',
+                durationMs: elapsed,
+            });
             return { success: true, elapsedMs: elapsed };
 
         } catch (err) {
+            const elapsed = Date.now() - startTime;
+            metricsService.incrementCounter('stats.global_refresh.failure', 1, {}, { log: false });
+            metricsService.recordTiming('stats.global_refresh.duration_ms', elapsed, { outcome: 'error' }, { log: false });
+            metricsService.emitLog('error', 'stats.global_refresh', {
+                status: 'error',
+                durationMs: elapsed,
+                error: metricsService.safeErrorMessage(err),
+            });
             console.error('[Manager] Error refreshing global_stats:', err);
             throw err;
         }

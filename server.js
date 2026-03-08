@@ -5,6 +5,9 @@
 require('dotenv').config();
 
 const express = require('express');
+const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const path = require('path');
 const { createServer } = require('http');
 const { Server } = require('socket.io');
 const { TikTokConnectionWrapper, getGlobalConnectionCount } = require('./connectionWrapper');
@@ -39,6 +42,104 @@ const {
 } = require('./services/sessionMaintenanceService');
 const notificationService = require('./services/notificationService');
 const keyManager = require('./utils/keyManager');
+const metricsService = require('./services/metricsService');
+const { RecordingStorageService } = require('./services/recordingStorageService');
+const {
+    getSchemeAConfig,
+    getRecordingAccessConfig,
+    getSchemeAFeatureFlags,
+    refreshRuntimeSettingsFromDb,
+    isSensitiveRuntimeSettingKey,
+} = require('./services/featureFlagService');
+const { WorkerProcessManager } = require('./services/workerProcessManager');
+
+let schemeAConfig = getSchemeAConfig();
+let recordingStorageService = new RecordingStorageService({ schemeAConfig });
+let recordingUploadWorkerProcess = null;
+const processFallbackRecordingAccessTokenSecret = crypto.randomBytes(32).toString('hex');
+let hasWarnedMissingRecordingAccessSecret = false;
+
+function getEffectiveRecordingAccessConfig() {
+    const accessConfig = getRecordingAccessConfig();
+    if (!accessConfig.tokenSecret && !hasWarnedMissingRecordingAccessSecret) {
+        console.warn('[Recording Access] RECORDING_ACCESS_TOKEN_SECRET/JWT_SECRET 未配置，已使用进程内临时密钥；服务重启后旧下载链接会失效。');
+        hasWarnedMissingRecordingAccessSecret = true;
+    }
+    return {
+        tokenSecret: accessConfig.tokenSecret || processFallbackRecordingAccessTokenSecret,
+        ttlSecs: accessConfig.ttlSecs,
+    };
+}
+
+function applySchemeARuntimeConfig(nextConfig) {
+    schemeAConfig = nextConfig || getSchemeAConfig();
+    recordingStorageService = new RecordingStorageService({ schemeAConfig });
+}
+
+async function refreshSchemeARuntimeConfig(reason = 'manual') {
+    const nextConfig = await refreshRuntimeSettingsFromDb(db);
+    applySchemeARuntimeConfig(nextConfig);
+
+    metricsService.emitLog('info', 'scheme_a.runtime_refresh', {
+        reason,
+        featureFlags: getSchemeAFeatureFlags(),
+        objectStorageConfigured: Boolean(schemeAConfig.objectStorage.endpoint && schemeAConfig.objectStorage.bucket),
+        recordingUploadDaemonEnabled: schemeAConfig.worker.enableRecordingUploadDaemon,
+    });
+
+    if (recordingUploadWorkerProcess?.isRunning()) {
+        await stopManagedWorkers('SIGTERM');
+    }
+    ensureRecordingUploadWorkerDaemon();
+    return nextConfig;
+}
+
+function ensureRecordingUploadWorkerDaemon() {
+    if (!schemeAConfig.worker.enableRecordingUploadDaemon) {
+        return null;
+    }
+
+    if (!schemeAConfig.worker.enableRecordingUpload) {
+        metricsService.emitLog('warn', 'worker.guardian', {
+            workerName: 'recording_upload',
+            status: 'autostart_blocked',
+            reason: 'recording_upload_feature_flag_off',
+        });
+        return null;
+    }
+
+    if (!recordingStorageService.objectStorageService.isConfigured()) {
+        metricsService.emitLog('error', 'worker.guardian', {
+            workerName: 'recording_upload',
+            status: 'autostart_blocked',
+            reason: 'object_storage_not_configured',
+        });
+        return null;
+    }
+
+    if (!recordingUploadWorkerProcess) {
+        recordingUploadWorkerProcess = new WorkerProcessManager({
+            name: 'recording_upload',
+            enabled: true,
+            scriptPath: path.join(__dirname, 'bin/start_recording_upload_worker.js'),
+            cwd: __dirname,
+            env: {
+                WORKER_ROLE: 'recording_upload',
+            },
+            restartDelayMs: schemeAConfig.worker.recordingUploadDaemonRestartDelayMs,
+            maxRestarts: schemeAConfig.worker.recordingUploadDaemonMaxRestarts,
+        });
+    }
+
+    recordingUploadWorkerProcess.start();
+    return recordingUploadWorkerProcess;
+}
+
+async function stopManagedWorkers(signal = 'SIGTERM') {
+    if (recordingUploadWorkerProcess) {
+        await recordingUploadWorkerProcess.stop(signal);
+    }
+}
 
 // Helper: get user's room access context in a single query per request
 async function getUserRoomAccessContext(req) {
@@ -189,6 +290,7 @@ async function checkRoomOwnership(req, roomId) {
 
 
 const app = express();
+app.locals.refreshSchemeARuntimeConfig = refreshSchemeARuntimeConfig;
 const httpServer = createServer(app);
 
 // Start Auto Recorder (Dynamic interval from DB)
@@ -246,9 +348,190 @@ function writeRoomListCache(cacheKey, payload) {
 }
 
 function invalidateRoomListCaches(reason = 'manual') {
+    const clearedCount = roomListResponseCache.size;
     roomListCacheVersion += 1;
     roomListResponseCache.clear();
     console.log(`[CACHE] Room list cache invalidated: ${reason}`);
+    metricsService.emitLog('info', 'api.room_list.cache.invalidate', {
+        reason,
+        cacheVersion: roomListCacheVersion,
+        clearedCount,
+    });
+}
+
+function buildRoomListMetricContext(endpoint, req, params = {}) {
+    return {
+        endpoint,
+        actorRole: req.user?.role || 'guest',
+        authenticated: Boolean(req.user),
+        page: Number(params.page || 1),
+        limit: Number(params.limit || 50),
+        sort: params.sort ? String(params.sort) : null,
+        searchLength: String(params.search || '').length,
+    };
+}
+
+function logRoomListRequestResult(endpoint, req, params, startTime, payload, cacheHit) {
+    const durationMs = Date.now() - startTime;
+    const metricContext = buildRoomListMetricContext(endpoint, req, params);
+    const totalCount = payload?.pagination?.total ?? payload?.total ?? null;
+    const resultCount = Array.isArray(payload?.data) ? payload.data.length : 0;
+
+    metricsService.incrementCounter(
+        cacheHit ? 'api.room_list.cache_hit' : 'api.room_list.cache_miss',
+        1,
+        { endpoint },
+        { log: false }
+    );
+    metricsService.recordTiming(
+        'api.room_list.duration_ms',
+        durationMs,
+        { endpoint, cache: cacheHit ? 'hit' : 'miss', status: 'success' },
+        { log: false }
+    );
+    metricsService.emitLog('info', 'api.room_list.request', {
+        ...metricContext,
+        status: 'success',
+        cacheHit,
+        durationMs,
+        resultCount,
+        totalCount,
+    });
+}
+
+function logRoomListRequestError(endpoint, req, params, startTime, error) {
+    const durationMs = Date.now() - startTime;
+    const metricContext = buildRoomListMetricContext(endpoint, req, params);
+
+    metricsService.incrementCounter('api.room_list.error', 1, { endpoint }, { log: false });
+    metricsService.recordTiming(
+        'api.room_list.duration_ms',
+        durationMs,
+        { endpoint, cache: 'error', status: 'error' },
+        { log: false }
+    );
+    metricsService.emitLog('error', 'api.room_list.request', {
+        ...metricContext,
+        status: 'error',
+        cacheHit: false,
+        durationMs,
+        error: metricsService.safeErrorMessage(error),
+    });
+}
+
+const SAFE_RECORDING_TASK_SELECT = `
+    id,
+    room_id,
+    account_id,
+    start_time,
+    end_time,
+    file_path,
+    file_size,
+    status,
+    error_msg
+`;
+
+const INTERNAL_RECORDING_TASK_SELECT = `
+    id,
+    room_id,
+    account_id,
+    start_time,
+    end_time,
+    file_path,
+    file_size,
+    status,
+    error_msg,
+    storage_provider,
+    storage_bucket,
+    storage_object_key,
+    storage_etag,
+    storage_metadata_json,
+    upload_status,
+    upload_attempt_count,
+    upload_started_at,
+    upload_completed_at,
+    upload_error_msg,
+    cleanup_status,
+    cleanup_attempt_count,
+    cleanup_started_at,
+    cleanup_completed_at,
+    cleanup_error_msg,
+    local_file_deleted_at
+`;
+
+const RECORDING_ACCESS_PERMISSION = 'session_maintenance.manage';
+
+function serializeRecordingTask(task) {
+    if (!task) return null;
+    return {
+        id: task.id,
+        roomId: task.roomId,
+        accountId: task.accountId,
+        startTime: task.startTime,
+        endTime: task.endTime,
+        filePath: task.filePath,
+        fileSize: task.fileSize,
+        status: task.status,
+        errorMsg: task.errorMsg,
+    };
+}
+
+function buildRecordingAccessToken(task, user) {
+    return jwt.sign({
+        type: 'recording_access',
+        taskId: Number(task.id || 0),
+        roomId: String(task.roomId || ''),
+        userId: user?.id || null,
+        role: user?.role || 'user',
+    }, getEffectiveRecordingAccessConfig().tokenSecret, { expiresIn: getEffectiveRecordingAccessConfig().ttlSecs });
+}
+
+function verifyRecordingAccessToken(rawToken, expectedTaskId) {
+    if (!rawToken) return null;
+    try {
+        const decoded = jwt.verify(rawToken, getEffectiveRecordingAccessConfig().tokenSecret);
+        if (decoded?.type !== 'recording_access') return null;
+        if (Number(decoded?.taskId || 0) !== Number(expectedTaskId || 0)) return null;
+        return decoded;
+    } catch {
+        return null;
+    }
+}
+
+async function getRecordingTaskInternal(taskId) {
+    return db.get(`SELECT ${INTERNAL_RECORDING_TASK_SELECT} FROM recording_task WHERE id = $1`, [taskId]);
+}
+
+async function ensureRecordingTaskAccess(req, task) {
+    if (!task) {
+        return { allowed: false, status: 404, payload: { error: 'Task not found' } };
+    }
+    if (!req.user) {
+        return { allowed: false, status: 401, payload: { error: '请先登录' } };
+    }
+    if (req.user.role === 'admin') {
+        if (hasAdminPermission(req.user, RECORDING_ACCESS_PERMISSION)) {
+            return { allowed: true };
+        }
+        return {
+            allowed: false,
+            status: 403,
+            payload: {
+                error: '缺少后台权限',
+                code: 'ADMIN_PERMISSION_DENIED',
+                permission: RECORDING_ACCESS_PERMISSION,
+            },
+        };
+    }
+    const access = await canAccessRoom(req, task.roomId);
+    if (!access.allowed) {
+        return { allowed: false, status: 403, payload: { error: '无权访问此录播' } };
+    }
+    return { allowed: true };
+}
+
+function isRecordingStoredRemotely(task) {
+    return String(task?.uploadStatus || '') === 'uploaded' && Boolean(task?.storageObjectKey);
 }
 
 app.use(express.json({ limit: REQUEST_BODY_LIMIT }));
@@ -462,7 +745,7 @@ const SENSITIVE_SETTING_KEYS = [
 function filterSensitiveSettings(settings) {
     const filtered = {};
     for (const [key, value] of Object.entries(settings)) {
-        if (!SENSITIVE_SETTING_KEYS.includes(key) && !String(key || '').startsWith(PROMPT_TEMPLATE_PREFIX)) {
+        if (!SENSITIVE_SETTING_KEYS.includes(key) && !isSensitiveRuntimeSettingKey(key) && !String(key || '').startsWith(PROMPT_TEMPLATE_PREFIX)) {
             filtered[key] = value;
         }
     }
@@ -484,8 +767,8 @@ app.get('/api/config', optionalAuth, async (req, res) => {
 app.get('/api/settings', optionalAuth, async (req, res) => {
     try {
         const settings = await manager.getAllSettings();
-        const isAdmin = req.user && req.user.role === 'admin';
-        res.json(isAdmin ? settings : filterSensitiveSettings(settings));
+        const canViewAllSettings = req.user && req.user.role === 'admin' && hasAdminPermission(req.user, 'settings.manage');
+        res.json(canViewAllSettings ? settings : filterSensitiveSettings(settings));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -702,15 +985,18 @@ app.get('/api/rooms/quota', optionalAuth, async (req, res) => {
 });
 
 app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
+    const startTime = Date.now();
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const search = req.query.search || '';
+    const sort = req.query.sort || 'default';
+
     try {
         const liveRoomIds = autoRecorder.getLiveRoomIds();
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 50;
-        const search = req.query.search || '';
-        const sort = req.query.sort || 'default';
         const cacheKey = buildRoomListCacheKey('stats', req, { page, limit, search, sort });
         const cached = readRoomListCache(cacheKey);
         if (cached) {
+            logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, cached, true);
             return res.json(cached);
         }
 
@@ -733,8 +1019,10 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
         }
 
         const payload = writeRoomListCache(cacheKey, result);
+        logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, payload, false);
         res.json(payload);
     } catch (err) {
+        logRoomListRequestError('/api/rooms/stats', req, { page, limit, search, sort }, startTime, err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -753,13 +1041,16 @@ app.get('/api/debug/connections', authenticate, requireAdmin, requireAdminPermis
 });
 
 app.get('/api/rooms', optionalAuth, async (req, res) => {
+    const startTime = Date.now();
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const search = req.query.search || '';
+
     try {
-        const page = parseInt(req.query.page) || 1;
-        const limit = parseInt(req.query.limit) || 50;
-        const search = req.query.search || '';
         const cacheKey = buildRoomListCacheKey('rooms', req, { page, limit, search });
         const cached = readRoomListCache(cacheKey);
         if (cached) {
+            logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, cached, true);
             return res.json(cached);
         }
 
@@ -779,8 +1070,10 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
         });
 
         const payload = writeRoomListCache(cacheKey, result);
+        logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, payload, false);
         res.json(payload);
     } catch (err) {
+        logRoomListRequestError('/api/rooms', req, { page, limit, search }, startTime, err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -2657,7 +2950,7 @@ app.post('/api/rooms/:id/stop', authenticate, requireAdmin, requireAdminPermissi
 });
 
 // Recording API
-app.post('/api/rooms/:id/recording/start', async (req, res) => {
+app.post('/api/rooms/:id/recording/start', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const roomIdFromUrl = req.params.id;
         let { roomId, uniqueId, accountId } = req.body;
@@ -2688,7 +2981,7 @@ app.post('/api/rooms/:id/recording/start', async (req, res) => {
 });
 
 
-app.post('/api/rooms/:id/recording/stop', async (req, res) => {
+app.post('/api/rooms/:id/recording/stop', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const roomId = req.params.id;
         const result = await recordingManager.stopRecording(roomId);
@@ -2698,7 +2991,7 @@ app.post('/api/rooms/:id/recording/stop', async (req, res) => {
     }
 });
 
-app.get('/api/rooms/:id/recording/status', (req, res) => {
+app.get('/api/rooms/:id/recording/status', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), (req, res) => {
     const roomId = req.params.id;
     res.json({ isRecording: recordingManager.isRecording(roomId) });
 });
@@ -2710,7 +3003,7 @@ app.get('/api/recordings/active', (req, res) => {
 });
 
 // Recording Task Management API
-app.get('/api/recording_tasks', async (req, res) => {
+app.get('/api/recording_tasks', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const db = require('./db');
         const { roomId, status, dateFrom, dateTo, page = 1, limit = 20 } = req.query;
@@ -2747,14 +3040,14 @@ app.get('/api/recording_tasks', async (req, res) => {
         params.push(parseInt(limit));
         params.push(offset);
         const tasks = await db.query(`
-            SELECT * FROM recording_task 
+            SELECT ${SAFE_RECORDING_TASK_SELECT} FROM recording_task
             ${whereStr}
             ORDER BY start_time DESC
             LIMIT $${paramNum++} OFFSET $${paramNum}
         `, params);
 
         res.json({
-            tasks,
+            tasks: tasks.map(serializeRecordingTask),
             pagination: {
                 page: parseInt(page),
                 limit: parseInt(limit),
@@ -2769,7 +3062,7 @@ app.get('/api/recording_tasks', async (req, res) => {
 });
 
 // Get rooms with recording history (for dropdown)
-app.get('/api/recording_tasks/rooms', async (req, res) => {
+app.get('/api/recording_tasks/rooms', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const db = require('./db');
         const rooms = await db.query(`
@@ -2785,36 +3078,36 @@ app.get('/api/recording_tasks/rooms', async (req, res) => {
 });
 
 // Get single task detail
-app.get('/api/recording_tasks/:id', async (req, res) => {
+app.get('/api/recording_tasks/:id', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const db = require('./db');
-        const task = await db.get('SELECT * FROM recording_task WHERE id = $1', [req.params.id]);
+        const task = await db.get(`SELECT ${SAFE_RECORDING_TASK_SELECT} FROM recording_task WHERE id = $1`, [req.params.id]);
         if (!task) {
             return res.status(404).json({ error: 'Task not found' });
         }
-        res.json(task);
+        res.json(serializeRecordingTask(task));
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
 });
 
 // Delete recording task
-app.delete('/api/recording_tasks/:id', async (req, res) => {
+app.delete('/api/recording_tasks/:id', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const db = require('./db');
         const { deleteFile } = req.query;
-        const task = await db.get('SELECT * FROM recording_task WHERE id = $1', [req.params.id]);
+        const task = await db.get('SELECT id, file_path FROM recording_task WHERE id = $1', [req.params.id]);
 
         if (!task) {
             return res.status(404).json({ error: 'Task not found' });
         }
 
         // Optionally delete the file
-        if (deleteFile === 'true' && task.file_path) {
+        if (deleteFile === 'true' && task.filePath) {
             const fs = require('fs');
-            if (fs.existsSync(task.file_path)) {
-                fs.unlinkSync(task.file_path);
-                console.log(`[Recorder] Deleted file: ${task.file_path}`);
+            if (fs.existsSync(task.filePath)) {
+                fs.unlinkSync(task.filePath);
+                console.log(`[Recorder] Deleted file: ${task.filePath}`);
             }
         }
 
@@ -2825,24 +3118,82 @@ app.delete('/api/recording_tasks/:id', async (req, res) => {
     }
 });
 
-// Download recording file
-app.get('/api/recording_tasks/:id/download', async (req, res) => {
+app.get('/api/recording_tasks/:id/access', authenticate, async (req, res) => {
     try {
-        const db = require('./db');
-        const task = await db.get('SELECT * FROM recording_task WHERE id = $1', [req.params.id]);
-        if (!task || !task.filePath) {
-            return res.status(404).json({ error: 'File not found' });
+        const task = await getRecordingTaskInternal(req.params.id);
+        const access = await ensureRecordingTaskAccess(req, task);
+        if (!access.allowed) return res.status(access.status).json(access.payload);
+
+        const recordingAccessConfig = getEffectiveRecordingAccessConfig();
+        const expiresAt = new Date(Date.now() + recordingAccessConfig.ttlSecs * 1000).toISOString();
+
+        if (isRecordingStoredRemotely(task)) {
+            const url = recordingStorageService.createRecordingSignedUrl(task, {
+                expiresInSeconds: recordingAccessConfig.ttlSecs,
+            });
+            return res.json({
+                url,
+                expiresAt,
+                source: 'object_storage',
+                status: task.status,
+            });
         }
 
-        const fs = require('fs');
-        const path = require('path');
-
-        if (!fs.existsSync(task.filePath)) {
-            return res.status(404).json({ error: 'File does not exist on disk' });
+        if (task.filePath) {
+            const accessToken = buildRecordingAccessToken(task, req.user);
+            return res.json({
+                url: `/api/recording_tasks/${task.id}/download?accessToken=${encodeURIComponent(accessToken)}`,
+                expiresAt,
+                source: 'local_proxy',
+                status: task.status,
+            });
         }
 
-        const fileName = path.basename(task.filePath);
-        res.download(task.filePath, fileName);
+        return res.status(409).json({ error: '录播文件暂不可用', code: 'RECORDING_NOT_READY' });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// Download recording file
+app.get('/api/recording_tasks/:id/download', optionalAuth, async (req, res) => {
+    try {
+        const task = await getRecordingTaskInternal(req.params.id);
+        if (!task) {
+            return res.status(404).json({ error: 'Task not found' });
+        }
+
+        const tokenAccess = verifyRecordingAccessToken(req.query.accessToken, req.params.id);
+        let allowed = Boolean(tokenAccess);
+        if (!allowed && req.user) {
+            const access = await ensureRecordingTaskAccess(req, task);
+            allowed = access.allowed;
+            if (!allowed) {
+                return res.status(access.status).json(access.payload);
+            }
+        }
+
+        if (!allowed) {
+            return res.status(401).json({ error: '无权下载此录播' });
+        }
+
+        if (task.filePath) {
+            const fs = require('fs');
+            const path = require('path');
+            if (fs.existsSync(task.filePath)) {
+                const fileName = path.basename(task.filePath);
+                return res.download(task.filePath, fileName);
+            }
+        }
+
+        if (isRecordingStoredRemotely(task)) {
+            const signedUrl = recordingStorageService.createRecordingSignedUrl(task, {
+                expiresInSeconds: getEffectiveRecordingAccessConfig().ttlSecs,
+            });
+            return res.redirect(signedUrl);
+        }
+
+        return res.status(404).json({ error: 'File not found' });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -2854,7 +3205,7 @@ app.get('/api/recording_tasks/:id/download', async (req, res) => {
 const highlightExtractor = require('./highlight_extractor');
 
 // Analyze recording for potential highlights (preview)
-app.get('/api/recording_tasks/:id/highlights/analyze', async (req, res) => {
+app.get('/api/recording_tasks/:id/highlights/analyze', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const options = {
             minDiamonds: parseInt(req.query.minDiamonds) || highlightExtractor.DEFAULT_MIN_DIAMONDS,
@@ -2880,7 +3231,7 @@ app.get('/api/recording_tasks/:id/highlights/analyze', async (req, res) => {
 });
 
 // Start highlight extraction
-app.post('/api/recording_tasks/:id/highlights/extract', async (req, res) => {
+app.post('/api/recording_tasks/:id/highlights/extract', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const options = {
             minDiamonds: parseInt(req.body.minDiamonds) || highlightExtractor.DEFAULT_MIN_DIAMONDS,
@@ -2906,7 +3257,7 @@ app.post('/api/recording_tasks/:id/highlights/extract', async (req, res) => {
 });
 
 // Get highlight clips for a recording
-app.get('/api/recording_tasks/:id/highlights', async (req, res) => {
+app.get('/api/recording_tasks/:id/highlights', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const clips = await highlightExtractor.getHighlightClips(parseInt(req.params.id));
         res.json({ success: true, clips });
@@ -2916,7 +3267,7 @@ app.get('/api/recording_tasks/:id/highlights', async (req, res) => {
 });
 
 // Download a highlight clip
-app.get('/api/highlight_clips/:id/download', async (req, res) => {
+app.get('/api/highlight_clips/:id/download', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const db = require('./db');
         const clip = await db.get('SELECT * FROM highlight_clip WHERE id = $1', [req.params.id]);
@@ -2940,7 +3291,7 @@ app.get('/api/highlight_clips/:id/download', async (req, res) => {
 });
 
 // Delete a highlight clip
-app.delete('/api/highlight_clips/:id', async (req, res) => {
+app.delete('/api/highlight_clips/:id', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         const deleteFile = req.query.deleteFile !== 'false';
         await highlightExtractor.deleteHighlightClip(parseInt(req.params.id), deleteFile);
@@ -3194,16 +3545,29 @@ const ENABLE_PERIODIC_STATS_REFRESH = String(process.env.ENABLE_PERIODIC_STATS_R
 const ENABLE_STARTUP_STATS_WARMUP = String(process.env.ENABLE_STARTUP_STATS_WARMUP || 'false').toLowerCase() === 'true';
 let isRoomStatsRefreshRunning = false;
 let isUserStatsRefreshRunning = false;
+let isGlobalStatsRefreshRunning = false;
 
 async function runRoomStatsRefreshJob(trigger = 'manual') {
     if (isRoomStatsRefreshRunning) {
         console.log(`[CRON] Skip room stats refresh (${trigger}) because a previous run is still active`);
+        metricsService.emitLog('warn', 'stats.room_refresh', {
+            trigger,
+            status: 'skipped',
+            reason: 'already_running',
+        });
         return { skipped: true, trigger };
     }
     isRoomStatsRefreshRunning = true;
     try {
         console.log(`[CRON] Running room stats refresh (${trigger})...`);
         return await manager.refreshRoomStats();
+    } catch (err) {
+        metricsService.emitLog('error', 'stats.room_refresh', {
+            trigger,
+            status: 'error',
+            error: metricsService.safeErrorMessage(err),
+        });
+        throw err;
     } finally {
         isRoomStatsRefreshRunning = false;
     }
@@ -3212,14 +3576,52 @@ async function runRoomStatsRefreshJob(trigger = 'manual') {
 async function runUserStatsRefreshJob(trigger = 'manual') {
     if (isUserStatsRefreshRunning) {
         console.log(`[CRON] Skip user stats refresh (${trigger}) because a previous run is still active`);
+        metricsService.emitLog('warn', 'stats.user_refresh', {
+            trigger,
+            status: 'skipped',
+            reason: 'already_running',
+        });
         return { skipped: true, trigger };
     }
     isUserStatsRefreshRunning = true;
     try {
         console.log(`[CRON] Running user stats refresh (${trigger})...`);
         return await manager.refreshUserStats();
+    } catch (err) {
+        metricsService.emitLog('error', 'stats.user_refresh', {
+            trigger,
+            status: 'error',
+            error: metricsService.safeErrorMessage(err),
+        });
+        throw err;
     } finally {
         isUserStatsRefreshRunning = false;
+    }
+}
+
+async function runGlobalStatsRefreshJob(trigger = 'manual') {
+    if (isGlobalStatsRefreshRunning) {
+        console.log(`[CRON] Skip global stats refresh (${trigger}) because a previous run is still active`);
+        metricsService.emitLog('warn', 'stats.global_refresh', {
+            trigger,
+            status: 'skipped',
+            reason: 'already_running',
+        });
+        return { skipped: true, trigger };
+    }
+    isGlobalStatsRefreshRunning = true;
+    try {
+        console.log(`[CRON] Running global stats refresh (${trigger})...`);
+        return await manager.refreshGlobalStats();
+    } catch (err) {
+        metricsService.emitLog('error', 'stats.global_refresh', {
+            trigger,
+            status: 'error',
+            error: metricsService.safeErrorMessage(err),
+        });
+        throw err;
+    } finally {
+        isGlobalStatsRefreshRunning = false;
     }
 }
 
@@ -3249,6 +3651,23 @@ httpServer.listen(PORT, async () => {
     console.log(`Server started on http://localhost:${PORT}`);
 
     await db.initDb();
+    await refreshSchemeARuntimeConfig('startup-db-sync');
+
+    metricsService.emitLog('info', 'scheme_a.startup', {
+        featureFlags: getSchemeAFeatureFlags(),
+        redisConfigured: Boolean(schemeAConfig.redis.url),
+        objectStorageConfigured: Boolean(schemeAConfig.objectStorage.endpoint && schemeAConfig.objectStorage.bucket),
+        recordingUploadWorker: {
+            enabled: schemeAConfig.worker.enableRecordingUpload,
+            daemonEnabled: schemeAConfig.worker.enableRecordingUploadDaemon,
+            pollMs: schemeAConfig.worker.recordingUploadPollMs,
+            batchSize: schemeAConfig.worker.recordingUploadBatchSize,
+            cleanupEnabled: schemeAConfig.worker.enableRecordingLocalCleanup,
+            cleanupDelayMs: schemeAConfig.worker.recordingLocalCleanupDelayMs,
+            daemonRestartDelayMs: schemeAConfig.worker.recordingUploadDaemonRestartDelayMs,
+            daemonMaxRestarts: schemeAConfig.worker.recordingUploadDaemonMaxRestarts,
+        },
+    });
 
     // Cleanup orphaned recording tasks from previous session (crashed or force-closed)
     await recordingManager.cleanupOrphanedTasks();
@@ -3326,7 +3745,7 @@ httpServer.listen(PORT, async () => {
     setTimeout(async () => {
         try {
             console.log('[CRON] Initial global stats refresh...');
-            await manager.refreshGlobalStats();
+            await runGlobalStatsRefreshJob('startup');
         } catch (err) {
             console.error('[CRON] Initial global stats refresh error:', err.message);
         }
@@ -3336,7 +3755,7 @@ httpServer.listen(PORT, async () => {
     setInterval(async () => {
         try {
             console.log('[CRON] Refreshing global stats cache...');
-            await manager.refreshGlobalStats();
+            await runGlobalStatsRefreshJob('interval');
         } catch (err) {
             console.error('[CRON] Global stats refresh error:', err.message);
         }
@@ -3368,6 +3787,8 @@ async function gracefulShutdown(signal) {
     console.log(`\n[Server] Received ${signal}, initiating graceful shutdown...`);
 
     try {
+        await stopManagedWorkers(signal);
+
         // Stop all active recordings and save their state
         await recordingManager.stopAllRecordings();
 

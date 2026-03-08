@@ -6,6 +6,13 @@ let recordingTasks = []; // Active or recent tasks
 let editingProxyId = null;
 let editingAccountId = null;
 
+async function recordingApiFetch(url, options = {}) {
+    if (window.Auth && typeof window.Auth.apiFetch === 'function') {
+        return window.Auth.apiFetch(url, options);
+    }
+    return fetch(url, options);
+}
+
 $(document).ready(() => {
     // Initial Load
     // We strictly load when tab is switched to keep performance, but can also load on init
@@ -38,7 +45,7 @@ function switchRecordingTab(tabName, btn) {
 // --- Accounts ---
 async function loadAccounts() {
     try {
-        const res = await fetch('/api/tiktok_accounts');
+        const res = await recordingApiFetch('/api/tiktok_accounts');
         const data = await res.json();
         recordingAccounts = data.accounts || [];
         renderAccounts();
@@ -86,7 +93,7 @@ async function addAccount() {
     if (!cookie && !username) return alert("Username or Cookie required");
 
     try {
-        await fetch('/api/tiktok_accounts', {
+        await recordingApiFetch('/api/tiktok_accounts', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -106,7 +113,7 @@ async function addAccount() {
 async function deleteAccount(id) {
     if (!confirm("Delete this account?")) return;
     try {
-        await fetch(`/api/tiktok_accounts/${id}`, { method: 'DELETE' });
+        await recordingApiFetch(`/api/tiktok_accounts/${id}`, { method: 'DELETE' });
         loadAccounts();
     } catch (e) {
         alert("Failed to delete: " + e.message);
@@ -134,7 +141,7 @@ function openAddAccountModal() {
 // --- Proxies ---
 async function loadProxies() {
     try {
-        const res = await fetch('/api/socks5_proxies');
+        const res = await recordingApiFetch('/api/socks5_proxies');
         recordingProxies = await res.json();
         renderProxies();
     } catch (e) {
@@ -189,7 +196,7 @@ async function addProxy() {
 async function deleteProxy(id) {
     if (!confirm("Delete this proxy?")) return;
     try {
-        await fetch(`/api/socks5_proxies/${id}`, { method: 'DELETE' });
+        await recordingApiFetch(`/api/socks5_proxies/${id}`, { method: 'DELETE' });
         loadProxies();
     } catch (e) {
         alert("Failed to delete: " + e.message);
@@ -198,7 +205,7 @@ async function deleteProxy(id) {
 
 async function toggleProxyStatus(id, isActive) {
     try {
-        const res = await fetch(`/api/socks5_proxies/${id}`, {
+        const res = await recordingApiFetch(`/api/socks5_proxies/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ isActive: isActive ? 1 : 0 })
@@ -218,7 +225,7 @@ async function testProxy(id) {
     btn.prop('disabled', true).text('Testing...');
 
     try {
-        const res = await fetch(`/api/socks5_proxies/${id}/test`, { method: 'POST' });
+        const res = await recordingApiFetch(`/api/socks5_proxies/${id}/test`, { method: 'POST' });
         const data = await res.json();
 
         if (data.success) {
@@ -235,7 +242,7 @@ async function testProxy(id) {
 
 async function toggleAccountStatus(id, isActive) {
     try {
-        const res = await fetch(`/api/tiktok_accounts/${id}`, {
+        const res = await recordingApiFetch(`/api/tiktok_accounts/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ isActive: isActive ? 1 : 0 })
@@ -310,7 +317,7 @@ async function saveProxy() {
         let res;
         if (id) {
             // Update existing
-            res = await fetch(`/api/socks5_proxies/${id}`, {
+            res = await recordingApiFetch(`/api/socks5_proxies/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -318,7 +325,7 @@ async function saveProxy() {
         } else {
             // Add new
             payload.isActive = 1; // Default active
-            res = await fetch('/api/socks5_proxies', {
+            res = await recordingApiFetch('/api/socks5_proxies', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -353,7 +360,7 @@ async function saveAccount() {
         if (id) {
             console.log("Updating account:", id);
             // Update existing
-            res = await fetch(`/api/tiktok_accounts/${id}`, {
+            res = await recordingApiFetch(`/api/tiktok_accounts/${id}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload)
@@ -362,7 +369,7 @@ async function saveAccount() {
             console.log("Creating new account");
             // Add new
             payload.isActive = 1;
-            res = await fetch('/api/tiktok_accounts', {
+            res = await recordingApiFetch('/api/tiktok_accounts', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ ...payload, isActive: 1 })
@@ -389,7 +396,7 @@ async function toggleRecording(roomId, uniqueId, btn) {
         $(btn).html('<span class="loading loading-spinner loading-xs"></span>');
 
         try {
-            const res = await fetch(`/api/rooms/${roomId}/recording/stop`, { method: 'POST' });
+            const res = await recordingApiFetch(`/api/rooms/${roomId}/recording/stop`, { method: 'POST' });
             const data = await res.json();
             if (data.success) {
                 showToast(`停止录制成功: ${uniqueId}`, 'success');
@@ -458,7 +465,7 @@ async function confirmStartRecording() {
     modalBtn.prop('disabled', true).html('<span class="loading loading-spinner loading-xs"></span> 启动中...');
 
     try {
-        const res = await fetch(`/api/rooms/${roomId}/recording/start`, {
+        const res = await recordingApiFetch(`/api/rooms/${roomId}/recording/start`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ roomId, uniqueId, accountId })
@@ -511,8 +518,8 @@ async function loadRecordingTasks() {
         params.append('limit', 15);
 
         const [tasksRes, activeRes] = await Promise.all([
-            fetch(`/api/recording_tasks?${params}`).then(r => r.json()),
-            fetch('/api/recordings/active').then(r => r.json())
+            recordingApiFetch(`/api/recording_tasks?${params}`).then(r => r.json()),
+            recordingApiFetch('/api/recordings/active').then(r => r.json())
         ]);
 
         // Render active recordings
@@ -542,7 +549,7 @@ async function loadTasks() {
 
 async function loadRoomDropdown() {
     try {
-        const rooms = await fetch('/api/recording_tasks/rooms').then(r => r.json());
+        const rooms = await recordingApiFetch('/api/recording_tasks/rooms').then(r => r.json());
         const select = $('#taskFilterRoom');
         select.find('option:not(:first)').remove();
         rooms.forEach(r => {
@@ -592,7 +599,8 @@ function renderTaskHistory(tasks) {
         const startTime = t.startTime ? new Date(t.startTime).toLocaleString('zh-CN') : '-';
         const duration = calculateDuration(t.startTime, t.endTime);
         const statusBadge = getStatusBadge(t.status);
-        const hasFile = t.filePath && t.status === 'completed';
+        const canDownload = ['completed', 'local_completed', 'uploaded', 'local_deleted', 'upload_failed'].includes(t.status);
+        const canHighlight = t.filePath && ['completed', 'local_completed', 'uploaded', 'upload_failed'].includes(t.status);
 
         tbody.append(`
             <tr>
@@ -602,8 +610,8 @@ function renderTaskHistory(tasks) {
                 <td>${duration}</td>
                 <td>${statusBadge}</td>
                 <td>
-                    ${hasFile ? `<button class="btn btn-xs btn-success" onclick="openHighlightModal(${t.id})" title="精彩片段">✂️</button>` : ''}
-                    ${hasFile ? `<button class="btn btn-xs btn-info" onclick="downloadRecording(${t.id})" title="下载">📥</button>` : ''}
+                    ${canHighlight ? `<button class="btn btn-xs btn-success" onclick="openHighlightModal(${t.id})" title="精彩片段">✂️</button>` : ''}
+                    ${canDownload ? `<button class="btn btn-xs btn-info" onclick="downloadRecording(${t.id})" title="下载">📥</button>` : ''}
                     <button class="btn btn-xs btn-ghost text-error" onclick="deleteRecordingTask(${t.id})" title="删除">🗑️</button>
                 </td>
             </tr>
@@ -629,8 +637,14 @@ function calculateDuration(start, end) {
 function getStatusBadge(status) {
     switch (status) {
         case 'recording': return '<span class="badge badge-error badge-sm">录制中</span>';
+        case 'local_completed': return '<span class="badge badge-info badge-sm">本地完成</span>';
+        case 'uploading': return '<span class="badge badge-warning badge-sm">上传中</span>';
+        case 'uploaded': return '<span class="badge badge-success badge-sm">已上传</span>';
+        case 'local_deleted': return '<span class="badge badge-accent badge-sm">本地已清理</span>';
+        case 'upload_failed': return '<span class="badge badge-warning badge-sm">上传失败</span>';
         case 'completed': return '<span class="badge badge-success badge-sm">✅ 完成</span>';
         case 'failed': return '<span class="badge badge-warning badge-sm">❌ 失败</span>';
+        case 'interrupted': return '<span class="badge badge-ghost badge-sm">已中断</span>';
         default: return `<span class="badge badge-ghost badge-sm">${status || '未知'}</span>`;
     }
 }
@@ -652,8 +666,15 @@ function clearTaskFilters() {
     loadRecordingTasks();
 }
 
-function downloadRecording(taskId) {
-    window.open(`/api/recording_tasks/${taskId}/download`, '_blank');
+async function downloadRecording(taskId) {
+    try {
+        const res = await recordingApiFetch(`/api/recording_tasks/${taskId}/access`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '下载地址获取失败');
+        window.open(data.url, '_blank');
+    } catch (e) {
+        alert('下载失败: ' + e.message);
+    }
 }
 
 async function deleteRecordingTask(taskId) {
@@ -661,7 +682,7 @@ async function deleteRecordingTask(taskId) {
     if (!confirm('确定要删除这条录制记录吗？')) return;
 
     try {
-        const res = await fetch(`/api/recording_tasks/${taskId}?deleteFile=${deleteFile}`, { method: 'DELETE' });
+        const res = await recordingApiFetch(`/api/recording_tasks/${taskId}?deleteFile=${deleteFile}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await res.text());
         loadRecordingTasks();
     } catch (e) {
@@ -672,7 +693,7 @@ async function deleteRecordingTask(taskId) {
 async function stopTask(roomId) {
     if (!confirm('确定要停止录制吗?')) return;
     try {
-        await fetch(`/api/rooms/${roomId}/recording/stop`, { method: 'POST' });
+        await recordingApiFetch(`/api/rooms/${roomId}/recording/stop`, { method: 'POST' });
         setTimeout(loadRecordingTasks, 500);
     } catch (e) {
         alert("停止失败: " + e.message);
@@ -682,7 +703,7 @@ async function stopTask(roomId) {
 // --- FFmpeg Management ---
 async function checkFFmpegStatus() {
     try {
-        const res = await fetch('/api/maintenance/ffmpeg');
+        const res = await recordingApiFetch('/api/maintenance/ffmpeg');
         const status = await res.json();
 
         // Update UI logic: we expect elements #ffmpegStatusBadge, #ffmpegActionContainer, #ffmpegInfo
@@ -725,7 +746,7 @@ window.installFFmpeg = async function (force) {
     btn.prop('disabled', true).html('<span class="loading loading-spinner loading-xs"></span> 处理中...');
 
     try {
-        const res = await fetch('/api/maintenance/ffmpeg/install', {
+        const res = await recordingApiFetch('/api/maintenance/ffmpeg/install', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ force })
@@ -777,7 +798,7 @@ async function analyzeHighlights() {
     $('#highlightSegmentsList').html('<div class="text-center py-4"><span class="loading loading-spinner"></span> 分析中...</div>');
 
     try {
-        const res = await fetch(`/api/recording_tasks/${currentHighlightTaskId}/highlights/analyze?` + new URLSearchParams({
+        const res = await recordingApiFetch(`/api/recording_tasks/${currentHighlightTaskId}/highlights/analyze?` + new URLSearchParams({
             minDiamonds, bufferBefore, bufferAfter, mergeWindow
         }));
         const data = await res.json();
@@ -850,7 +871,7 @@ async function extractHighlights() {
     const mergeWindow = parseInt($('#highlightMergeWindow').val()) || 60;
 
     try {
-        const res = await fetch(`/api/recording_tasks/${currentHighlightTaskId}/highlights/extract`, {
+        const res = await recordingApiFetch(`/api/recording_tasks/${currentHighlightTaskId}/highlights/extract`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ minDiamonds, bufferBefore, bufferAfter, mergeWindow })
@@ -871,7 +892,7 @@ async function extractHighlights() {
 
 async function loadExistingClips(taskId) {
     try {
-        const res = await fetch(`/api/recording_tasks/${taskId}/highlights`);
+        const res = await recordingApiFetch(`/api/recording_tasks/${taskId}/highlights`);
         const data = await res.json();
 
         if (!data.success || !data.clips || data.clips.length === 0) {
@@ -903,15 +924,29 @@ async function loadExistingClips(taskId) {
     }
 }
 
-function downloadHighlightClip(clipId) {
-    window.open(`/api/highlight_clips/${clipId}/download`, '_blank');
+async function downloadHighlightClip(clipId) {
+    try {
+        const res = await recordingApiFetch(`/api/highlight_clips/${clipId}/download`);
+        if (!res.ok) throw new Error(await res.text());
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const anchor = document.createElement('a');
+        anchor.href = url;
+        anchor.download = `highlight-${clipId}.mp4`;
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+        alert('片段下载失败: ' + e.message);
+    }
 }
 
 async function deleteHighlightClip(clipId) {
     if (!confirm('确定要删除这个片段吗？')) return;
 
     try {
-        const res = await fetch(`/api/highlight_clips/${clipId}`, { method: 'DELETE' });
+        const res = await recordingApiFetch(`/api/highlight_clips/${clipId}`, { method: 'DELETE' });
         if (!res.ok) throw new Error(await res.text());
         await loadExistingClips(currentHighlightTaskId);
     } catch (e) {
@@ -923,7 +958,7 @@ async function deleteHighlightClip(clipId) {
 
 async function loadHighlightSettings() {
     try {
-        const res = await fetch('/api/settings');
+        const res = await recordingApiFetch('/api/settings');
         const settings = await res.json();
 
         // Update settings tab inputs
@@ -952,7 +987,7 @@ async function saveHighlightSettings() {
     };
 
     try {
-        const res = await fetch('/api/settings', {
+        const res = await recordingApiFetch('/api/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(settings)

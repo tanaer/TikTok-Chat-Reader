@@ -100,6 +100,7 @@ async function initDb() {
             )
         `);
 
+
         await pool.query(`
             CREATE TABLE IF NOT EXISTS admin_role (
                 id SERIAL PRIMARY KEY,
@@ -343,9 +344,47 @@ async function initDb() {
                 file_path TEXT,
                 file_size BIGINT,
                 status TEXT, -- 'recording', 'completed', 'failed'
-                error_msg TEXT
+                error_msg TEXT,
+                storage_provider TEXT,
+                storage_bucket TEXT,
+                storage_object_key TEXT,
+                storage_etag TEXT,
+                storage_metadata_json TEXT,
+                upload_status TEXT DEFAULT 'not_requested',
+                upload_attempt_count INTEGER DEFAULT 0,
+                upload_started_at TIMESTAMP,
+                upload_completed_at TIMESTAMP,
+                upload_error_msg TEXT,
+                cleanup_status TEXT DEFAULT 'not_requested',
+                cleanup_attempt_count INTEGER DEFAULT 0,
+                cleanup_started_at TIMESTAMP,
+                cleanup_completed_at TIMESTAMP,
+                cleanup_error_msg TEXT,
+                local_file_deleted_at TIMESTAMP
             )
         `);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS storage_provider TEXT`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS storage_bucket TEXT`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS storage_object_key TEXT`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS storage_etag TEXT`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS storage_metadata_json TEXT`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS upload_status TEXT DEFAULT 'not_requested'`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS upload_attempt_count INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS upload_started_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS upload_completed_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS upload_error_msg TEXT`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS cleanup_status TEXT DEFAULT 'not_requested'`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS cleanup_attempt_count INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS cleanup_started_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS cleanup_completed_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS cleanup_error_msg TEXT`);
+        await pool.query(`ALTER TABLE recording_task ADD COLUMN IF NOT EXISTS local_file_deleted_at TIMESTAMP`);
+        await pool.query(`UPDATE recording_task SET upload_status = 'not_requested' WHERE upload_status IS NULL`);
+        await pool.query(`UPDATE recording_task SET cleanup_status = 'not_requested' WHERE cleanup_status IS NULL`);
+        await pool.query(`UPDATE recording_task SET upload_attempt_count = 0 WHERE upload_attempt_count IS NULL`);
+        await pool.query(`UPDATE recording_task SET cleanup_attempt_count = 0 WHERE cleanup_attempt_count IS NULL`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_recording_task_upload_status ON recording_task(upload_status, start_time DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_recording_task_cleanup_status ON recording_task(cleanup_status, start_time DESC)`);
 
         // Highlight Clip table (for extracted video clips from recordings)
         await pool.query(`
