@@ -66,12 +66,21 @@ async function initDb() {
                 unique_id TEXT,
                 nickname TEXT,
                 gift_id INTEGER,
+                gift_name TEXT,
+                gift_image TEXT,
+                group_id TEXT,
                 diamond_count INTEGER DEFAULT 0,
                 repeat_count INTEGER DEFAULT 1,
                 like_count INTEGER DEFAULT 0,
                 total_like_count INTEGER DEFAULT 0,
                 comment TEXT,
                 viewer_count INTEGER,
+                region TEXT,
+                is_admin INTEGER DEFAULT 0,
+                is_super_admin INTEGER DEFAULT 0,
+                is_moderator INTEGER DEFAULT 0,
+                fan_level INTEGER DEFAULT 0,
+                fan_club_name TEXT,
                 data_json TEXT
             )
         `);
@@ -176,6 +185,15 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_type_room ON event(type, room_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_gift_agg ON event(room_id, type, user_id) WHERE type = 'gift'`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_room_created ON session(room_id, created_at DESC)`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS gift_name TEXT`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS gift_image TEXT`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS group_id TEXT`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS region TEXT`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS is_super_admin INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS is_moderator INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS fan_level INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS fan_club_name TEXT`);
 
         // Performance optimization: partial index for orphaned events (session_id IS NULL)
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_room_null_session ON event(room_id, timestamp) WHERE session_id IS NULL`);

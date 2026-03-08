@@ -35,6 +35,28 @@ function isLikelyExactRoomIdSearch(value) {
     return typeof value === 'string' && /^[A-Za-z0-9._@-]+$/.test(value.trim());
 }
 
+function toOptionalText(value) {
+    if (value === undefined || value === null || value === '') return null;
+    return String(value);
+}
+
+function toInteger(value, fallback = 0) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.trunc(numeric) : fallback;
+}
+
+function toBooleanInteger(value) {
+    return value ? 1 : 0;
+}
+
+function safeJsonStringify(value, fallback = '{}') {
+    try {
+        return JSON.stringify(value ?? {});
+    } catch {
+        return fallback;
+    }
+}
+
 class Manager {
     constructor() {
         this.prices = this.loadPrices();
@@ -416,46 +438,60 @@ class Manager {
         };
     }
 
-    // Event Logging - writes to expanded columns (data_json removed to save space)
+    // Event Logging - writes explicit analysis columns while retaining data_json for legacy compatibility
     async logEvent(roomId, eventType, data, sessionId = null) {
         await this.ensureDb();
         const now = getNowBeijing();
+        const payload = data && typeof data === 'object' ? data : {};
 
         // Only sync user data for meaningful event types (chat, gift, like)
         // This prevents recording users who only triggered member/view events
         const userRecordableTypes = ['chat', 'gift', 'like'];
-        if (data.userId && userRecordableTypes.includes(eventType)) {
+        if (payload.userId && userRecordableTypes.includes(eventType)) {
             await this.ensureUser({
-                userId: data.userId,
-                uniqueId: data.uniqueId,
-                nickname: data.nickname,
-                avatar: data.profilePictureUrl || '',
-                region: data.region || null
+                userId: payload.userId,
+                uniqueId: payload.uniqueId,
+                nickname: payload.nickname,
+                avatar: payload.profilePictureUrl || '',
+                region: payload.region || null
             });
         }
 
-        // Insert with expanded columns for fast querying (no data_json to save space)
         await run(`INSERT INTO event (
         room_id, session_id, type, timestamp,
         user_id, unique_id, nickname,
-        gift_id, diamond_count, repeat_count,
+        gift_id, gift_name, gift_image, group_id,
+        diamond_count, repeat_count,
         like_count, total_like_count,
-        comment, viewer_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        comment, viewer_count, region,
+        is_admin, is_super_admin, is_moderator,
+        fan_level, fan_club_name,
+        data_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
             roomId,
             sessionId,
             eventType,
             now,
-            data.userId || null,
-            data.uniqueId || null,
-            data.nickname || null,
-            data.giftId || null,
-            data.diamondCount || 0,
-            data.repeatCount || 1,
-            data.likeCount || 0,
-            data.totalLikeCount || 0,
-            data.comment || null,
-            data.viewerCount || null
+            toOptionalText(payload.userId),
+            toOptionalText(payload.uniqueId),
+            toOptionalText(payload.nickname),
+            payload.giftId == null || payload.giftId === '' ? null : toInteger(payload.giftId, null),
+            toOptionalText(payload.giftName),
+            toOptionalText(payload.giftImage),
+            toOptionalText(payload.groupId),
+            toInteger(payload.diamondCount, 0),
+            toInteger(payload.repeatCount, 1),
+            toInteger(payload.likeCount, 0),
+            toInteger(payload.totalLikeCount, 0),
+            toOptionalText(payload.comment),
+            payload.viewerCount == null || payload.viewerCount === '' ? null : toInteger(payload.viewerCount, null),
+            toOptionalText(payload.region),
+            toBooleanInteger(payload.isAdmin),
+            toBooleanInteger(payload.isSuperAdmin),
+            toBooleanInteger(payload.isModerator),
+            toInteger(payload.fanLevel, 0),
+            toOptionalText(payload.fanClubName),
+            safeJsonStringify(payload)
         ]);
     }
 

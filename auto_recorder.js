@@ -975,6 +975,7 @@ class AutoRecorder {
                 uniqueId: msg.user?.uniqueId || msg.uniqueId,
                 nickname: msg.user?.nickname || msg.nickname,
                 userId: msg.user?.userId || msg.userId,
+                region: msg.user?.region || '',
                 ...roleInfo
             };
             logEvent('member', data);
@@ -1107,6 +1108,7 @@ class AutoRecorder {
                 uniqueId: msg.user?.uniqueId || msg.uniqueId,
                 nickname: msg.user?.nickname || msg.nickname,
                 userId: msg.user?.userId || msg.userId,
+                region: msg.user?.region || '',
                 likeCount: msg.likeCount,
                 totalLikeCount: msg.totalLikeCount,
                 ...roleInfo
