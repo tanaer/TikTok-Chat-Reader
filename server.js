@@ -2422,6 +2422,8 @@ async function requestAiChatCompletion({ messages, requestLabel, trace = null })
     throw new Error(`AI API Error: ${errors.join(' | ')}`);
 }
 
+const SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD = 15;
+
 function isLowValueCommentSignal(text) {
     const normalized = String(text || '').trim().toLowerCase();
     if (!normalized) return true;
@@ -2456,24 +2458,47 @@ function buildHeuristicValuableComments(commentCandidates = []) {
 }
 
 async function filterSessionRecapCommentSignals(roomId, sessionId, commentCandidates = [], { trace = null } = {}) {
-    const topCandidates = Array.isArray(commentCandidates)
+    const normalizedCandidates = Array.isArray(commentCandidates)
         ? commentCandidates
             .map(item => ({
                 text: safeTrimString(item.text || item.comment || '', 80),
                 count: clampNumber(item.count, 0, 999999, 0)
             }))
             .filter(item => item.text && item.count > 0)
-            .slice(0, 50)
         : [];
 
-    if (!topCandidates.length) return [];
+    const originalCandidateCount = normalizedCandidates.length;
+    const repeatFilteredCount = normalizedCandidates.filter(item => item.count > SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD).length;
+    const topCandidates = normalizedCandidates
+        .filter(item => item.count <= SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD)
+        .slice(0, 50);
+
+    if (!topCandidates.length) {
+        await emitAiTrace(trace, {
+            phase: 'comment_filter',
+            level: 'info',
+            message: '高频弹幕已被重复阈值过滤',
+            payload: {
+                originalCandidateCount,
+                filteredByRepeatThreshold: repeatFilteredCount,
+                repeatThreshold: SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD
+            }
+        });
+        return [];
+    }
 
     const fallback = buildHeuristicValuableComments(topCandidates);
     await emitAiTrace(trace, {
         phase: 'comment_filter',
         level: 'info',
         message: '开始筛选高价值弹幕',
-        payload: { candidateCount: topCandidates.length, fallbackCount: fallback.length }
+        payload: {
+            originalCandidateCount,
+            candidateCount: topCandidates.length,
+            filteredByRepeatThreshold: repeatFilteredCount,
+            repeatThreshold: SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD,
+            fallbackCount: fallback.length
+        }
     });
 
     try {
