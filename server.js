@@ -371,6 +371,7 @@ app.locals.autoRecorder = autoRecorder;
 // Enable CORS & request body parsing
 const REQUEST_BODY_LIMIT = '20mb';
 const ROOM_LIST_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ROOM_LIST_CACHE_TTL_MS || '10000', 10) || 10000);
+const ALLTIME_LEADERBOARDS_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ALLTIME_LEADERBOARDS_CACHE_TTL_MS || '15000', 10) || 15000);
 const ROOM_LIST_CACHE_MAX_ENTRIES = 200;
 const roomListResponseCache = new Map();
 const ROOM_LIST_CACHE_NAMESPACE = 'room_list';
@@ -396,6 +397,10 @@ function buildRoomListCacheKey(endpoint, req, params = {}, cacheVersion = roomLi
 
 function buildRoomListRedisKey(cacheKey) {
     return cacheService.buildCacheKey(ROOM_LIST_CACHE_NAMESPACE, cacheKey);
+}
+
+function buildAllTimeLeaderboardsCacheKey(roomId) {
+    return cacheService.buildCacheKey('room_detail', 'alltime_leaderboards', roomId);
 }
 
 function readLocalRoomListCache(cacheKey) {
@@ -1542,7 +1547,20 @@ app.get('/api/rooms/:id/alltime-leaderboards', optionalAuth, async (req, res) =>
         const access = await canAccessRoom(req, roomId);
         if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
 
+        const cacheKey = buildAllTimeLeaderboardsCacheKey(roomId);
+        if (cacheService.isRoomCacheEnabled() && ALLTIME_LEADERBOARDS_CACHE_TTL_MS > 0) {
+            const cached = await cacheService.getJson(cacheKey);
+            if (cached) {
+                return res.json(cached);
+            }
+        }
+
         const data = await manager.getAllTimeLeaderboards(roomId);
+
+        if (cacheService.isRoomCacheEnabled() && ALLTIME_LEADERBOARDS_CACHE_TTL_MS > 0) {
+            await cacheService.setJson(cacheKey, data, { ttlMs: ALLTIME_LEADERBOARDS_CACHE_TTL_MS });
+        }
+
         res.json(data);
     } catch (err) {
         console.error('[API] alltime-leaderboards error:', err);
