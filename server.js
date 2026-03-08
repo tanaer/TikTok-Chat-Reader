@@ -60,11 +60,13 @@ const {
     runUserStatsRefreshJob,
     runGlobalStatsRefreshJob,
 } = require('./services/statsRefreshService');
+const { runExpiredRoomCleanupJob } = require('./services/maintenanceJobService');
 
 let schemeAConfig = getSchemeAConfig();
 let recordingStorageService = new RecordingStorageService({ schemeAConfig });
 let recordingUploadWorkerProcess = null;
 let statsWorkerProcess = null;
+let maintenanceWorkerProcess = null;
 const processFallbackRecordingAccessTokenSecret = crypto.randomBytes(32).toString('hex');
 let hasWarnedMissingRecordingAccessSecret = false;
 
@@ -96,11 +98,12 @@ async function refreshSchemeARuntimeConfig(reason = 'manual') {
         recordingUploadDaemonEnabled: schemeAConfig.worker.enableRecordingUploadDaemon,
     });
 
-    if (recordingUploadWorkerProcess?.isRunning() || statsWorkerProcess?.isRunning()) {
+    if (recordingUploadWorkerProcess?.isRunning() || statsWorkerProcess?.isRunning() || maintenanceWorkerProcess?.isRunning()) {
         await stopManagedWorkers('SIGTERM');
     }
     ensureRecordingUploadWorkerDaemon();
     ensureStatsWorkerDaemon();
+    ensureMaintenanceWorkerDaemon();
     return nextConfig;
 }
 
@@ -168,12 +171,38 @@ function ensureStatsWorkerDaemon() {
     return statsWorkerProcess;
 }
 
+function ensureMaintenanceWorkerDaemon() {
+    if (!schemeAConfig.worker.enableMaintenance) {
+        return null;
+    }
+
+    if (!maintenanceWorkerProcess) {
+        maintenanceWorkerProcess = new WorkerProcessManager({
+            name: 'maintenance',
+            enabled: true,
+            scriptPath: path.join(__dirname, 'bin/start_maintenance_worker.js'),
+            cwd: __dirname,
+            env: {
+                WORKER_ROLE: 'maintenance',
+            },
+            restartDelayMs: 5000,
+            maxRestarts: 0,
+        });
+    }
+
+    maintenanceWorkerProcess.start();
+    return maintenanceWorkerProcess;
+}
+
 async function stopManagedWorkers(signal = 'SIGTERM') {
     if (recordingUploadWorkerProcess) {
         await recordingUploadWorkerProcess.stop(signal);
     }
     if (statsWorkerProcess) {
         await statsWorkerProcess.stop(signal);
+    }
+    if (maintenanceWorkerProcess) {
+        await maintenanceWorkerProcess.stop(signal);
     }
 }
 
@@ -3747,6 +3776,9 @@ httpServer.listen(PORT, async () => {
         statsWorker: {
             enabled: schemeAConfig.worker.enableStats,
         },
+        maintenanceWorker: {
+            enabled: schemeAConfig.worker.enableMaintenance,
+        },
     });
 
     // Cleanup orphaned recording tasks from previous session (crashed or force-closed)
@@ -3756,6 +3788,7 @@ httpServer.listen(PORT, async () => {
     startPeriodicTasks();
     startAiWorkQueueProcessor();
     ensureStatsWorkerDaemon();
+    ensureMaintenanceWorkerDaemon();
 
     // Scheduled jobs
     // Run user language analysis every hour
@@ -3850,9 +3883,10 @@ httpServer.listen(PORT, async () => {
 
     // 7-day data retention cleanup - runs every 6 hours
     setInterval(async () => {
+        if (schemeAConfig.worker.enableMaintenance) return;
         try {
             console.log('[CRON] Running expired room data cleanup (7-day retention)...');
-            await manager.cleanupExpiredRoomData();
+            await runExpiredRoomCleanupJob('web-interval');
         } catch (err) {
             console.error('[CRON] Room data cleanup error:', err.message);
         }
@@ -3860,9 +3894,10 @@ httpServer.listen(PORT, async () => {
 
     // Run initial cleanup 60 seconds after startup
     setTimeout(async () => {
+        if (schemeAConfig.worker.enableMaintenance) return;
         try {
             console.log('[CRON] Initial expired room data cleanup...');
-            await manager.cleanupExpiredRoomData();
+            await runExpiredRoomCleanupJob('web-startup');
         } catch (err) {
             console.error('[CRON] Initial room data cleanup error:', err.message);
         }

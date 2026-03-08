@@ -6,10 +6,15 @@ const {
     runSessionMaintenanceTask,
     recordSessionMaintenanceEvent,
 } = require('./services/sessionMaintenanceService');
+const { getSchemeAConfig } = require('./services/featureFlagService');
 const keyManager = require('./utils/keyManager');
 const dynamicProxyManager = require('./utils/DynamicProxyManager');
 const liveStateService = require('./services/liveStateService');
 
+
+function isMaintenanceWorkerEnabled() {
+    return Boolean(getSchemeAConfig().worker.enableMaintenance);
+}
 
 class AutoRecorder {
     constructor() {
@@ -360,6 +365,10 @@ class AutoRecorder {
         }
         this.maintenanceScheduleMeta[taskName === 'staleCleanup' ? 'staleCleanupNextRunAt' : 'consolidationNextRunAt'] = null;
 
+        if (isMaintenanceWorkerEnabled()) {
+            return;
+        }
+
         const config = this.sessionMaintenanceConfig;
         if (!config) return;
 
@@ -435,7 +444,7 @@ class AutoRecorder {
         const sessionOpsConfig = await this.refreshSessionMaintenanceConfig('startup');
 
         try {
-            if (sessionOpsConfig.startupCleanupEnabled) {
+            if (!isMaintenanceWorkerEnabled() && sessionOpsConfig.startupCleanupEnabled) {
                 console.log('[AutoRecorder] Running startup cleanup...');
                 await runSessionMaintenanceTask('cleanup_stale_live_events', {
                     triggerSource: 'auto-recorder-startup',
@@ -443,7 +452,7 @@ class AutoRecorder {
                 });
             }
 
-            if (sessionOpsConfig.startupConsolidationEnabled) {
+            if (!isMaintenanceWorkerEnabled() && sessionOpsConfig.startupConsolidationEnabled) {
                 console.log('[AutoRecorder] Running startup session consolidation...');
                 await runSessionMaintenanceTask('consolidate_recent_sessions', {
                     triggerSource: 'auto-recorder-startup',

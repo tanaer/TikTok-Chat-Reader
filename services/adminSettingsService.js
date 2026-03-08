@@ -66,7 +66,7 @@ const ADMIN_SETTINGS_GROUPS = [
             { key: 'RECORDING_LOCAL_CLEANUP_DELAY_MS', label: '本地清理延迟 (ms)', type: 'number' },
             { key: 'RECORDING_LOCAL_CLEANUP_BATCH_SIZE', label: '本地清理批大小', type: 'number' },
             { key: 'ENABLE_WORKER_STATS', label: '启用统计 worker', type: 'toggle' },
-            { key: 'ENABLE_WORKER_MAINTENANCE', label: '启用维护 worker 预留开关', type: 'toggle' },
+            { key: 'ENABLE_WORKER_MAINTENANCE', label: '启用维护 worker', type: 'toggle' },
         ],
     },
     {
