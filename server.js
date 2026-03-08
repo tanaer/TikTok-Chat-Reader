@@ -52,6 +52,8 @@ const {
     isSensitiveRuntimeSettingKey,
 } = require('./services/featureFlagService');
 const { WorkerProcessManager } = require('./services/workerProcessManager');
+const cacheService = require('./services/cacheService');
+const { disconnectRedisClient } = require('./services/redisClient');
 
 let schemeAConfig = getSchemeAConfig();
 let recordingStorageService = new RecordingStorageService({ schemeAConfig });
@@ -304,6 +306,8 @@ const REQUEST_BODY_LIMIT = '20mb';
 const ROOM_LIST_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ROOM_LIST_CACHE_TTL_MS || '10000', 10) || 10000);
 const ROOM_LIST_CACHE_MAX_ENTRIES = 200;
 const roomListResponseCache = new Map();
+const ROOM_LIST_CACHE_NAMESPACE = 'room_list';
+const ROOM_LIST_CACHE_VERSION_KEY = cacheService.buildCacheKey(ROOM_LIST_CACHE_NAMESPACE, 'version');
 let roomListCacheVersion = 0;
 
 function getRoomListActorCacheKey(req) {
@@ -311,10 +315,10 @@ function getRoomListActorCacheKey(req) {
     return `${req.user.role}:${req.user.id || 0}`;
 }
 
-function buildRoomListCacheKey(endpoint, req, params = {}) {
+function buildRoomListCacheKey(endpoint, req, params = {}, cacheVersion = roomListCacheVersion) {
     return JSON.stringify([
         endpoint,
-        roomListCacheVersion,
+        cacheVersion,
         getRoomListActorCacheKey(req),
         Number(params.page || 1),
         Number(params.limit || 50),
@@ -323,7 +327,11 @@ function buildRoomListCacheKey(endpoint, req, params = {}) {
     ]);
 }
 
-function readRoomListCache(cacheKey) {
+function buildRoomListRedisKey(cacheKey) {
+    return cacheService.buildCacheKey(ROOM_LIST_CACHE_NAMESPACE, cacheKey);
+}
+
+function readLocalRoomListCache(cacheKey) {
     if (ROOM_LIST_CACHE_TTL_MS <= 0) return null;
     const cached = roomListResponseCache.get(cacheKey);
     if (!cached) return null;
@@ -334,7 +342,7 @@ function readRoomListCache(cacheKey) {
     return cached.payload;
 }
 
-function writeRoomListCache(cacheKey, payload) {
+function writeLocalRoomListCache(cacheKey, payload) {
     if (ROOM_LIST_CACHE_TTL_MS <= 0) return payload;
     if (roomListResponseCache.size >= ROOM_LIST_CACHE_MAX_ENTRIES) {
         const oldestKey = roomListResponseCache.keys().next().value;
@@ -347,14 +355,63 @@ function writeRoomListCache(cacheKey, payload) {
     return payload;
 }
 
-function invalidateRoomListCaches(reason = 'manual') {
+async function getRoomListCacheVersion() {
+    if (!cacheService.isRoomCacheEnabled()) {
+        return roomListCacheVersion;
+    }
+
+    const remoteVersion = await cacheService.getNumber(ROOM_LIST_CACHE_VERSION_KEY);
+    if (Number.isFinite(remoteVersion)) {
+        roomListCacheVersion = remoteVersion;
+    }
+    return roomListCacheVersion;
+}
+
+async function readRoomListCache(endpoint, req, params = {}) {
+    const cacheVersion = await getRoomListCacheVersion();
+    const cacheKey = buildRoomListCacheKey(endpoint, req, params, cacheVersion);
+
+    if (cacheService.isRoomCacheEnabled()) {
+        const redisPayload = await cacheService.getJson(buildRoomListRedisKey(cacheKey));
+        if (redisPayload) {
+            writeLocalRoomListCache(cacheKey, redisPayload);
+            return { payload: redisPayload, cacheKey, cacheLayer: 'redis' };
+        }
+    }
+
+    const localPayload = readLocalRoomListCache(cacheKey);
+    if (localPayload) {
+        return { payload: localPayload, cacheKey, cacheLayer: 'memory' };
+    }
+
+    return { payload: null, cacheKey, cacheLayer: null };
+}
+
+async function writeRoomListCache(cacheKey, payload) {
+    const cachedPayload = writeLocalRoomListCache(cacheKey, payload);
+    if (cacheService.isRoomCacheEnabled()) {
+        await cacheService.setJson(buildRoomListRedisKey(cacheKey), cachedPayload, { ttlMs: ROOM_LIST_CACHE_TTL_MS });
+    }
+    return cachedPayload;
+}
+
+async function invalidateRoomListCaches(reason = 'manual') {
     const clearedCount = roomListResponseCache.size;
     roomListCacheVersion += 1;
     roomListResponseCache.clear();
+
+    if (cacheService.isRoomCacheEnabled()) {
+        const remoteVersion = await cacheService.increment(ROOM_LIST_CACHE_VERSION_KEY, 1);
+        if (Number.isFinite(remoteVersion)) {
+            roomListCacheVersion = remoteVersion;
+        }
+    }
+
     console.log(`[CACHE] Room list cache invalidated: ${reason}`);
     metricsService.emitLog('info', 'api.room_list.cache.invalidate', {
         reason,
         cacheVersion: roomListCacheVersion,
+        cacheBackend: cacheService.isRoomCacheEnabled() ? 'redis' : 'memory',
         clearedCount,
     });
 }
@@ -699,13 +756,19 @@ io.on('connection', (socket) => {
         subscribedRoomId = null;
     });
 
-    socket.on('requestDisconnect', () => {
+    socket.on('requestDisconnect', async () => {
         // User manually requested stop - this DOES stop the AutoRecorder recording
         console.log('Client requested disconnect');
-        if (subscribedRoomId && autoRecorder.isConnected(subscribedRoomId)) {
-            autoRecorder.disconnectRoom(subscribedRoomId);
+        try {
+            if (subscribedRoomId && autoRecorder.isConnected(subscribedRoomId)) {
+                await autoRecorder.disconnectRoom(subscribedRoomId);
+                await invalidateRoomListCaches('socket request disconnect');
+            }
+            socket.emit('tiktokDisconnected', '用户手动断开');
+        } catch (error) {
+            console.error('[Socket] requestDisconnect failed:', error);
+            socket.emit('error', '断开直播失败');
         }
-        socket.emit('tiktokDisconnected', '用户手动断开');
     });
 
     socket.on('disconnect', () => {
@@ -993,11 +1056,10 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
 
     try {
         const liveRoomIds = autoRecorder.getLiveRoomIds();
-        const cacheKey = buildRoomListCacheKey('stats', req, { page, limit, search, sort });
-        const cached = readRoomListCache(cacheKey);
-        if (cached) {
-            logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, cached, true);
-            return res.json(cached);
+        const roomStatsCache = await readRoomListCache('stats', req, { page, limit, search, sort });
+        if (roomStatsCache.payload) {
+            logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, roomStatsCache.payload, true);
+            return res.json(roomStatsCache.payload);
         }
 
         const { roomFilter, userRoomData } = await getUserRoomAccessContext(req);
@@ -1018,7 +1080,7 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
             });
         }
 
-        const payload = writeRoomListCache(cacheKey, result);
+        const payload = await writeRoomListCache(roomStatsCache.cacheKey, result);
         logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, payload, false);
         res.json(payload);
     } catch (err) {
@@ -1047,11 +1109,10 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
     const search = req.query.search || '';
 
     try {
-        const cacheKey = buildRoomListCacheKey('rooms', req, { page, limit, search });
-        const cached = readRoomListCache(cacheKey);
-        if (cached) {
-            logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, cached, true);
-            return res.json(cached);
+        const roomsCache = await readRoomListCache('rooms', req, { page, limit, search });
+        if (roomsCache.payload) {
+            logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, roomsCache.payload, true);
+            return res.json(roomsCache.payload);
         }
 
         const { roomFilter, userRoomData } = await getUserRoomAccessContext(req);
@@ -1069,7 +1130,7 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
             };
         });
 
-        const payload = writeRoomListCache(cacheKey, result);
+        const payload = await writeRoomListCache(roomsCache.cacheKey, result);
         logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, payload, false);
         res.json(payload);
     } catch (err) {
@@ -1089,7 +1150,7 @@ app.delete('/api/rooms/:id', authenticate, async (req, res) => {
         if (isAdmin) {
             // Admin: hard delete system room + all data
             await manager.deleteRoom(roomId);
-            invalidateRoomListCaches('admin room delete');
+            await invalidateRoomListCaches('admin room delete');
             return res.json({ success: true });
         }
 
@@ -1113,7 +1174,7 @@ app.delete('/api/rooms/:id', authenticate, async (req, res) => {
             await autoRecorder.disconnectRoom(roomId);
         }
 
-        invalidateRoomListCaches('member room delete');
+        await invalidateRoomListCaches('member room delete');
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2809,7 +2870,7 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
                 await autoRecorder.disconnectRoom(roomId);
             }
 
-            invalidateRoomListCaches('admin room update');
+            await invalidateRoomListCaches('admin room update');
             return res.json({ success: true, room });
         }
 
@@ -2905,7 +2966,7 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
             console.log(`[API] User ${req.user.id} added new room copy: ${roomId}`);
         }
 
-        invalidateRoomListCaches('member room upsert');
+        await invalidateRoomListCaches('member room upsert');
         res.json({ success: true, room: { room_id: roomId, name: alias || roomId } });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2926,7 +2987,7 @@ app.post('/api/rooms/:id/rename', optionalAuth, async (req, res) => {
         }
 
         await manager.migrateRoomId(roomId, newRoomId);
-        invalidateRoomListCaches('room rename');
+        await invalidateRoomListCaches('room rename');
         res.json({ success: true, oldRoomId: roomId, newRoomId });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2942,7 +3003,7 @@ app.post('/api/rooms/:id/stop', authenticate, requireAdmin, requireAdminPermissi
         if (recordingManager.isRecording(roomId)) {
             await recordingManager.stopRecording(roomId);
         }
-        invalidateRoomListCaches('room stop');
+        await invalidateRoomListCaches('room stop');
         res.json({ success: true, stopped: result });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -3492,6 +3553,7 @@ app.delete('/api/debug/connections/:id', authenticate, requireAdmin, requireAdmi
     const roomId = req.params.id;
     console.log(`[Debug] Force clearing connection for ${roomId}`);
     const result = await autoRecorder.disconnectRoom(roomId);
+    await invalidateRoomListCaches('debug connection clear');
     res.json({ cleared: true, roomId, result });
 });
 
@@ -3791,6 +3853,8 @@ async function gracefulShutdown(signal) {
 
         // Stop all active recordings and save their state
         await recordingManager.stopAllRecordings();
+
+        await disconnectRedisClient();
 
         // Close HTTP server
         httpServer.close(() => {
