@@ -329,10 +329,10 @@ function showUserDetails(userId, nickname, uniqueId) {
         <div class="card bg-base-100 shadow-sm border border-base-200" ${typeof Auth !== 'undefined' && Auth.isLoggedIn() ? '' : 'style="display:none"'}>
             <div class="card-body p-4">
                 <div class="flex justify-between items-center mb-2">
-                    <h4 class="card-title text-sm m-0">🤖 AI 性格分析</h4>
+                    <h4 class="card-title text-sm m-0">🤖 AI 客户分析</h4>
                     <span id="aiCacheStatus" class="text-[10px] opacity-40"></span>
                 </div>
-                <div id="aiResult" class="text-xs leading-relaxed opacity-80 min-h-[100px] bg-base-200 rounded p-3 whitespace-pre-wrap">
+                <div id="aiResult" class="text-xs leading-relaxed opacity-80 min-h-[100px] bg-base-200 rounded p-3">
                     点击下方按钮进行分析...
                 </div>
                 <div id="aiMeta" class="text-[10px] opacity-40 mt-1" style="display:none;"></div>
@@ -422,10 +422,118 @@ function showUserDetails(userId, nickname, uniqueId) {
 
         // Display existing AI analysis if available
         if (data.aiAnalysis) {
-            $('#aiResult').text(data.aiAnalysis);
+            renderAiAnalysisResult(data.aiAnalysis, data.aiAnalysisJson || null);
             $('#aiCacheStatus').text('(本地缓存)');
         }
     });
+}
+
+function escapeAiHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function normalizeAiStringArray(value, limit = 8) {
+    if (!Array.isArray(value)) return [];
+    return value.map(item => String(item || '').trim()).filter(Boolean).slice(0, limit);
+}
+
+function normalizeAiAnalysisPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    return {
+        summary: String(payload.summary || '').trim(),
+        valueLevelCurrentRoom: String(payload.valueLevelCurrentRoom || '').trim(),
+        valueLevelGlobal: String(payload.valueLevelGlobal || '').trim(),
+        loyaltyAssessment: String(payload.loyaltyAssessment || '').trim(),
+        diversionRiskAssessment: String(payload.diversionRiskAssessment || '').trim(),
+        conversionStage: String(payload.conversionStage || '').trim(),
+        keySignals: normalizeAiStringArray(payload.keySignals, 6),
+        recommendedActions: normalizeAiStringArray(payload.recommendedActions, 6),
+        outreachScript: normalizeAiStringArray(payload.outreachScript, 4),
+        forbiddenActions: normalizeAiStringArray(payload.forbiddenActions, 4),
+        tags: normalizeAiStringArray(payload.tags, 8),
+        evidence: normalizeAiStringArray(payload.evidence, 6)
+    };
+}
+
+function renderAiAnalysisListCard(title, items, tone = 'base') {
+    if (!items || !items.length) return '';
+    const toneClassMap = {
+        base: 'border-base-300 bg-base-100/90',
+        primary: 'border-primary/20 bg-primary/5',
+        success: 'border-success/20 bg-success/5',
+        warning: 'border-warning/20 bg-warning/5',
+        error: 'border-error/20 bg-error/5'
+    };
+    const cardClass = toneClassMap[tone] || toneClassMap.base;
+    return `
+        <div class="rounded-box border ${cardClass} p-3">
+            <div class="text-[11px] font-semibold text-base-content/70 mb-2">${escapeAiHtml(title)}</div>
+            <div class="space-y-2">
+                ${items.map(item => `<div class="leading-6 text-base-content/80">- ${escapeAiHtml(item)}</div>`).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderAiAnalysisOverviewItem(label, value) {
+    if (!value) return '';
+    return `
+        <div class="rounded-box border border-base-300 bg-base-100/90 px-3 py-2">
+            <div class="text-[10px] uppercase tracking-wide text-base-content/45">${escapeAiHtml(label)}</div>
+            <div class="mt-1 text-xs font-semibold leading-5 text-base-content/85">${escapeAiHtml(value)}</div>
+        </div>
+    `;
+}
+
+function renderAiAnalysisResult(resultText, analysisPayload = null) {
+    const analysis = normalizeAiAnalysisPayload(analysisPayload);
+    if (!analysis) {
+        $('#aiResult').html(`<div class="whitespace-pre-wrap leading-6 text-base-content/80">${escapeAiHtml(resultText || '点击下方按钮进行分析...')}</div>`);
+        return;
+    }
+
+    const overviewItems = [
+        renderAiAnalysisOverviewItem('本房价值', analysis.valueLevelCurrentRoom),
+        renderAiAnalysisOverviewItem('平台价值', analysis.valueLevelGlobal),
+        renderAiAnalysisOverviewItem('忠诚判断', analysis.loyaltyAssessment),
+        renderAiAnalysisOverviewItem('分流风险', analysis.diversionRiskAssessment),
+        renderAiAnalysisOverviewItem('转化阶段', analysis.conversionStage)
+    ].filter(Boolean).join('');
+
+    const html = `
+        <div class="space-y-3">
+            ${analysis.summary ? `
+                <div class="rounded-box border border-primary/15 bg-base-100/95 p-3">
+                    <div class="text-[11px] font-semibold text-base-content/60 mb-2">客户总结</div>
+                    <div class="text-sm leading-6 text-base-content/85">${escapeAiHtml(analysis.summary)}</div>
+                </div>
+            ` : ''}
+            ${overviewItems ? `<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">${overviewItems}</div>` : ''}
+            ${analysis.tags.length ? `
+                <div class="flex flex-wrap gap-2">
+                    ${analysis.tags.map(tag => `<span class="badge badge-outline badge-sm">${escapeAiHtml(tag)}</span>`).join('')}
+                </div>
+            ` : ''}
+            ${renderAiAnalysisListCard('关键信号', analysis.keySignals, 'primary')}
+            ${renderAiAnalysisListCard('数据证据', analysis.evidence, 'base')}
+            ${renderAiAnalysisListCard('建议动作', analysis.recommendedActions, 'success')}
+            ${renderAiAnalysisListCard('建议话术', analysis.outreachScript, 'warning')}
+            ${renderAiAnalysisListCard('不建议动作', analysis.forbiddenActions, 'error')}
+            ${resultText ? `
+                <div class="rounded-box border border-base-300 bg-base-100/80 p-3">
+                    <div class="text-[11px] font-semibold text-base-content/60 mb-2">文本版摘要</div>
+                    <div class="whitespace-pre-wrap leading-6 text-base-content/75">${escapeAiHtml(resultText)}</div>
+                </div>
+            ` : ''}
+        </div>
+    `;
+
+    $('#aiResult').html(html);
 }
 
 function renderDetailChart(canvasId, labels, data, color) {
@@ -458,7 +566,7 @@ function renderDetailChart(canvasId, labels, data, color) {
 }
 
 function runAiAnalysis(userId, force = false) {
-    $('#aiResult').html('<span class="loading loading-dots loading-sm"></span> 正在分析弹幕记录...');
+    $('#aiResult').html('<span class="loading loading-dots loading-sm"></span> 正在分析客户上下文与弹幕语料...');
     $('#aiCacheStatus').text('');
     $('#aiMeta').hide().text('');
 
@@ -473,11 +581,11 @@ function runAiAnalysis(userId, force = false) {
     })
     .then(res => {
         if (res.skipped) {
-            $('#aiResult').text(res.result);
+            renderAiAnalysisResult(res.result, null);
             $('#aiCacheStatus').text(`(语料 ${res.chatCount} 条)`);
             return;
         }
-        $('#aiResult').text(res.result);
+        renderAiAnalysisResult(res.result, res.analysis || null);
         // Source label
         const sourceMap = { member_cache: '个人缓存', system_cache: '系统缓存', api: '实时分析' };
         const sourceLabel = sourceMap[res.source] || (res.cached ? '缓存' : '实时分析');
@@ -495,9 +603,9 @@ function runAiAnalysis(userId, force = false) {
     .catch(err => {
         const msg = err.error || err.message || '分析失败';
         if (err.code === 'AI_CREDITS_EXHAUSTED') {
-            $('#aiResult').html(`<span class="text-warning">${msg}</span>`);
+            $('#aiResult').html(`<span class="text-warning">${escapeAiHtml(msg)}</span>`);
         } else {
-            $('#aiResult').text('错误: ' + msg);
+            renderAiAnalysisResult('错误: ' + msg, null);
         }
     });
 }

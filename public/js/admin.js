@@ -2054,6 +2054,11 @@ async function loadPromptTemplates(force = false) {
                     </div>
                 </div>
                 <div class="text-xs text-base-content/50 mb-3">可用变量：${(item.variables || []).map(v => `<code>${escapeHtml(`{{${v}}}`)}</code>`).join('、') || '无'}</div>
+                ${item.key === 'customer_analysis_review' ? `
+                    <div class="rounded-box border border-base-300 bg-base-200/80 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
+                        系统已经提前计算好客户数值、时间、排行与模型标签；编辑该模板时，请让 AI 只负责解释、总结、策略和话术，不要让 AI 自己重算事实。
+                    </div>
+                ` : ''}
                 <textarea id="prompt-template-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[22rem] font-mono text-xs leading-6">${escapeHtml(item.content || '')}</textarea>
                 <div class="flex flex-wrap items-center gap-3 mt-4">
                     <button class="btn btn-primary btn-sm" onclick="savePromptTemplate('${escapeHtml(item.key)}')">保存提示词</button>
