@@ -57,6 +57,10 @@ function safeJsonStringify(value, fallback = '{}') {
     }
 }
 
+const EVENT_GIFT_NAME_SQL = `COALESCE(NULLIF(gift_name, ''), data_json::json->>'giftName')`;
+const EVENT_GIFT_IMAGE_SQL = `COALESCE(NULLIF(gift_image, ''), data_json::json->>'giftImage', data_json::json->>'giftPictureUrl')`;
+const EVENT_GIFT_TYPE_SQL = `LOWER(COALESCE(NULLIF(gift_name, ''), data_json::json->>'giftName', ''))`;
+
 class Manager {
     constructor() {
         this.prices = this.loadPrices();
@@ -1517,14 +1521,14 @@ class Manager {
         const topGiftStats = await query(`
             SELECT
                 user_id,
-                (data_json::json->>'giftName') as gift_name,
-                (data_json::json->>'giftPictureUrl') as gift_icon,
+                ${EVENT_GIFT_NAME_SQL} as gift_name,
+                ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
                 MAX(COALESCE(diamond_count, 0)) as unit_price,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL ${topGiftRoomClause}
-            GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
+            WHERE type = 'gift' AND user_id IN (${placeholders}) AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL ${topGiftRoomClause}
+            GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
             ORDER BY user_id, total_value DESC
         `, topGiftParams);
 
@@ -1644,16 +1648,16 @@ class Manager {
 
         if (giftPreference === 'true_love') {
             havingConditions.push(`
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'rose'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) >
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'tiktok'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0)
             `);
         } else if (giftPreference === 'knife') {
             havingConditions.push(`
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'tiktok'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) >
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'rose'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0)
             `);
         }
@@ -1692,9 +1696,9 @@ class Manager {
                 SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as totalValue,
                 COUNT(DISTINCT e.room_id) as roomCount,
                 MAX(e.timestamp) as lastActive,
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'rose'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) as rose_value,
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'tiktok'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) as tiktok_value
             FROM event e
             JOIN "user" u ON e.user_id = u.user_id
@@ -1752,14 +1756,14 @@ class Manager {
         const topGiftStats = await query(`
             SELECT
                 user_id,
-                (data_json::json->>'giftName') as gift_name,
-                (data_json::json->>'giftPictureUrl') as gift_icon,
+                ${EVENT_GIFT_NAME_SQL} as gift_name,
+                ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
                 MAX(COALESCE(diamond_count, 0)) as unit_price,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL ${subRoomClause}
-            GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
+            WHERE type = 'gift' AND user_id IN (${placeholders}) AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL ${subRoomClause}
+            GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
             ORDER BY user_id, total_value DESC
         `, [...userIds, ...subRoomParams]);
 
@@ -1781,14 +1785,14 @@ class Manager {
 
         const roseTikTokStats = await query(`
             SELECT user_id,
-                LOWER(data_json::json->>'giftName') as gift_type,
+                ${EVENT_GIFT_TYPE_SQL} as gift_type,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
             WHERE type = 'gift'
               AND user_id IN (${placeholders})
-              AND LOWER(data_json::json->>'giftName') IN ('rose', 'tiktok')
-            GROUP BY user_id, LOWER(data_json::json->>'giftName')
+              AND ${EVENT_GIFT_TYPE_SQL} IN ('rose', 'tiktok')
+            GROUP BY user_id, ${EVENT_GIFT_TYPE_SQL}
         `, userIds);
 
         const roseMap = {};
@@ -3294,14 +3298,14 @@ class Manager {
                 const roseTiktokStats = await query(`
                     SELECT
                         user_id,
-                        LOWER(data_json::json->>'giftName') as gift_type,
+                        ${EVENT_GIFT_TYPE_SQL} as gift_type,
                         SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                         SUM(COALESCE(repeat_count, 1)) as gift_count
                     FROM event
                     WHERE type = 'gift'
                       AND user_id IN (${placeholders})
-                      AND LOWER(data_json::json->>'giftName') IN ('rose', 'tiktok')
-                    GROUP BY user_id, LOWER(data_json::json->>'giftName')
+                      AND ${EVENT_GIFT_TYPE_SQL} IN ('rose', 'tiktok')
+                    GROUP BY user_id, ${EVENT_GIFT_TYPE_SQL}
                 `, batchIds);
 
                 const roseMap = {};
