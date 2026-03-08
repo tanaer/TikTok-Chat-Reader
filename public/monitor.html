@@ -20,7 +20,7 @@
     <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 
     <!-- App Scripts -->
-    <script src="js/auth.js?v=20260308i"></script>
+    <script src="js/auth.js?v=20260308k"></script>
     <script src="connection.js?v=20260308f"></script>
     <script src="config.js?v=20260308f"></script>
     <script src="room_list.js?v=20260308h"></script>
@@ -33,24 +33,16 @@
     <link rel="stylesheet" href="style.css?v=20260308c"> <!-- Minimal overrides -->
 </head>
 
-<body class="bg-base-300 min-h-screen flex flex-col">
+<body class="bg-base-300 min-h-screen flex flex-col" data-shell-messages="true" data-shell-message-poll="auth">
 
     <!-- Global Top Navigation -->
     <div class="navbar app-shell-nav z-20 flex-wrap gap-2 px-3 py-2">
         <div class="flex-1 min-w-0 flex flex-wrap items-center gap-2">
             <a class="btn btn-ghost text-xl font-bold px-2 app-shell-nav-brand" href="/">TikTok Monitor</a>
-            <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1 ml-0 md:ml-2">
-                <li><a href="/" class="app-shell-nav-link">首页</a></li>
-                <li><a href="/monitor.html" class="app-shell-nav-link is-active">监控中心</a></li>
-            </ul>
+            <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1 ml-0 md:ml-2"></ul>
         </div>
         <div class="w-full md:w-auto">
-            <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap justify-start md:justify-end px-0 gap-2">
-                <li><a href="/user-center.html" class="btn btn-ghost btn-sm app-shell-nav-action">用户中心</a></li>
-                <li><a onclick="if(window.Auth){Auth.logout()}"
-                        class="btn btn-outline btn-error btn-sm cursor-pointer app-shell-nav-action app-shell-nav-danger">退出</a>
-                </li>
-            </ul>
+            <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap justify-start md:justify-end px-0 gap-2"></ul>
         </div>
     </div>
 

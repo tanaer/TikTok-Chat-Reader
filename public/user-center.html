@@ -8,7 +8,7 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/shared-shell.css">
-    <script src="/js/auth.js?v=20260308i"></script>
+    <script src="/js/auth.js?v=20260308k"></script>
     <script src="/js/email-verification-flow.js"></script>
     <script src="/vendor/qrious.min.js"></script>
     <style>
@@ -485,139 +485,6 @@
             }
         }
 
-        .notification-entry-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-        }
-
-        .notification-hero {
-            border-radius: 22px;
-            border: 1px solid rgba(96, 165, 250, 0.28);
-            background: linear-gradient(135deg, rgba(29, 78, 216, 0.18), rgba(15, 23, 42, 0.96));
-            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
-        }
-
-        .notification-hero .card-body {
-            gap: 1rem;
-        }
-
-        .notification-hero-head {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 1rem;
-        }
-
-        .notification-hero-kicker {
-            font-size: 0.72rem;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-            color: rgba(191, 219, 254, 0.78);
-        }
-
-        .notification-hero-title {
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: #f8fafc;
-        }
-
-        .notification-hero-subtitle {
-            color: rgba(226, 232, 240, 0.7);
-            font-size: 0.92rem;
-        }
-
-        .notification-hero-list,
-        .notification-list {
-            display: grid;
-            gap: 0.85rem;
-        }
-
-        .notification-card {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 0.9rem;
-            padding: 0.95rem 1rem;
-            border-radius: 18px;
-            border: 1px solid rgba(148, 163, 184, 0.14);
-            background: rgba(8, 15, 30, 0.82);
-            cursor: pointer;
-        }
-
-        .notification-card.is-unread {
-            border-color: rgba(96, 165, 250, 0.38);
-            box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.08);
-        }
-
-        .notification-card-main {
-            min-width: 0;
-            flex: 1;
-        }
-
-        .notification-card-title {
-            display: flex;
-            align-items: center;
-            gap: 0.6rem;
-            margin-bottom: 0.35rem;
-            color: #f8fafc;
-            font-weight: 700;
-        }
-
-        .notification-dot {
-            width: 0.6rem;
-            height: 0.6rem;
-            border-radius: 999px;
-            background: #f87171;
-            box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.55);
-            animation: notificationPulse 1.8s ease-in-out infinite;
-        }
-
-        .notification-card-meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.55rem;
-            align-items: center;
-            color: rgba(226, 232, 240, 0.56);
-            font-size: 0.78rem;
-        }
-
-        .notification-card-content {
-            color: rgba(226, 232, 240, 0.78);
-            line-height: 1.65;
-            word-break: break-word;
-        }
-
-        .notification-level-badge.badge-success {
-            background: rgba(34, 197, 94, 0.18);
-            color: #bbf7d0;
-            border-color: rgba(34, 197, 94, 0.28);
-        }
-
-        .notification-level-badge.badge-info {
-            background: rgba(59, 130, 246, 0.18);
-            color: #bfdbfe;
-            border-color: rgba(59, 130, 246, 0.28);
-        }
-
-        .notification-level-badge.badge-warning {
-            background: rgba(234, 179, 8, 0.18);
-            color: #fde68a;
-            border-color: rgba(234, 179, 8, 0.28);
-        }
-
-        .notification-level-badge.badge-error {
-            background: rgba(239, 68, 68, 0.18);
-            color: #fecaca;
-            border-color: rgba(239, 68, 68, 0.28);
-        }
-
-        .notification-empty {
-            padding: 2.4rem 1rem;
-            text-align: center;
-            color: rgba(226, 232, 240, 0.5);
-        }
-
         .notification-toast-wrap {
             position: fixed;
             top: 1rem;
@@ -640,24 +507,6 @@
         .notification-toast-title {
             font-weight: 700;
             margin-bottom: 0.25rem;
-        }
-
-        .notification-badge-inline.hidden {
-            display: none !important;
-        }
-
-        @keyframes notificationPulse {
-            0% {
-                box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.55);
-            }
-
-            70% {
-                box-shadow: 0 0 0 8px rgba(248, 113, 113, 0);
-            }
-
-            100% {
-                box-shadow: 0 0 0 0 rgba(248, 113, 113, 0);
-            }
         }
 
         @media (max-width: 640px) {
@@ -1580,7 +1429,7 @@
     </style>
 </head>
 
-<body class="fantasy-body min-h-screen">
+<body class="fantasy-body min-h-screen" data-shell-messages="true" data-shell-message-poll="self">
     <!-- Navbar -->
     <div class="navbar app-shell-nav sticky top-0 z-50 flex-wrap gap-2 px-3 py-2">
         <div class="flex-1 min-w-0 flex flex-wrap items-center gap-2">
@@ -1588,12 +1437,6 @@
             <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1 ml-0 sm:ml-2"></ul>
         </div>
         <div class="w-full md:w-auto flex flex-wrap items-center justify-start md:justify-end gap-2">
-            <button id="message-menu-btn" type="button" class="btn btn-ghost btn-sm gap-2 app-shell-nav-action"
-                onclick="openMessagesModal()">
-                消息
-                <span id="message-menu-badge"
-                    class="badge badge-error badge-sm notification-badge-inline hidden">0</span>
-            </button>
             <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap gap-1 px-0"></ul>
         </div>
     </div>
@@ -1886,24 +1729,6 @@
         </div>
     </dialog>
 
-    <dialog id="messageModal" class="modal">
-        <div class="modal-box max-w-3xl">
-            <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
-                <div>
-                    <h3 class="font-bold text-lg">消息</h3>
-                    <p id="message-modal-subtitle" class="text-sm text-base-content/55 mt-1">充值到账、人工确认等消息会显示在这里。</p>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button id="message-read-all-btn" type="button" class="btn btn-primary btn-sm"
-                        onclick="markAllNotificationsRead()">全部已读</button>
-                    <button type="button" class="btn btn-ghost btn-sm"
-                        onclick="document.getElementById('messageModal').close()">关闭</button>
-                </div>
-            </div>
-            <div id="message-list" class="notification-list"></div>
-            <div id="message-empty" class="notification-empty hidden">暂无消息</div>
-        </div>
-    </dialog>
 
     <!-- Recharge modal -->
     <dialog id="rechargeModal" class="modal">
@@ -2003,9 +1828,7 @@
     <script>
         let currentTab = 'overview';
         let pendingPurchase = null;
-        let notificationsCache = [];
         let notificationUnreadCount = 0;
-        let notificationPage = 1;
         let notificationPollTimer = null;
         let latestNotificationIdSeen = 0;
         let notificationsInitialized = false;
@@ -2073,6 +1896,24 @@
             loadOverview();
             loadNotifications(1, { silent: true });
             startNotificationPolling();
+            const startupParams = new URLSearchParams(window.location.search || '');
+            const startupTab = startupParams.get('tab') || '';
+            const shouldOpenMessages = startupParams.get('openMessages') === '1';
+            if (startupTab) {
+                const validTabs = ['overview', 'orders', 'balance', 'subscription', 'settings'];
+                const targetTab = validTabs.includes(startupTab) ? startupTab : 'overview';
+                if (targetTab !== 'overview') {
+                    const tabEl = document.getElementById(`main-tab-${targetTab}`) || document.querySelector(`.tab[onclick*="${targetTab}"]`);
+                    if (tabEl) switchTab(targetTab, tabEl);
+                }
+            }
+            if (shouldOpenMessages) {
+                startupParams.delete('openMessages');
+                const nextQuery = startupParams.toString();
+                const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash || ''}`;
+                window.history.replaceState({}, '', nextUrl);
+                window.setTimeout(() => Auth.openShellMessagesModal(), 0);
+            }
             window.addEventListener('scroll', updateSubscriptionSideNav, { passive: true });
             window.addEventListener('resize', updateSubscriptionSideNav);
             document.getElementById('rechargeModal')?.addEventListener('close', () => resetRechargeSelection(true));
@@ -2148,20 +1989,6 @@
             }
         }
 
-        function getNotificationLevelMeta(level) {
-            if (level === 'success') return { badge: 'badge-success', label: '到账' };
-            if (level === 'warning') return { badge: 'badge-warning', label: '提醒' };
-            if (level === 'error') return { badge: 'badge-error', label: '异常' };
-            return { badge: 'badge-info', label: '通知' };
-        }
-
-        function formatNotificationTime(value) {
-            if (!value) return '-';
-            const date = new Date(value);
-            if (Number.isNaN(date.getTime())) return value;
-            return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-        }
-
         function renderNotificationBadges() {
             const text = notificationUnreadCount > 99 ? '99+' : String(notificationUnreadCount);
             ['message-menu-badge'].forEach(id => {
@@ -2170,45 +1997,9 @@
                 el.textContent = text;
                 el.classList.toggle('hidden', notificationUnreadCount <= 0);
             });
-            const readAllBtn = document.getElementById('message-read-all-btn');
-            if (readAllBtn) readAllBtn.disabled = notificationUnreadCount <= 0;
-            const subtitle = document.getElementById('message-modal-subtitle');
-            if (subtitle) subtitle.textContent = notificationUnreadCount > 0
-                ? `当前有 ${notificationUnreadCount} 条未读通知，请及时处理。`
-                : '支付到账、人工确认、AI处理结果等消息会显示在这里。';
-        }
-
-        function buildNotificationCard(item, compact = false) {
-            const levelMeta = getNotificationLevelMeta(item.level);
-            const unreadDot = item.isRead ? '' : '<span class="notification-dot"></span>';
-            const orderMeta = item.relatedOrderNo ? `<span>订单号 ${escapeHtml(item.relatedOrderNo)}</span>` : '';
-            const actionBtn = item.isRead
-                ? ''
-                : `<button type="button" class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); markNotificationRead(${Number(item.id)}, { silentReload: true });">标记已读</button>`;
-            return `
-            <div class="notification-card ${item.isRead ? '' : 'is-unread'}" onclick="handleNotificationClick(${Number(item.id)}, '${item.actionTab || 'overview'}', '${encodeURIComponent(item.actionUrl || '')}')">
-                <div class="notification-card-main">
-                    <div class="notification-card-title">${unreadDot}<span>${escapeHtml(item.title || '通知')}</span><span class="badge badge-sm notification-level-badge ${levelMeta.badge}">${levelMeta.label}</span></div>
-                    <div class="notification-card-content">${escapeHtml(item.content || '')}</div>
-                    <div class="notification-card-meta"><span>${formatNotificationTime(item.createdAt)}</span>${orderMeta}</div>
-                </div>
-                ${compact ? '' : actionBtn}
-            </div>
-        `;
-        }
-        function renderOverviewNotifications() { }
-
-        function renderNotificationsList() {
-            const list = document.getElementById('message-list');
-            const empty = document.getElementById('message-empty');
-            if (!list || !empty) return;
-            if (!notificationsCache.length) {
-                list.innerHTML = '';
-                empty.classList.remove('hidden');
-                return;
+            if (window.Auth && typeof Auth.setMessageBadgeCount === 'function') {
+                Auth.setMessageBadgeCount(notificationUnreadCount);
             }
-            empty.classList.add('hidden');
-            list.innerHTML = notificationsCache.map(item => buildNotificationCard(item, false)).join('');
         }
 
         function showUserCenterToast(title, content = '') {
@@ -2231,15 +2022,11 @@
                 const newestItem = data.notifications?.[0] || null;
                 const shouldToast = notificationsInitialized && !silent && newestId > latestNotificationIdSeen;
 
-                notificationPage = Number(data.pagination?.page || page || 1);
-                notificationsCache = Array.isArray(data.notifications) ? data.notifications : [];
                 notificationUnreadCount = Number(data.unreadCount || 0);
                 latestNotificationIdSeen = Math.max(latestNotificationIdSeen, newestId);
                 notificationsInitialized = true;
 
                 renderNotificationBadges();
-                renderOverviewNotifications();
-                renderNotificationsList();
 
                 if (shouldToast && newestItem) {
                     showUserCenterToast(newestItem.title || '你有新通知', newestItem.content || '');
@@ -2247,53 +2034,6 @@
             } catch (err) {
                 console.error('Load notifications error:', err);
             }
-        }
-
-        async function markNotificationRead(id, { silentReload = false } = {}) {
-            try {
-                const res = await Auth.apiFetch(`/api/user/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '操作失败');
-                await loadNotifications(notificationPage || 1, { silent: true });
-                if (!silentReload) showUserCenterToast('通知已读');
-            } catch (err) {
-                if (!silentReload) alert(err.message || '操作失败');
-            }
-        }
-
-        async function markAllNotificationsRead() {
-            try {
-                const res = await Auth.apiFetch('/api/user/notifications/read-all', { method: 'POST' });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '操作失败');
-                await loadNotifications(1, { silent: true });
-                showUserCenterToast(data.message || '已全部标记为已读');
-            } catch (err) {
-                alert(err.message || '操作失败');
-            }
-        }
-
-        function openMessagesModal() {
-            document.getElementById('messageModal')?.showModal();
-            loadNotifications(1, { silent: true });
-        }
-
-        function handleNotificationClick(id, actionTab = 'overview', encodedActionUrl = '') {
-            if (id) markNotificationRead(id, { silentReload: true });
-            document.getElementById('messageModal')?.close();
-            const actionUrl = encodedActionUrl ? decodeURIComponent(encodedActionUrl) : '';
-            if (actionUrl) {
-                window.location.href = actionUrl;
-                return;
-            }
-            if (actionTab === 'ai_work') {
-                const tabEl = document.getElementById('main-tab-overview') || document.querySelector(`.tab[onclick*="overview"]`);
-                if ('overview' !== currentTab) switchTab('overview', tabEl);
-                return;
-            }
-            const target = ['overview', 'orders', 'balance', 'subscription', 'settings'].includes(actionTab) ? actionTab : 'overview';
-            const tabEl = document.getElementById(`main-tab-${target}`) || document.querySelector(`.tab[onclick*="${target}"]`);
-            if (target !== currentTab) switchTab(target, tabEl);
         }
 
         function startNotificationPolling() {
