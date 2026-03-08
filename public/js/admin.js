@@ -2129,46 +2129,129 @@ async function saveAdminGiftName() {
 }
 
 // ==================== Euler API Keys ====================
+function formatEulerTime(value, fallback = '从未') {
+    if (!value) return fallback;
+    const time = new Date(value);
+    if (Number.isNaN(time.getTime())) return fallback;
+    return time.toLocaleString('zh-CN');
+}
+
+function renderEulerRuntimeSummary(runtimeStatus, keys) {
+    const container = document.getElementById('euler-keys-runtime');
+    if (!container) return;
+
+    const total = Number(runtimeStatus?.total || 0);
+    const active = Number(runtimeStatus?.active || 0);
+    const disabled = Number(runtimeStatus?.disabled || 0);
+    const selectionCount = Number(runtimeStatus?.selectionCount || 0);
+    const rotationCount = Number(runtimeStatus?.rotationCount || 0);
+    const rateLimitCount = Number(runtimeStatus?.rateLimitCount || 0);
+    const disabledCount = Number(runtimeStatus?.disabledCount || 0);
+    const reenabledCount = Number(runtimeStatus?.reenabledCount || 0);
+    const allKeysDisabledCount = Number(runtimeStatus?.allKeysDisabledCount || 0);
+    const sourceHint = keys.length === 0 && total > 0
+        ? '<div class="alert alert-info py-2 text-xs mt-3">数据库中暂无 Euler Key，当前展示的是运行时加载的环境变量 Key 状态。</div>'
+        : '';
+
+    if (total === 0) {
+        container.innerHTML = '';
+        return;
+    }
+
+    container.innerHTML = `
+        <div class="card bg-base-100 border border-base-300">
+            <div class="card-body p-4">
+                <div class="flex items-start justify-between gap-3 flex-wrap">
+                    <div>
+                        <h4 class="font-semibold">运行态总览</h4>
+                        <p class="text-xs text-base-content/60 mt-1">展示当前进程里 Key 选择、轮换、限流与冷却情况。</p>
+                    </div>
+                    <div class="text-xs text-base-content/60">
+                        当前 Key：<span class="font-mono text-base-content">${runtimeStatus?.currentKeyMasked || '-'}</span>
+                    </div>
+                </div>
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 text-sm">
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">总 Key</div><div class="font-semibold mt-1">${total}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">可用 / 冷却</div><div class="font-semibold mt-1">${active} / ${disabled}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">已选次数</div><div class="font-semibold mt-1">${selectionCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">轮换次数</div><div class="font-semibold mt-1">${rotationCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">限流次数</div><div class="font-semibold mt-1">${rateLimitCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">禁用次数</div><div class="font-semibold mt-1">${disabledCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">恢复次数</div><div class="font-semibold mt-1">${reenabledCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">全 Key 冷却</div><div class="font-semibold mt-1">${allKeysDisabledCount}</div></div>
+                </div>
+                <div class="flex flex-wrap gap-x-4 gap-y-1 mt-4 text-xs text-base-content/60">
+                    <span>上次选择：${formatEulerTime(runtimeStatus?.lastSelectedAt)}</span>
+                    <span>上次禁用：${formatEulerTime(runtimeStatus?.lastDisabledAt)}</span>
+                    <span>禁用原因：${runtimeStatus?.lastDisableReason || '-'}</span>
+                </div>
+                ${sourceHint}
+            </div>
+        </div>`;
+}
+
 async function loadEulerKeys() {
     try {
         const res = await Auth.apiFetch('/api/admin/euler-keys');
         const data = await res.json();
         const keys = data.keys || [];
+        const runtimeStatus = data.runtimeStatus || {};
         const container = document.getElementById('euler-keys-list');
+        const runtimeKeyMap = new Map((runtimeStatus.keys || []).map(item => [item.id ?? item.keyMasked, item]));
+
+        renderEulerRuntimeSummary(runtimeStatus, keys);
 
         if (keys.length === 0) {
-            container.innerHTML = '<p class="text-base-content/60">暂无 Euler API Key，点击右上方添加</p>';
+            container.innerHTML = runtimeStatus.total > 0
+                ? '<p class="text-base-content/60">数据库中暂无 Euler API Key，当前进程已加载环境变量 Key。</p>'
+                : '<p class="text-base-content/60">暂无 Euler API Key，点击右上方添加</p>';
             return;
         }
 
         container.innerHTML = keys.map(k => {
+            const runtime = runtimeKeyMap.get(k.id ?? (k.keyValue ? `${k.keyValue.slice(0, 10)}...` : null)) || {};
             const masked = k.keyValue ? k.keyValue.slice(0, 12) + '...' + k.keyValue.slice(-4) : '-';
             const statusBadge = k.lastStatus === 'ok'
                 ? '<span class="badge badge-success badge-xs">正常</span>'
                 : k.lastStatus === 'error'
                     ? '<span class="badge badge-error badge-xs">异常</span>'
                     : '<span class="badge badge-ghost badge-xs">未测试</span>';
-            const lastUsed = k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleString('zh-CN') : '从未';
+            const runtimeBadge = runtime.isDisabled
+                ? '<span class="badge badge-warning badge-xs">冷却中</span>'
+                : '<span class="badge badge-info badge-xs">运行中</span>';
+            const lastUsed = formatEulerTime(k.lastUsedAt);
+            const lastSelectedAt = formatEulerTime(runtime.lastSelectedAt);
+            const disabledUntil = formatEulerTime(runtime.disabledUntil, '-');
             return `
             <div class="card bg-base-100 border ${k.isActive ? 'border-base-300' : 'border-error opacity-60'}">
                 <div class="card-body p-4">
                     <div class="flex justify-between items-start flex-wrap gap-2">
                         <div class="flex-1 min-w-0">
-                            <div class="flex items-center gap-2">
+                            <div class="flex items-center gap-2 flex-wrap">
                                 <h4 class="font-bold">${k.name || '未命名'}</h4>
                                 ${statusBadge}
+                                ${runtimeBadge}
                                 ${!k.isActive ? '<span class="badge badge-error badge-xs">已禁用</span>' : ''}
                             </div>
                             <p class="text-sm font-mono text-base-content/60 mt-1">${masked}</p>
-                            <div class="flex gap-4 mt-2 text-xs text-base-content/50">
-                                <span>调用次数: <strong class="text-base-content">${k.callCount || 0}</strong></span>
-                                <span>最后使用: ${lastUsed}</span>
+                            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-xs text-base-content/60">
+                                <div class="rounded-box bg-base-200 px-3 py-2"><span>调用次数</span><div class="text-base-content font-semibold mt-1">${k.callCount || 0}</div></div>
+                                <div class="rounded-box bg-base-200 px-3 py-2"><span>运行选中</span><div class="text-base-content font-semibold mt-1">${runtime.selectedCount || 0}</div></div>
+                                <div class="rounded-box bg-base-200 px-3 py-2"><span>限流次数</span><div class="text-base-content font-semibold mt-1">${runtime.rateLimitCount || 0}</div></div>
+                                <div class="rounded-box bg-base-200 px-3 py-2"><span>禁用次数</span><div class="text-base-content font-semibold mt-1">${runtime.disabledCount || 0}</div></div>
                             </div>
-                            ${k.lastError ? `<p class="text-xs text-error mt-1 truncate" title="${k.lastError}">${k.lastError}</p>` : ''}
+                            <div class="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-base-content/50">
+                                <span>最后使用：${lastUsed}</span>
+                                <span>上次选中：${lastSelectedAt}</span>
+                                <span>冷却至：${disabledUntil}</span>
+                                <span>禁用原因：${runtime.lastDisableReason || '-'}</span>
+                            </div>
+                            ${k.lastError ? `<p class="text-xs text-error mt-1 break-all" title="${k.lastError}">${k.lastError}</p>` : ''}
+                            ${runtime.lastError && runtime.lastError !== k.lastError ? `<p class="text-xs text-warning mt-1 break-all" title="${runtime.lastError}">运行时错误：${runtime.lastError}</p>` : ''}
                         </div>
                         <div class="flex gap-1 flex-shrink-0">
                             <button class="btn btn-xs btn-outline btn-info" onclick="testEulerKey(${k.id})">测试</button>
-                            <button class="btn btn-xs btn-ghost" onclick="editEulerKey(${k.id}, '${(k.name || '').replace(/'/g, "\\'")}', ${k.isActive})">编辑</button>
+                            <button class="btn btn-xs btn-ghost" onclick="editEulerKey(${k.id}, '${(k.name || '').replace(/'/g, "\'")}', ${k.isActive})">编辑</button>
                             <button class="btn btn-xs btn-error btn-outline" onclick="deleteEulerKey(${k.id})">删除</button>
                         </div>
                     </div>
