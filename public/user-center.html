@@ -1191,7 +1191,14 @@
         }
 
         .plan-compare-row {
+            position: relative;
             display: grid;
+            z-index: 0;
+        }
+
+        .plan-compare-row:hover,
+        .plan-compare-row:focus-within {
+            z-index: 6;
         }
 
         .plan-compare-row+.plan-compare-row {
@@ -1237,6 +1244,112 @@
             font-size: 0.82rem;
             line-height: 1.5;
             color: var(--fantasy-muted);
+        }
+
+        .plan-compare-heading-line {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .plan-feature-info {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .plan-feature-info-trigger {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            border-radius: 999px;
+            border: 1px solid rgba(125, 211, 252, 0.45);
+            background: rgba(56, 189, 248, 0.14);
+            color: #7dd3fc;
+            font-size: 0.78rem;
+            font-weight: 800;
+            line-height: 1;
+            cursor: help;
+            box-shadow: 0 4px 12px rgba(14, 116, 144, 0.18);
+            transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+        }
+
+        .plan-feature-info:hover .plan-feature-info-trigger {
+            transform: translateY(-1px);
+            background: rgba(56, 189, 248, 0.22);
+            border-color: rgba(125, 211, 252, 0.75);
+        }
+
+        .plan-feature-preview {
+            position: absolute;
+            top: calc(100% + 12px);
+            left: -8px;
+            width: min(360px, calc(100vw - 56px));
+            padding: 12px;
+            border-radius: 18px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background: rgba(6, 10, 18, 0.96);
+            box-shadow: 0 20px 48px rgba(2, 8, 23, 0.42);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(8px);
+            transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+            pointer-events: none;
+            z-index: 12;
+            backdrop-filter: blur(10px);
+        }
+
+        .plan-feature-info:hover .plan-feature-preview,
+        .plan-feature-info:focus-within .plan-feature-preview {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .plan-feature-preview::before {
+            content: '';
+            position: absolute;
+            top: -8px;
+            left: 14px;
+            width: 14px;
+            height: 14px;
+            transform: rotate(45deg);
+            border-top: 1px solid rgba(148, 163, 184, 0.28);
+            border-left: 1px solid rgba(148, 163, 184, 0.28);
+            background: rgba(6, 10, 18, 0.96);
+        }
+
+        .plan-feature-preview-title {
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            color: rgba(226, 232, 240, 0.92);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .plan-feature-preview-frame {
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.98));
+        }
+
+        .plan-feature-preview-caption {
+            margin-top: 8px;
+            font-size: 0.76rem;
+            line-height: 1.5;
+            color: rgba(148, 163, 184, 0.92);
+        }
+
+        @media (max-width: 768px) {
+            .plan-feature-preview {
+                left: 0;
+                width: min(320px, calc(100vw - 40px));
+            }
         }
 
         .plan-head-card {
@@ -2505,6 +2618,7 @@
                 {
                     label: 'AI直播复盘',
                     hint: '单场 AI直播复盘与老板摘要',
+                    tooltip: true,
                     render: (item) => hasFlag(item.features, 'ai_live_recap', 'aiLiveRecap') ? '<strong>支持</strong>' : '<span class="opacity-50">未包含</span>'
                 },
                 {
@@ -2537,10 +2651,90 @@
                     </div>`).join('')}
             </div>`;
 
+            const aiRecapPreviewMarkup = `
+                <span class="plan-feature-info">
+                    <span class="plan-feature-info-trigger" tabindex="0" aria-label="查看 AI直播复盘功能示意">!</span>
+                    <span class="plan-feature-preview" role="tooltip">
+                        <div class="plan-feature-preview-title">AI直播复盘示意</div>
+                        <div class="plan-feature-preview-frame" aria-hidden="true">
+                            <svg viewBox="0 0 520 360" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+                                <defs>
+                                    <linearGradient id="previewBg" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stop-color="#f8fafc"/>
+                                        <stop offset="100%" stop-color="#e5edf7"/>
+                                    </linearGradient>
+                                    <linearGradient id="panelSky" x1="0" y1="0" x2="1" y2="1">
+                                        <stop offset="0%" stop-color="#eff6ff"/>
+                                        <stop offset="100%" stop-color="#dbeafe"/>
+                                    </linearGradient>
+                                    <linearGradient id="panelMint" x1="0" y1="0" x2="1" y2="1">
+                                        <stop offset="0%" stop-color="#ecfdf5"/>
+                                        <stop offset="100%" stop-color="#d1fae5"/>
+                                    </linearGradient>
+                                    <linearGradient id="panelAmber" x1="0" y1="0" x2="1" y2="1">
+                                        <stop offset="0%" stop-color="#fffbeb"/>
+                                        <stop offset="100%" stop-color="#fde68a"/>
+                                    </linearGradient>
+                                    <linearGradient id="panelRose" x1="0" y1="0" x2="1" y2="1">
+                                        <stop offset="0%" stop-color="#fff1f2"/>
+                                        <stop offset="100%" stop-color="#fecdd3"/>
+                                    </linearGradient>
+                                </defs>
+                                <rect width="520" height="360" rx="20" fill="url(#previewBg)"/>
+                                <rect x="18" y="18" width="484" height="110" rx="18" fill="#ffffff"/>
+                                <rect x="30" y="30" width="220" height="86" rx="14" fill="url(#panelSky)"/>
+                                <polyline points="42,88 76,52 108,74 144,34 180,42 214,82 236,66" fill="none" stroke="#60a5fa" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                                <polyline points="42,64 76,70 108,78 144,44 180,54 214,58 236,92" fill="none" stroke="#f59e0b" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.88"/>
+                                <rect x="264" y="30" width="226" height="86" rx="14" fill="#f8fafc"/>
+                                <polygon points="378,46 432,66 412,108 344,108 324,66" fill="none" stroke="#818cf8" stroke-width="4" stroke-linejoin="round"/>
+                                <text x="316" y="145" font-size="14" font-weight="700" fill="#334155">关键词时间线</text>
+                                <rect x="392" y="136" width="78" height="22" rx="11" fill="#e2e8f0"/>
+                                <text x="413" y="151" font-size="11" font-weight="700" fill="#64748b">Top 3</text>
+                                <rect x="18" y="168" width="484" height="95" rx="18" fill="#ffffff"/>
+                                <rect x="30" y="183" width="145" height="66" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+                                <rect x="188" y="183" width="145" height="66" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+                                <rect x="346" y="183" width="145" height="66" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+                                <text x="42" y="205" font-size="14" font-weight="700" fill="#334155">礼物高峰</text>
+                                <text x="200" y="205" font-size="14" font-weight="700" fill="#334155">互动高峰</text>
+                                <text x="358" y="205" font-size="14" font-weight="700" fill="#334155">流量峰值</text>
+                                <rect x="124" y="191" width="38" height="18" rx="9" fill="#e2e8f0"/>
+                                <rect x="282" y="191" width="32" height="18" rx="9" fill="#e2e8f0"/>
+                                <rect x="440" y="191" width="36" height="18" rx="9" fill="#e2e8f0"/>
+                                <rect x="18" y="276" width="152" height="66" rx="16" fill="url(#panelMint)"/>
+                                <rect x="184" y="276" width="152" height="66" rx="16" fill="url(#panelAmber)"/>
+                                <rect x="350" y="276" width="152" height="66" rx="16" fill="url(#panelSky)"/>
+                                <text x="30" y="298" font-size="13" font-weight="700" fill="#10b981">本场亮点</text>
+                                <text x="196" y="298" font-size="13" font-weight="700" fill="#f59e0b">主要问题</text>
+                                <text x="362" y="298" font-size="13" font-weight="700" fill="#38bdf8">下一步建议</text>
+                                <g stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round">
+                                    <line x1="30" y1="312" x2="148" y2="312"/>
+                                    <line x1="30" y1="322" x2="128" y2="322"/>
+                                    <line x1="30" y1="332" x2="118" y2="332"/>
+                                    <line x1="196" y1="312" x2="314" y2="312"/>
+                                    <line x1="196" y1="322" x2="304" y2="322"/>
+                                    <line x1="196" y1="332" x2="288" y2="332"/>
+                                    <line x1="362" y1="312" x2="480" y2="312"/>
+                                    <line x1="362" y1="322" x2="470" y2="322"/>
+                                    <line x1="362" y1="332" x2="448" y2="332"/>
+                                </g>
+                            </svg>
+                        </div>
+                        <div class="plan-feature-preview-caption">AI 直播复盘页面样式示意，包含亮点、问题、建议与高价值信号。</div>
+                    </span>
+                </span>`;
+
+            const renderComparisonLabel = (row) => {
+                const label = escapeHtml(row.label);
+                if (!row.tooltip) {
+                    return `<div class="plan-compare-heading">${label}</div>`;
+                }
+                return `<div class="plan-compare-heading"><span class="plan-compare-heading-line">${label}${aiRecapPreviewMarkup}</span></div>`;
+            };
+
             const bodyRows = comparisonRows.map((row) => `
             <div class="plan-compare-row" style="${columnStyle}">
                 <div class="plan-compare-label">
-                    <div class="plan-compare-heading">${escapeHtml(row.label)}</div>
+                    ${renderComparisonLabel(row)}
                     <div class="plan-compare-subheading">${escapeHtml(row.hint)}</div>
                 </div>
                 ${preparedPlans.map((item) => `<div class="plan-compare-cell"><div class="plan-compare-value">${row.render(item)}</div></div>`).join('')}
