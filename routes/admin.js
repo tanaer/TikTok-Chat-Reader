@@ -463,6 +463,164 @@ router.get('/users/:id', async (req, res) => {
 });
 
 /**
+ * PUT /api/admin/users/:id/subscription
+ */
+router.put('/users/:id/subscription', [
+    body('planId').isInt({ min: 1 }).withMessage('套餐ID无效'),
+    body('endDate').custom((value) => {
+        if (!value) {
+            throw new Error('到期时间不能为空');
+        }
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+            throw new Error('到期时间无效');
+        }
+        return true;
+    }),
+], async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(400).json({ error: errors.array()[0].msg });
+    }
+
+    const userId = parseInt(req.params.id, 10);
+    const planId = parseInt(req.body.planId, 10);
+    const endDate = new Date(req.body.endDate);
+
+    if (!Number.isInteger(userId) || userId <= 0) {
+        return res.status(400).json({ error: '用户ID无效' });
+    }
+
+    const nextStatus = endDate.getTime() > Date.now() ? 'active' : 'expired';
+    const client = await db.pool.connect();
+
+    try {
+        await client.query('BEGIN');
+
+        const userResult = await client.query(
+            'SELECT id, username, nickname FROM users WHERE id = $1',
+            [userId]
+        );
+        if (userResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: '用户不存在' });
+        }
+
+        const planResult = await client.query(
+            `SELECT id, name, code, room_limit, daily_room_create_limit, is_active
+             FROM subscription_plans
+             WHERE id = $1`,
+            [planId]
+        );
+        if (planResult.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: '套餐不存在' });
+        }
+
+        const plan = db.toCamelCase(planResult.rows[0]);
+        const currentResult = await client.query(
+            `SELECT id, user_id, plan_id, billing_cycle, start_date, end_date, status
+             FROM user_subscriptions
+             WHERE user_id = $1 AND status = 'active' AND end_date > NOW()
+             ORDER BY end_date DESC, id DESC
+             LIMIT 1`,
+            [userId]
+        );
+        const currentSubscription = currentResult.rows[0] ? db.toCamelCase(currentResult.rows[0]) : null;
+
+        let action = 'created';
+        let updatedSubscription = null;
+
+        if (currentSubscription && Number(currentSubscription.planId) === planId) {
+            await client.query(
+                `UPDATE user_subscriptions
+                 SET end_date = $1,
+                     status = $2,
+                     updated_at = NOW()
+                 WHERE id = $3`,
+                [endDate.toISOString(), nextStatus, currentSubscription.id]
+            );
+            await client.query(
+                `UPDATE user_subscriptions
+                 SET status = 'cancelled', updated_at = NOW()
+                 WHERE user_id = $1 AND status = 'active' AND id <> $2`,
+                [userId, currentSubscription.id]
+            );
+
+            const updatedResult = await client.query(
+                `SELECT us.id, us.user_id, us.plan_id, us.billing_cycle, us.start_date, us.end_date, us.status,
+                        p.name AS plan_name, p.code AS plan_code
+                 FROM user_subscriptions us
+                 JOIN subscription_plans p ON us.plan_id = p.id
+                 WHERE us.id = $1`,
+                [currentSubscription.id]
+            );
+            updatedSubscription = db.toCamelCase(updatedResult.rows[0]);
+            action = 'updated';
+        } else {
+            await client.query(
+                `UPDATE user_subscriptions
+                 SET status = 'cancelled', updated_at = NOW()
+                 WHERE user_id = $1 AND status = 'active'`,
+                [userId]
+            );
+
+            const insertBillingCycle = 'monthly';
+            const insertResult = await client.query(
+                `INSERT INTO user_subscriptions (user_id, plan_id, billing_cycle, start_date, end_date, status)
+                 VALUES ($1, $2, $3, $4, $5, $6)
+                 RETURNING id, user_id, plan_id, billing_cycle, start_date, end_date, status`,
+                [userId, planId, insertBillingCycle, new Date().toISOString(), endDate.toISOString(), nextStatus]
+            );
+            updatedSubscription = {
+                ...db.toCamelCase(insertResult.rows[0]),
+                planName: plan.name,
+                planCode: plan.code,
+            };
+            action = currentSubscription ? 'switched' : 'created';
+        }
+
+        await client.query('COMMIT');
+
+        const quota = await quotaService.getUserQuota(userId);
+        const isExpiredNow = updatedSubscription.status !== 'active';
+        const message = isExpiredNow
+            ? (action === 'updated' ? '会员到期时间已更新，当前已过期' : '会员套餐已调整，但当前为过期状态')
+            : (action === 'updated' ? '会员到期时间已更新' : '会员套餐已更新');
+
+        return res.json({
+            message,
+            subscription: {
+                id: updatedSubscription.id,
+                userId: updatedSubscription.userId,
+                planId: updatedSubscription.planId,
+                planName: updatedSubscription.planName,
+                planCode: updatedSubscription.planCode,
+                billingCycle: updatedSubscription.billingCycle,
+                startDate: updatedSubscription.startDate,
+                endDate: updatedSubscription.endDate,
+                status: updatedSubscription.status,
+            },
+            plan: {
+                id: plan.id,
+                name: plan.name,
+                code: plan.code,
+                isActive: Boolean(plan.isActive),
+                roomLimit: plan.roomLimit,
+                dailyRoomCreateLimit: plan.dailyRoomCreateLimit,
+            },
+            quota,
+        });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error('[Admin] Update user subscription error:', err.message);
+        return res.status(500).json({ error: '保存会员套餐失败' });
+    } finally {
+        client.release();
+    }
+});
+
+/**
  * PUT /api/admin/users/:id
  */
 router.put('/users/:id', async (req, res) => {
