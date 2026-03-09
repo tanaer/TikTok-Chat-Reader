@@ -2791,6 +2791,7 @@ function getStructuredSourceFieldConfigs(source) {
     const schema = source?.inputSchema || {};
     const requiredSet = new Set(Array.isArray(schema.required) ? schema.required : []);
     const properties = schema.properties && typeof schema.properties === 'object' ? schema.properties : {};
+    const rememberedValues = getStructuredSourceRememberedDefaults();
 
     return Object.entries(properties).map(([key, config]) => ({
         key,
@@ -2798,8 +2799,37 @@ function getStructuredSourceFieldConfigs(source) {
         label: String(config?.label || key).trim() || key,
         description: String(config?.description || '').trim(),
         required: requiredSet.has(key),
-        defaultValue: source?.defaultTestInput?.[key] ?? ''
+        defaultValue: rememberedValues[key] ?? source?.defaultTestInput?.[key] ?? ''
     }));
+}
+
+function getStructuredSourceMemoryStorageKey() {
+    return 'admin.structured_sources.last_input';
+}
+
+function getStructuredSourceRememberedDefaults() {
+    try {
+        const raw = window.localStorage?.getItem(getStructuredSourceMemoryStorageKey()) || '';
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+        return parsed;
+    } catch {
+        return {};
+    }
+}
+
+function saveStructuredSourceRememberedDefaults(input = {}) {
+    try {
+        const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+        const normalized = {};
+        ['roomId', 'sessionId'].forEach((key) => {
+            const value = String(source[key] || '').trim();
+            if (value) normalized[key] = value;
+        });
+        window.localStorage?.setItem(getStructuredSourceMemoryStorageKey(), JSON.stringify(normalized));
+    } catch {
+    }
 }
 
 function renderStructuredSourceForm(source) {
@@ -2892,6 +2922,7 @@ function syncStructuredSourceFormToJson() {
     });
 
     inputEl.value = formatJsonBlock(payload, '{}');
+    saveStructuredSourceRememberedDefaults(payload);
 }
 
 function validateStructuredSourceRequiredInput(source, parsedInput = {}) {
@@ -2984,7 +3015,13 @@ function renderStructuredSourceDetail(source) {
     if (descEl) descEl.textContent = source.description || '暂无说明';
     if (schemaEl) schemaEl.textContent = formatJsonBlock(source.inputSchema || {});
     renderStructuredSourceForm(source);
-    if (inputEl) inputEl.value = formatJsonBlock(source.defaultTestInput || {});
+    if (inputEl) {
+        const remembered = getStructuredSourceRememberedDefaults();
+        inputEl.value = formatJsonBlock({
+            ...(source.defaultTestInput || {}),
+            ...remembered
+        });
+    }
     if (resultEl) resultEl.textContent = '尚未执行测试';
     if (metaEl) metaEl.textContent = '尚未执行测试';
 }
@@ -3045,6 +3082,8 @@ async function testStructuredSource(explicitKey = '') {
         alert(`请先填写必填参数：${validation.missingLabels.join('、')}`);
         return;
     }
+
+    saveStructuredSourceRememberedDefaults(parsedInput);
 
     resultEl.textContent = '正在测试数据源...';
     metaEl.textContent = '正在执行测试';
