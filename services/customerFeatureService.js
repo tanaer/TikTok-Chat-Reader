@@ -77,6 +77,18 @@ function scoreMonetary(rank, totalUsers, giftValue) {
     return 1;
 }
 
+function resolveTopPercent(rank, totalUsers) {
+    const safeRank = Number(rank || 0);
+    const safeTotalUsers = Number(totalUsers || 0);
+    if (!safeRank || !safeTotalUsers || safeTotalUsers <= 0) return null;
+    return Math.max(1, Math.min(100, Math.ceil((safeRank / safeTotalUsers) * 100)));
+}
+
+function buildTopPercentLabel(rank, totalUsers) {
+    const percent = resolveTopPercent(rank, totalUsers);
+    return percent ? `前${percent}%` : '';
+}
+
 function resolveLrfmTier(totalScore) {
     if (totalScore >= 18) return '核心价值';
     if (totalScore >= 15) return '高价值';
@@ -150,6 +162,7 @@ function buildLrfmModel({ scopeLabel, relationshipDays, inactiveDays, activeDays
     const fScore = scoreFrequency(activeDays30d);
     const mScore = scoreMonetary(giftRanking.rank, giftRanking.totalUsers, giftValue30d);
     const totalScore = lScore + rScore + fScore + mScore;
+    const giftTopPercent30d = resolveTopPercent(giftRanking.rank, giftRanking.totalUsers);
 
     return {
         scope: scopeLabel,
@@ -165,9 +178,12 @@ function buildLrfmModel({ scopeLabel, relationshipDays, inactiveDays, activeDays
         active_days_30d: Number(activeDays30d || 0),
         gift_value_30d: Number(giftValue30d || 0),
         gift_rank_30d: giftRanking.rank,
-        ranked_users_30d: giftRanking.totalUsers
+        ranked_users_30d: giftRanking.totalUsers,
+        gift_top_percent_30d: giftTopPercent30d,
+        gift_top_percent_label_30d: buildTopPercentLabel(giftRanking.rank, giftRanking.totalUsers)
     };
 }
+
 
 function buildClvModel({ currentRoomMetrics30d, allRoomsMetrics30d, inactiveDays }) {
     const giftValue30d = Number(currentRoomMetrics30d?.gift_value || 0);
@@ -207,6 +223,7 @@ function buildAbcModel({ giftRanking }) {
     const totalValue = Number(giftRanking.totalValue || 0);
     const contributionShare = safeDivide(giftValue, totalValue);
     const cumulativeShare = safeDivide(Number(giftRanking.cumulativeValue || 0), totalValue);
+    const giftTopPercent30d = resolveTopPercent(giftRanking.rank, giftRanking.totalUsers);
 
     let tier = 'C';
     if (giftValue > 0) {
@@ -219,10 +236,13 @@ function buildAbcModel({ giftRanking }) {
         gift_value_30d: giftValue,
         rank_30d: giftRanking.rank,
         ranked_users_30d: giftRanking.totalUsers,
+        top_percent_30d: giftTopPercent30d,
+        top_percent_label_30d: buildTopPercentLabel(giftRanking.rank, giftRanking.totalUsers),
         contribution_share_30d: roundNumber(contributionShare, 4),
         cumulative_contribution_share_30d: roundNumber(cumulativeShare, 4)
     };
 }
+
 
 async function buildCustomerFeatures({
     userId,
@@ -279,8 +299,12 @@ async function buildCustomerFeatures({
         rankings: {
             currentRoomGiftRank30d: currentRoomRanking30d.rank,
             currentRoomGiftRankedUsers30d: currentRoomRanking30d.totalUsers,
+            currentRoomGiftTopPercent30d: resolveTopPercent(currentRoomRanking30d.rank, currentRoomRanking30d.totalUsers),
+            currentRoomGiftTopPercentLabel30d: buildTopPercentLabel(currentRoomRanking30d.rank, currentRoomRanking30d.totalUsers),
             platformGiftRank30d: platformRanking30d.rank,
-            platformGiftRankedUsers30d: platformRanking30d.totalUsers
+            platformGiftRankedUsers30d: platformRanking30d.totalUsers,
+            platformGiftTopPercent30d: resolveTopPercent(platformRanking30d.rank, platformRanking30d.totalUsers),
+            platformGiftTopPercentLabel30d: buildTopPercentLabel(platformRanking30d.rank, platformRanking30d.totalUsers)
         }
     };
 }

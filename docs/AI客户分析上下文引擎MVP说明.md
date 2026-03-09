@@ -93,6 +93,8 @@
 - `metricCube`
 - `preference`
 - `rankings`
+  - `currentRoomGiftTopPercent30d` / `currentRoomGiftTopPercentLabel30d`
+  - `platformGiftTopPercent30d` / `platformGiftTopPercentLabel30d`
 - `models`
 - `signals`
 - `corpus`
@@ -151,6 +153,7 @@
 - `valueLevelCurrentRoom`、`valueLevelGlobal` 必须直接沿用系统标签
 - `evidence` 必须引用系统字段、系统标签或系统数值
 - 最终面向用户的分析文案中，不应直接输出 `platform_lrfm`、`abc_current_room`、`otherRoomGrowthFlag` 这类英文键名，而应转写为“平台LRFM”“本房ABC分层”“其他房间增长信号”等中文业务表达
+- 若需要表达排行强弱，应优先输出系统计算后的“前X%”，而不是 `13/1511` 这类原始排行分母形式
 - 输出必须为严格 JSON
 
 ### `session_recap_review`

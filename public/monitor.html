@@ -1456,11 +1456,11 @@
             </div>
             <div id="roomCustomerAnalysisTip" class="text-[10px] opacity-50 mt-3">首次生成默认消耗 3 AI点；命中当前账号 + 当前房间缓存再次查看不重复扣点。</div>
             <div class="modal-action">
-                <button id="runRoomCustomerAnalysisBtn" class="btn btn-primary btn-sm gap-2" onclick="runRoomCustomerAnalysis(false)">
+                <button id="runRoomCustomerAnalysisBtn" class="btn btn-primary btn-sm gap-2" onclick="runRoomCustomerAnalysis()">
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                     分析
                 </button>
-                <button id="rerunRoomCustomerAnalysisBtn" class="btn btn-sm btn-ghost btn-outline text-error" onclick="runRoomCustomerAnalysis(true)">重新分析</button>
+                <button id="rerunRoomCustomerAnalysisBtn" class="hidden" type="button" tabindex="-1" aria-hidden="true">重新分析</button>
                 <form method="dialog">
                     <button class="btn btn-sm" onclick="closeRoomCustomerAnalysisModal()">关闭</button>
                 </form>
