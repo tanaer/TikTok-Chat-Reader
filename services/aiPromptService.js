@@ -78,6 +78,7 @@ const PROMPT_TEMPLATES = {
             '  "coreCustomers": [',
             '    {',
             '      "nickname": "昵称",',
+            '      "uniqueId": "账号ID",',
             '      "totalGiftValue": 0,',
             '      "giftCount": 0,',
             '      "keyBehavior": "关键行为描述",',
@@ -87,6 +88,7 @@ const PROMPT_TEMPLATES = {
             '  "potentialCustomers": [',
             '    {',
             '      "nickname": "昵称",',
+            '      "uniqueId": "账号ID",',
             '      "totalGiftValue": 0,',
             '      "giftCount": 0,',
             '      "keyBehavior": "关键行为描述",',
@@ -97,6 +99,7 @@ const PROMPT_TEMPLATES = {
             '  "riskCustomers": [',
             '    {',
             '      "nickname": "昵称",',
+            '      "uniqueId": "账号ID",',
             '      "enterTime": "进房时间",',
             '      "leaveTime": "离开时间",',
             '      "keyBehavior": "关键行为/弹幕",',
@@ -129,6 +132,13 @@ const PROMPT_TEMPLATES = {
             '- issues 返回 3-5 条，按严重程度排序。',
             '- actions 返回 3-5 条，每条都要包含“怎么做 + 预期效果 + 资源准备”。',
             '- coreCustomers / potentialCustomers / riskCustomers 各返回 5-8 条；如果数据不够，可以少于 5 条，但不要凑数。',
+            '- coreCustomers 优先选择“本场送礼高 + 历史总价值高”的用户，maintenanceSuggestion 要写清楚怎么维护、谁来维护。',
+            '- potentialCustomers 优先选择“互动高但送礼低 / 首次送礼 / 明显有兴趣”的用户，conversionScript 要给 1-2 句主播或场控可直接使用的话术，而且话术对象必须与该用户本人一致，不能串到别的用户身上。',
+            '- riskCustomers 优先选择“历史高价值但本场明显变弱、只来不出手、早退、互动降温”的用户，riskReason 和 recoveryStrategy 不能空泛。',
+            '- valuableComments 返回 5-10 条高价值弹幕；如果输入里没有，就返回空数组，不要凑数。',
+            '- 同一用户默认不要重复出现在 coreCustomers / potentialCustomers / riskCustomers 三个数组里。',
+            '- nickname、uniqueId、totalGiftValue、giftCount、enterTime、leaveTime 等字段优先沿用输入，不要编造。',
+            '- 每个客户对象都必须与输入里的同一条客户记录保持一致，uniqueId 如有提供必须原样保留；不要把 A 用户的话术、原因、动作写到 B 用户上。',
             '- tags 返回 3-5 个，必须以 # 开头，一针见血。',
             '- score.total 必须是 0-100 的整数。',
             '- score.contentAttraction 范围 0-20。',
@@ -143,6 +153,33 @@ const PROMPT_TEMPLATES = {
             '{{sessionDataJson}}'
         ].join('\n')
     },
+    user_personality_analysis: {
+        key: 'user_personality_analysis',
+        title: 'AI用户分析 · 性格分析流程',
+        description: '根据用户历史弹幕，输出旧版性格分析结果，供用户分析页直接展示。',
+        variables: ['chatCorpusText'],
+        defaultContent: [
+            '你是一个数十年经验的专业娱乐主播运营总监，并且你的情商非常高。',
+            '请根据用户的历史弹幕内容，做一份简洁、接地气、可运营落地的性格分析。',
+            '',
+            '请只围绕以下 5 项输出：',
+            '1. 常用语种',
+            '2. 掌握语种',
+            '3. 感兴趣的话题',
+            '4. 聊天风格',
+            '5. 建议破冰方式',
+            '',
+            '要求：',
+            '1. 只根据输入弹幕判断，不要编造用户没有表现出来的身份、职业、地区或消费能力。',
+            '2. 如果某项证据不足，请直接写“当前语料不足以判断”。',
+            '3. 输出必须是中文，简洁、自然、像运营同事写给主播的观察结论。',
+            '4. 不要输出 JSON，不要输出 Markdown 表格，不要加前言或结尾。',
+            '5. 按 1-5 顺序直接输出，每项 1-2 句即可。',
+            '',
+            '用户历史弹幕如下：',
+            '{{chatCorpusText}}'
+        ].join('\n')
+    },
     customer_analysis_review: {
         key: 'customer_analysis_review',
         title: 'AI客户分析 · 主分析流程',
@@ -153,25 +190,44 @@ const PROMPT_TEMPLATES = {
             '你必须专业、克制、直接，不能脱离输入数据乱编。',
             '',
             '角色边界：',
-            '1. 所有数值、时间、排行、分层模型标签，都已经由系统提前计算好。你不能自行改写、重算或脑补。',
+            '1. 所有数值、时间、排行、分层模型标签，都已经由系统提前计算好。你不能新增、修改、换算、重排，也不能把系统标签改写成另一套自定义等级。',
             '2. 你只负责：解释、总结、风险判断、维护建议、转化策略、主播/场控话术。',
-            '3. 如果输入里没有某项事实，就明确说明“当前未提供该项数据”，不要猜。',
+            '3. 如果输入里没有某项事实，就输出“当前未提供该项数据”或空数组，不要猜。',
+            '4. 如果结构化上下文与弹幕语料存在冲突，优先相信结构化上下文，弹幕只作为补充解释。',
+            '5. 不能因为聊天语气热闹，就推翻系统给出的低价值、低忠诚或高分流风险结论。',
+            '',
+            '建议思考顺序：',
+            '1. 先看 scope.currentRoom、scope.currentSession，明确本次结论围绕哪个房间。',
+            '2. 再看 models.room_lrfm、models.platform_lrfm、models.clv_current_room_30d、models.abc_current_room。',
+            '3. 再看 signals，判断忠诚、分流、沉默、观看未转化等风险。',
+            '4. 最后再用 corpus.recentChatMessages 和 chatCorpusText 去补充偏好、情绪和话术风格。',
+            '',
+            '字段写法规则：',
+            '1. valueLevelCurrentRoom 必须直接沿用系统标签，优先使用 room_lrfm.tier；若 room_lrfm.tier 缺失，再参考 abc_current_room.tier，并结合 clv_current_room_30d.value 做补充解释。',
+            '2. valueLevelGlobal 必须直接沿用 platform_lrfm.tier；缺失时写“当前未提供该项数据”。',
+            '3. loyaltyAssessment 优先参考 currentRoomValueShare30d、currentRoomInactiveDays、platformInactiveDays；输出“高忠诚 / 摇摆 / 易流失”之一，若证据不足可写“当前未提供该项数据”。',
+            '4. diversionRiskAssessment 优先参考 otherRoomsValueShare30d、otherRoomGrowthFlag；输出“低 / 中 / 高”之一，若证据不足可写“当前未提供该项数据”。',
+            '5. conversionStage 优先参考 gift_value、danmu_count、onlyWatchNoGiftFlag、onlyGiftNoChatFlag；输出“未激活 / 观察中 / 待转化 / 已转化 / 需召回”之一，若证据不足可写“当前未提供该项数据”。',
+            '6. tags 是运营标签，不是模型标签；可以总结现象，但不能伪造新的系统分层。',
             '',
             '输出要求：',
             '1. 只能输出严格 JSON，不要加任何说明、引言、Markdown、代码块。',
-            '2. evidence 必须引用输入中的系统事实，优先引用具体指标、标签、排行、趋势。',
+            '2. evidence 必须引用输入中的系统事实，优先引用具体字段名、指标值、标签、排行、趋势。',
             '3. keySignals / recommendedActions / outreachScript / forbiddenActions / tags / evidence 都必须是数组。',
-            '4. summary 控制在 120 字以内，适合老板快速看懂。',
-            '5. valueLevelCurrentRoom、valueLevelGlobal、loyaltyAssessment、diversionRiskAssessment、conversionStage 都必须给出明确结论。',
+            '4. summary 控制在 120 字以内，格式尽量接近“本房价值判断 + 当前主要风险/机会 + 下一步动作”。',
+            '5. valueLevelCurrentRoom、valueLevelGlobal、loyaltyAssessment、diversionRiskAssessment、conversionStage 都必须给出字符串；没有依据时写“当前未提供该项数据”。',
+            '6. keySignals 返回 2-4 条，recommendedActions 返回 2-4 条，outreachScript 返回 2-3 条，forbiddenActions 返回 1-3 条，tags 返回 2-5 条，evidence 返回 2-4 条。',
+            '7. evidence 至少 1 条来自 models.*，至少 1 条来自 signals.* 或 corpus.*；如果 chatCorpusText 为空，就不要虚构弹幕证据。',
+            '8. recommendedActions 每条尽量包含“谁来做、何时做、做什么”；outreachScript 每条尽量是主播或场控可直接说出口的自然短句。',
             '',
             '输出 JSON 结构必须严格如下：',
             '{',
-            '  "summary": "一句话总结这个客户对本房的价值与风险",',
-            '  "valueLevelCurrentRoom": "核心价值/高潜/一般/低价值",',
-            '  "valueLevelGlobal": "平台大户/平台中层/长尾用户",',
-            '  "loyaltyAssessment": "高忠诚/摇摆/易流失",',
-            '  "diversionRiskAssessment": "低/中/高",',
-            '  "conversionStage": "未激活/观察中/待转化/已转化/需召回",',
+            '  "summary": "一句话总结这个客户对本房的价值、风险和下一步动作",',
+            '  "valueLevelCurrentRoom": "高价值",',
+            '  "valueLevelGlobal": "核心价值",',
+            '  "loyaltyAssessment": "高忠诚",',
+            '  "diversionRiskAssessment": "中",',
+            '  "conversionStage": "待转化",',
             '  "keySignals": ["信号1", "信号2"],',
             '  "recommendedActions": ["动作1", "动作2"],',
             '  "outreachScript": ["话术1", "话术2"],',
@@ -183,10 +239,14 @@ const PROMPT_TEMPLATES = {
             '约束补充：',
             '- 不要重新创造新的数值字段。',
             '- 不要输出输入中不存在的房间、日期、排行。',
-            '- 如果 room_lrfm / platform_lrfm / abc_current_room / clv_current_room_30d 已给出，就只能引用这些系统结果，不要自行换口径。',
-            '- recommendedActions 要偏运营动作；outreachScript 要偏主播或场控可直接说的话。',
-            '- forbiddenActions 必须写“不要做什么”。',
-            '- evidence 每条都尽量带上输入里的原始事实关键词或数值。',
+            '- 如果 room_lrfm / platform_lrfm / abc_current_room / clv_current_room_30d 已给出，就必须直接沿用这些系统结果，不要自行换口径。',
+            '- 如果本房价值和平台价值不一致，要明确写出“平台有价值，但本房承接偏弱”或同类结论。',
+            '- recommendedActions 必须写成可执行动作，尽量包含“谁来做、何时做、做什么”。',
+            '- outreachScript 要偏主播或场控可直接说的话，语气自然，不要像报告，也不要承诺输入里没有的福利、价格或权益。',
+            '- forbiddenActions 必须写“不要做什么”，不能写成空泛提醒。',
+            '- evidence 每条都尽量带上输入里的原始事实关键词或数值，优先保留字段名和结论，如 room_lrfm.tier=高价值。',
+            '- keySignals 要写“信号 + 含义”，不要只抄字段名。',
+            '- 不要输出空洞套话，例如“加强互动”“继续观察”“做好维护”这类没有动作对象和场景的话。',
             '',
             '结构化客户上下文如下：',
             '{{customerContextJson}}',
@@ -275,6 +335,38 @@ async function resetPromptTemplate(key) {
     return savePromptTemplate(key, definition.defaultContent);
 }
 
+function shouldRepairSessionRecapReviewTemplate(content = '') {
+    const normalized = String(content || '');
+    if (!normalized) return false;
+    const requiredMarkers = [
+        'coreCustomers',
+        'potentialCustomers',
+        'riskCustomers',
+        '"uniqueId": "账号ID"',
+        '不要把 A 用户的话术'
+    ];
+    return requiredMarkers.some(marker => !normalized.includes(marker));
+}
+
+async function repairCriticalPromptTemplates() {
+    const sessionRecapDefinition = getPromptTemplateDefinition('session_recap_review');
+    if (!sessionRecapDefinition) return { repairedKeys: [] };
+
+    const current = await db.pool.query(
+        'SELECT value FROM settings WHERE key = $1 LIMIT 1',
+        [getPromptTemplateSettingKey('session_recap_review')]
+    );
+    const currentValue = current.rows[0]?.value || '';
+    const repairedKeys = [];
+
+    if (currentValue && shouldRepairSessionRecapReviewTemplate(currentValue)) {
+        await savePromptTemplate('session_recap_review', sessionRecapDefinition.defaultContent);
+        repairedKeys.push('session_recap_review');
+    }
+
+    return { repairedKeys };
+}
+
 function escapeRegExp(value) {
     return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -295,6 +387,7 @@ module.exports = {
     getPromptTemplate,
     savePromptTemplate,
     resetPromptTemplate,
+    repairCriticalPromptTemplates,
     getPromptTemplateDefinition,
     listPromptTemplateDefinitions,
     getPromptTemplateSettingKey,
