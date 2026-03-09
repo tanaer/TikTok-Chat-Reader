@@ -323,17 +323,14 @@ const Auth = {
     buildUserDropdown(user) {
         const displayName = user?.nickname || user?.username || '用户';
         return `
-            <li class="dropdown dropdown-end">
+            <li class="dropdown dropdown-end dropdown-bottom dropdown-hover relative app-shell-user-dropdown">
                 <div tabindex="0" role="button" class="btn btn-ghost btn-sm app-shell-nav-user app-shell-nav-action gap-2">
                     <span>${displayName}</span>
                     <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 opacity-70" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
                     </svg>
                 </div>
-                <ul tabindex="0" class="dropdown-content menu menu-sm z-[80] mt-2 w-48 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl">
-                    <li class="menu-title"><span class="truncate">${displayName}</span></li>
-                    <li><a href="/user-center.html">用户中心</a></li>
-                    ${this.isAdmin() ? '<li><a href="/tanaer.html">管理后台</a></li>' : ''}
+                <ul tabindex="0" class="dropdown-content menu menu-sm z-[80] top-full right-0 w-32 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl app-shell-user-menu">
                     <li><a href="#" class="text-error" onclick="return Auth.handleLogoutFromMenu(event)">退出登录</a></li>
                 </ul>
             </li>
