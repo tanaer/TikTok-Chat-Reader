@@ -1654,14 +1654,16 @@ app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
         // This shows a TikTok user's analysis; access requires login
         if (!req.user) return res.status(401).json({ error: '请先登录' });
         const roomFilter = await getUserRoomFilter(req);
-        const data = await manager.getUserAnalysis(req.params.userId, roomFilter);
+        const [data, memberAnalysis, latestAiJob] = await Promise.all([
+            getCachedUserAnalysisBase(req, req.params.userId, roomFilter),
+            getCachedLatestMemberPersonalityAnalysis(req.user.id, req.params.userId),
+            getLatestPersonalityAiWorkJobForUser(req.user.id, req.params.userId)
+        ]);
 
         const response = serializeUserAnalysisDetail(data);
-        const memberAnalysis = await getLatestMemberPersonalityAnalysis(req.user.id, req.params.userId);
         response.aiAnalysis = memberAnalysis?.result || null;
         response.aiAnalysisJson = safeParseJsonObject(memberAnalysis?.resultJson);
 
-        const latestAiJob = await getLatestPersonalityAiWorkJobForUser(req.user.id, req.params.userId);
         if (latestAiJob && ['queued', 'processing'].includes(String(latestAiJob.status || '').toLowerCase())) {
             response.aiJob = serializeSessionAiWorkJobForClient(latestAiJob);
         }
@@ -1699,7 +1701,17 @@ app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
         if (roomFilter) filters.roomFilter = roomFilter;
 
         // Get user list first
-        const result = await manager.getTopGifters(1, limit, filters);
+        const exportListCacheKey = buildAnalysisCacheKey('users_export_list', req, roomFilter, {
+            limit,
+            lang: filters.lang,
+            languageFilter: filters.languageFilter,
+            minRooms: filters.minRooms,
+            activeHour: filters.activeHour,
+            activeHourEnd: filters.activeHourEnd,
+            search: filters.search,
+            giftPreference: filters.giftPreference
+        });
+        const result = await getCachedAnalysisPayload(exportListCacheKey, () => manager.getTopGifters(1, limit, filters));
         const memberAnalysisMap = await getLatestMemberPersonalityAnalysisMap(req.user.id, result.users.map(user => user.userId));
 
         // Fetch details for each user
@@ -1777,6 +1789,48 @@ function safeParseJsonObject(value) {
     } catch (err) {
         return null;
     }
+}
+
+function buildMemberPersonalityAnalysisVersionKey(memberId, targetUserId) {
+    return cacheService.buildCacheKey('analysis', 'member_personality_ai_version', memberId, targetUserId);
+}
+
+function buildMemberPersonalityAnalysisCacheKey(memberId, targetUserId, cacheVersion = 0) {
+    return cacheService.buildCacheKey('analysis', 'member_personality_ai_latest', memberId, targetUserId, Number(cacheVersion || 0));
+}
+
+async function getMemberPersonalityAnalysisCacheVersion(memberId, targetUserId) {
+    if (!memberId || !targetUserId || !cacheService.isRoomCacheEnabled()) {
+        return 0;
+    }
+
+    const version = await cacheService.getNumber(buildMemberPersonalityAnalysisVersionKey(memberId, targetUserId));
+    return Number.isFinite(version) && version > 0 ? version : 0;
+}
+
+async function invalidateMemberPersonalityAnalysisCache(memberId, targetUserId) {
+    if (!memberId || !targetUserId || !cacheService.isRoomCacheEnabled()) {
+        return 0;
+    }
+
+    return cacheService.increment(buildMemberPersonalityAnalysisVersionKey(memberId, targetUserId), 1);
+}
+
+async function getCachedLatestMemberPersonalityAnalysis(memberId, targetUserId) {
+    if (!memberId || !targetUserId || !cacheService.isRoomCacheEnabled() || ANALYSIS_CACHE_TTL_MS <= 0) {
+        return getLatestMemberPersonalityAnalysis(memberId, targetUserId);
+    }
+
+    const cacheVersion = await getMemberPersonalityAnalysisCacheVersion(memberId, targetUserId);
+    const cacheKey = buildMemberPersonalityAnalysisCacheKey(memberId, targetUserId, cacheVersion);
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const latest = await getLatestMemberPersonalityAnalysis(memberId, targetUserId);
+    if (latest) {
+        await cacheService.setJson(cacheKey, latest, { ttlMs: ANALYSIS_CACHE_TTL_MS });
+    }
+    return latest;
 }
 
 async function getLatestMemberPersonalityAnalysis(memberId, targetUserId) {
@@ -1944,6 +1998,12 @@ async function saveMemberCustomerAnalysisRecord({
             source || 'api'
         ]
     );
+
+    const normalizedPromptKey = String(promptKey || '').trim();
+    const normalizedCurrentRoomId = String(currentRoomId || '').trim();
+    if (!normalizedCurrentRoomId && normalizedPromptKey === USER_PERSONALITY_ANALYSIS_PROMPT_KEY) {
+        await invalidateMemberPersonalityAnalysisCache(memberId, targetUserId);
+    }
 }
 
 function buildCustomerAnalysisJobTitle(targetUserId, preparedAnalysis = {}) {
