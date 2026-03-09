@@ -15,9 +15,11 @@ var currentSessionRecap = null;
 var sessionAiJobPollTimer = null;
 var sessionAiJobPollTarget = null;
 var sessionRecapExporting = false;
+var roomCustomerAnalysisExporting = false;
 var roomCustomerAnalysisJobPollTimer = null;
 var currentRoomCustomerAnalysisJobId = 0;
 var currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '', hasAnalysisResult: false };
+var currentRoomLoadRequestId = 0;
 const DEFAULT_SESSION_RECAP_POINTS = 20;
 const DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS = 3;
 const SESSION_RECAP_LOADING_TIPS = [
@@ -148,6 +150,8 @@ window.hideGlobalLoading = hideGlobalLoading;
 window.withGlobalLoading = withGlobalLoading;
 window.exportSessionRecapAsImage = exportSessionRecapAsImage;
 window.exportSessionRecapAsPdf = exportSessionRecapAsPdf;
+window.exportRoomCustomerAnalysisAsImage = exportRoomCustomerAnalysisAsImage;
+window.exportRoomCustomerAnalysisAsPdf = exportRoomCustomerAnalysisAsPdf;
 
 // Initialization
 $(document).ready(async () => {
@@ -293,14 +297,38 @@ function switchSection(sectionId) {
 // Room Detail Logic
 // =======================
 
+function isActiveRoomLoad(roomId, requestId) {
+    return Number(requestId || 0) === Number(currentRoomLoadRequestId || 0)
+        && String(currentDetailRoomId || '').trim() === String(roomId || '').trim();
+}
+
+function renderAlltimeStatusTable(message, tone = 'loading') {
+    const content = tone === 'loading'
+        ? `<span class="loading loading-spinner loading-xs mr-1"></span>${message}`
+        : message;
+    $('#alltimeGiftersTable tbody, #alltimeChattersTable tbody, #alltimeLikersTable tbody')
+        .html(`<tr><td colspan="2" class="text-center opacity-60 text-xs">${content}</td></tr>`);
+}
+
+function setAlltimeLeaderboardsLoading(roomId) {
+    const safeRoomId = String(roomId || '').trim();
+    renderAlltimeStatusTable(
+        safeRoomId ? `正在加载房间 ${safeRoomId} 的历史排行榜...` : '正在加载历史排行榜...',
+        'loading'
+    );
+}
+
 async function loadRoom(id) {
-    if (currentRoomCustomerAnalysisState.roomId && currentRoomCustomerAnalysisState.roomId !== String(id || '').trim()) {
+    const safeRoomId = String(id || '').trim();
+    const requestId = ++currentRoomLoadRequestId;
+    if (currentRoomCustomerAnalysisState.roomId && currentRoomCustomerAnalysisState.roomId !== safeRoomId) {
         closeRoomCustomerAnalysisModal();
     }
-    currentDetailRoomId = id;
-    $('#detailRoomId').text(id);
+    currentDetailRoomId = safeRoomId;
+    $('#detailRoomId').text(safeRoomId);
     $('#chatContainer').empty();
     resetSessionRecapState('正在加载 AI直播复盘...');
+    setAlltimeLeaderboardsLoading(safeRoomId);
 
     // Show loading state
     showLoadingState();
@@ -309,12 +337,13 @@ async function loadRoom(id) {
         try {
             // First check if room is live and get session list
             const [statsRes, sessions] = await Promise.all([
-                $.get(`/api/rooms/${id}/stats_detail?sessionId=live`),
-                $.get(`/api/rooms/${id}/sessions`)
+                $.get(`/api/rooms/${safeRoomId}/stats_detail?sessionId=live`),
+                $.get(`/api/rooms/${safeRoomId}/sessions`)
             ]);
+            if (!isActiveRoomLoad(safeRoomId, requestId)) return;
 
             // Load all-time leaderboards in background (don't block UI)
-            loadAlltimeLeaderboards(id);
+            loadAlltimeLeaderboards(safeRoomId, requestId);
 
             roomIsLive = statsRes.isLive === true;
 
@@ -341,11 +370,11 @@ async function loadRoom(id) {
                 addSystemMessage('🟢 房间正在直播中，已自动接入实时数据');
 
                 // Show stats
-                setLiveDetailAggregationState(id, statsRes.summary, statsRes.leaderboards);
+                setLiveDetailAggregationState(safeRoomId, statsRes.summary, statsRes.leaderboards);
                 updateRoomHeader(statsRes.summary);
                 updateLeaderboards(statsRes.leaderboards);
 
-                connectToLive(id);
+                connectToLive(safeRoomId);
 
             } else if (sessions && sessions.length > 0) {
                 // Not live - auto-select last session
@@ -354,7 +383,8 @@ async function loadRoom(id) {
                 select.val(lastSessionId);
 
                 // Load last session stats
-                const lastStats = await $.get(`/api/rooms/${id}/stats_detail?sessionId=${lastSessionId}`);
+                const lastStats = await $.get(`/api/rooms/${safeRoomId}/stats_detail?sessionId=${lastSessionId}`);
+                if (!isActiveRoomLoad(safeRoomId, requestId)) return;
                 hideLoadingState();
                 updateRoomStatusUI(false);
                 const lastSessionTime = sessions[0].createdAt || sessions[0].endTime;
@@ -379,11 +409,12 @@ async function loadRoom(id) {
                 clearLiveDetailAggregationState();
             }
 
-            if (isSessionRecapTabActive()) {
-                await renderSessionRecap(id, currentSessionId);
+            if (isSessionRecapTabActive() && isActiveRoomLoad(safeRoomId, requestId)) {
+                await renderSessionRecap(safeRoomId, currentSessionId);
             }
 
         } catch (err) {
+            if (!isActiveRoomLoad(safeRoomId, requestId)) return;
             console.error('loadRoom error:', err);
             hideLoadingState();
             addSystemMessage('❌ 加载失败: ' + err.message);
@@ -394,6 +425,7 @@ async function loadRoom(id) {
 function showLoadingState() {
     $('#d_duration').text('--:--');
     $('#d_member, #d_like, #d_gift').text('...');
+    $('#info_startTime').text('加载中...');
     $('#info_totalLikes, #info_totalComments, #info_totalGift, #info_maxViewers').text('...');
     $('#giftTable tbody, #topGiftersTable tbody, #topContributorsTable tbody, #topLikersTable tbody')
         .html('<tr><td colspan="3" class="text-center"><span class="loading loading-spinner loading-sm"></span> 加载中...</td></tr>');
@@ -1270,6 +1302,165 @@ async function exportSessionRecapAsPdf() {
     }
 }
 
+function setRoomCustomerAnalysisExportState({ visible = false, disabled = true, loadingType = '' } = {}) {
+    const wrap = document.getElementById('roomCustomerAnalysisExportActions');
+    const menuBtn = document.getElementById('roomCustomerAnalysisExportMenuBtn');
+    const imageBtn = document.getElementById('exportRoomCustomerAnalysisImageBtn');
+    const pdfBtn = document.getElementById('exportRoomCustomerAnalysisPdfBtn');
+
+    if (wrap) {
+        wrap.classList.toggle('hidden', !visible);
+    }
+
+    if (menuBtn) {
+        if (!menuBtn.dataset.defaultLabel) menuBtn.dataset.defaultLabel = '导出结果';
+        menuBtn.disabled = !visible || disabled;
+        menuBtn.classList.toggle('btn-disabled', !visible || disabled);
+        menuBtn.classList.remove('loading');
+        menuBtn.textContent = loadingType === 'image'
+            ? '导出图片中...'
+            : loadingType === 'pdf'
+                ? '导出PDF中...'
+                : menuBtn.dataset.defaultLabel;
+        if (loadingType) menuBtn.classList.add('loading');
+    }
+
+    [imageBtn, pdfBtn].forEach(btn => {
+        if (!btn) return;
+        btn.disabled = !visible || disabled;
+    });
+}
+
+function buildRoomCustomerAnalysisExportFileName(ext = 'png') {
+    const roomPart = String(currentRoomCustomerAnalysisState?.roomId || currentDetailRoomId || 'room').trim() || 'room';
+    const userPart = String(currentRoomCustomerAnalysisState?.uniqueId || currentRoomCustomerAnalysisState?.nickname || currentRoomCustomerAnalysisState?.userId || 'user').trim() || 'user';
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+    return `客户价值深度挖掘_${roomPart}_${userPart}_${stamp}.${ext}`.replace(/[\/:*?"<>|\s]+/g, '_');
+}
+
+async function captureRoomCustomerAnalysisCanvas() {
+    const modal = document.getElementById('roomCustomerAnalysisModal');
+    const target = document.getElementById('roomCustomerAnalysisExportCard');
+    if (!modal?.open || !target || !currentRoomCustomerAnalysisState?.hasAnalysisResult) {
+        throw new Error('当前没有可导出的客户价值深度挖掘结果');
+    }
+    if (typeof window.htmlToImage?.toCanvas !== 'function') {
+        throw new Error('导出组件尚未加载完成，请刷新页面后重试');
+    }
+    if (roomCustomerAnalysisExporting) {
+        throw new Error('导出任务正在进行中，请稍候');
+    }
+
+    const previous = {
+        width: target.style.width,
+        maxWidth: target.style.maxWidth
+    };
+
+    roomCustomerAnalysisExporting = true;
+    const exportWidth = Math.max(Math.ceil(target.getBoundingClientRect().width || 0), 980);
+    const exportHeight = Math.max(target.scrollHeight, target.offsetHeight);
+
+    try {
+        target.style.width = `${exportWidth}px`;
+        target.style.maxWidth = `${exportWidth}px`;
+        await sleep(80);
+
+        return await window.htmlToImage.toCanvas(target, {
+            cacheBust: true,
+            pixelRatio: Math.min(2, Math.max(1.5, window.devicePixelRatio || 1)),
+            backgroundColor: '#f4f7fb',
+            width: exportWidth,
+            height: exportHeight,
+            canvasWidth: exportWidth,
+            canvasHeight: exportHeight,
+            style: {
+                margin: '0',
+                transform: 'none'
+            }
+        });
+    } catch (err) {
+        if (String(err?.message || '').includes('oklch')) {
+            throw new Error('当前主题样式与导出引擎不兼容，请刷新页面后重试');
+        }
+        throw err;
+    } finally {
+        target.style.width = previous.width;
+        target.style.maxWidth = previous.maxWidth;
+        roomCustomerAnalysisExporting = false;
+    }
+}
+
+async function exportRoomCustomerAnalysisAsImage() {
+    const hasContent = Boolean(currentRoomCustomerAnalysisState?.hasAnalysisResult);
+    if (!hasContent) {
+        alert('当前没有可导出的客户价值深度挖掘结果');
+        return;
+    }
+
+    try {
+        document.getElementById('roomCustomerAnalysisExportMenuBtn')?.blur();
+        setRoomCustomerAnalysisExportState({ visible: true, disabled: true, loadingType: 'image' });
+        await withGlobalLoading('正在导出深挖图片...', async () => {
+            const canvas = await captureRoomCustomerAnalysisCanvas();
+            const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 1));
+            downloadBlob(blob, buildRoomCustomerAnalysisExportFileName('png'));
+        });
+    } catch (err) {
+        alert(err?.message || '导出图片失败，请稍后重试');
+    } finally {
+        setRoomCustomerAnalysisExportState({ visible: hasContent, disabled: false });
+    }
+}
+
+async function exportRoomCustomerAnalysisAsPdf() {
+    const hasContent = Boolean(currentRoomCustomerAnalysisState?.hasAnalysisResult);
+    if (!hasContent) {
+        alert('当前没有可导出的客户价值深度挖掘结果');
+        return;
+    }
+
+    try {
+        const jsPDF = window.jspdf?.jsPDF;
+        if (typeof jsPDF !== 'function') throw new Error('PDF 导出组件尚未加载完成，请刷新页面后重试');
+
+        document.getElementById('roomCustomerAnalysisExportMenuBtn')?.blur();
+        setRoomCustomerAnalysisExportState({ visible: true, disabled: true, loadingType: 'pdf' });
+        await withGlobalLoading('正在导出深挖 PDF...', async () => {
+            const canvas = await captureRoomCustomerAnalysisCanvas();
+            const pdf = new jsPDF('p', 'pt', 'a4');
+            const pageWidth = pdf.internal.pageSize.getWidth();
+            const pageHeight = pdf.internal.pageSize.getHeight();
+            const margin = 22;
+            const usableWidth = pageWidth - margin * 2;
+            const imageHeight = canvas.height * usableWidth / canvas.width;
+            const imageData = canvas.toDataURL('image/png');
+
+            let remainingHeight = imageHeight;
+            let positionY = margin;
+            pdf.addImage(imageData, 'PNG', margin, positionY, usableWidth, imageHeight, undefined, 'FAST');
+            remainingHeight -= (pageHeight - margin * 2);
+
+            while (remainingHeight > 0) {
+                positionY = margin - (imageHeight - remainingHeight);
+                pdf.addPage();
+                pdf.addImage(imageData, 'PNG', margin, positionY, usableWidth, imageHeight, undefined, 'FAST');
+                remainingHeight -= (pageHeight - margin * 2);
+            }
+
+            pdf.save(buildRoomCustomerAnalysisExportFileName('pdf'));
+        });
+    } catch (err) {
+        alert(err?.message || '导出 PDF 失败，请稍后重试');
+    } finally {
+        setRoomCustomerAnalysisExportState({ visible: hasContent, disabled: false });
+    }
+}
+
+function refreshShellMessageBadgeSoon() {
+    if (typeof Auth === 'undefined' || typeof Auth.refreshMessageBadge !== 'function') return;
+    Auth.refreshMessageBadge({ silent: true }).catch(() => {});
+}
+
 function setSessionRecapButtonState({ label, disabled = false, locked = false, tone = 'primary', loading = false } = {}) {
     const btn = document.getElementById('generateSessionRecapBtn');
     if (!btn) return;
@@ -1465,8 +1656,10 @@ async function pollSessionAiJobStatus(jobId, roomId, sessionId) {
         clearSessionAiJobPolling();
         await renderSessionRecap(roomId, sessionId);
         if (data.job?.status === 'completed') {
+            refreshShellMessageBadgeSoon();
             addSystemMessage('AI直播复盘已完成，可直接查看结果。');
         } else if (data.job?.status === 'failed') {
+            refreshShellMessageBadgeSoon();
             addSystemMessage(`AI直播复盘处理失败：${data.job.errorMessage || '请稍后重试'}`);
         }
     } catch (err) {
@@ -2113,14 +2306,19 @@ async function generateSessionAiReview(force = false) {
 }
 
 // All-Time Leaderboards Functions
-async function loadAlltimeLeaderboards(roomId) {
+async function loadAlltimeLeaderboards(roomId, requestId = currentRoomLoadRequestId) {
+    const safeRoomId = String(roomId || '').trim();
+    if (!safeRoomId || !isActiveRoomLoad(safeRoomId, requestId)) return;
     try {
-        const data = await $.get(`/api/rooms/${roomId}/alltime-leaderboards`);
-        renderAlltimeTable('#alltimeGiftersTable tbody', data.gifters, '💎', 'value', roomId);
-        renderAlltimeTable('#alltimeChattersTable tbody', data.chatters, '💬', 'count', roomId);
-        renderAlltimeTable('#alltimeLikersTable tbody', data.likers, '❤️', 'count', roomId);
+        const data = await $.get(`/api/rooms/${safeRoomId}/alltime-leaderboards`);
+        if (!isActiveRoomLoad(safeRoomId, requestId)) return;
+        renderAlltimeTable('#alltimeGiftersTable tbody', data.gifters, '💎', 'value', safeRoomId);
+        renderAlltimeTable('#alltimeChattersTable tbody', data.chatters, '💬', 'count', safeRoomId);
+        renderAlltimeTable('#alltimeLikersTable tbody', data.likers, '❤️', 'count', safeRoomId);
     } catch (err) {
+        if (!isActiveRoomLoad(safeRoomId, requestId)) return;
         console.error('Failed to load all-time leaderboards:', err);
+        renderAlltimeStatusTable('历史排行榜加载失败，请稍后重试', 'error');
     }
 }
 
@@ -2156,8 +2354,8 @@ function localizeRoomCustomerAnalysisText(value) {
         ['room_lrfm', '本房LRFM'],
         ['clv_current_room_30d', '近30天本房客户价值'],
         ['abc_current_room', '本房ABC分层'],
-        ['currentRoomValueShare30d', '近30天本房贡献占比'],
-        ['otherRoomsValueShare30d', '近30天其他房间贡献占比'],
+        ['currentRoomValueShare30d', '近30天该客户总贡献里投向本房的占比'],
+        ['otherRoomsValueShare30d', '近30天该客户总贡献里投向其他房间的占比'],
         ['giftTrend7dVsPrev7d', '近7天礼物趋势（较前7天）'],
         ['watchTrend7dVsPrev7d', '近7天观看趋势（较前7天）'],
         ['danmuTrend7dVsPrev7d', '近7天弹幕趋势（较前7天）'],
@@ -2204,8 +2402,10 @@ function localizeRoomCustomerAnalysisText(value) {
     const formatPercent = numeric => `${String((numeric * 100).toFixed(2)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')}%`;
     const formatTopPercent = numeric => `前${String(numeric.toFixed(1)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')}%`;
 
-    replaceLabelNumber('近30天本房贡献占比', numeric => `近30天本房贡献占比约${formatPercent(numeric)}`);
-    replaceLabelNumber('近30天其他房间贡献占比', numeric => `近30天其他房间贡献占比约${formatPercent(numeric)}`);
+    replaceLabelNumber('近30天本房贡献占比', numeric => `近30天该客户总贡献里投向本房的占比约${formatPercent(numeric)}`);
+    replaceLabelNumber('近30天该客户总贡献里投向本房的占比', numeric => `近30天该客户总贡献里投向本房的占比约${formatPercent(numeric)}`);
+    replaceLabelNumber('近30天其他房间贡献占比', numeric => `近30天该客户总贡献里投向其他房间的占比约${formatPercent(numeric)}`);
+    replaceLabelNumber('近30天该客户总贡献里投向其他房间的占比', numeric => `近30天该客户总贡献里投向其他房间的占比约${formatPercent(numeric)}`);
     replaceLabelNumber('近7天礼物趋势（较前7天）', numeric => Math.abs(numeric) < 0.005 ? '近7天礼物趋势（较前7天）基本持平' : `近7天礼物趋势（较前7天）${numeric > 0 ? '增长约' : '下降约'}${formatPercent(Math.abs(numeric))}`);
     replaceLabelNumber('近7天观看趋势（较前7天）', numeric => Math.abs(numeric) < 0.005 ? '近7天观看趋势（较前7天）基本持平' : `近7天观看趋势（较前7天）${numeric > 0 ? '增长约' : '下降约'}${formatPercent(Math.abs(numeric))}`);
     replaceLabelNumber('近7天弹幕趋势（较前7天）', numeric => Math.abs(numeric) < 0.005 ? '近7天弹幕趋势（较前7天）基本持平' : `近7天弹幕趋势（较前7天）${numeric > 0 ? '增长约' : '下降约'}${formatPercent(Math.abs(numeric))}`);
@@ -2335,7 +2535,7 @@ function renderRoomCustomerAnalysisResult(resultText, analysisPayload = null) {
 
     const analysis = normalizeRoomCustomerAnalysisPayload(analysisPayload);
     if (!analysis) {
-        wrap.innerHTML = `<div class="whitespace-pre-wrap leading-6 text-base-content/80">${escapeRecapHtml(resultText || '点击分析按钮开始生成客户分析...')}</div>`;
+        wrap.innerHTML = `<div class="whitespace-pre-wrap leading-6 text-base-content/80">${escapeRecapHtml(resultText || '点击开始客户价值深度挖掘...')}</div>`;
         return;
     }
 
@@ -2351,34 +2551,27 @@ function renderRoomCustomerAnalysisResult(resultText, analysisPayload = null) {
         <div class="space-y-4">
             ${analysis.summary ? `
                 <div class="rounded-box border border-primary/20 bg-gradient-to-br from-primary/10 via-base-100 to-base-100 p-4">
-                    <div class="text-[11px] font-semibold tracking-wide text-base-content/55 mb-2">客户总结</div>
+                    <div class="text-[11px] font-semibold tracking-wide text-base-content/55 mb-2">直接结论</div>
                     <div class="text-sm leading-7 text-base-content/88">${escapeRecapHtml(analysis.summary)}</div>
                 </div>
             ` : ''}
             ${overviewItems ? `<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2">${overviewItems}</div>` : ''}
             ${analysis.tags.length ? `
                 <div class="rounded-box border border-base-300 bg-base-100/90 px-4 py-3">
-                    <div class="text-[11px] font-semibold text-base-content/55 mb-2">运营标签</div>
+                    <div class="text-[11px] font-semibold text-base-content/55 mb-2">客户标签</div>
                     <div class="flex flex-wrap gap-2">
                         ${analysis.tags.map(tag => `<span class="badge badge-outline badge-sm">${escapeRecapHtml(tag)}</span>`).join('')}
                     </div>
                 </div>
             ` : ''}
             <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                ${renderRoomCustomerAnalysisListCard('关键信号', analysis.keySignals, 'primary', '聚焦当前最值得主播和运营关注的客户变化')}
-                ${renderRoomCustomerAnalysisListCard('建议动作', analysis.recommendedActions, 'success', '强调谁来做、何时做、具体怎么做')}
-            </div>
-            <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                ${renderRoomCustomerAnalysisListCard('模型判断依据', analysis.modelEvidence, 'primary', '围绕 LRFM、ABC、价值分层给出解释')}
-                ${renderRoomCustomerAnalysisListCard('价值贡献依据', analysis.contributionEvidence, 'success', '围绕贡献占比、送礼强度、排名强弱给出说明')}
-                ${renderRoomCustomerAnalysisListCard('风险趋势依据', analysis.riskEvidence, 'warning', '围绕跨房流向、趋势变化、流失风险给出说明')}
-                ${renderRoomCustomerAnalysisListCard('互动语料观察', analysis.interactionEvidence, 'base', '围绕互动深度、聊天情绪、语料信号给出说明')}
+                ${renderRoomCustomerAnalysisListCard('重点结论', analysis.keySignals, 'primary', '只保留当前最值得主播和运营关注的判断')}
+                ${renderRoomCustomerAnalysisListCard('下一步动作', analysis.recommendedActions, 'success', '直接告诉你现在该怎么接、怎么跟、怎么转化')}
             </div>
             <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
                 ${renderRoomCustomerAnalysisListCard('主播承接话术', analysis.outreachScript, 'warning', '主播或场控可直接使用的短句')}
-                ${renderRoomCustomerAnalysisListCard('执行禁忌', analysis.forbiddenActions, 'error', '避免误伤关系或过度施压')}
+                ${renderRoomCustomerAnalysisListCard('注意事项', analysis.forbiddenActions, 'error', '避免误伤关系或过度施压')}
             </div>
-            ${renderRoomCustomerAnalysisListCard('补充事实依据', analysis.evidence, 'base', '仅展示未归入以上四类的补充事实')}
         </div>
     `;
 }
@@ -2387,12 +2580,12 @@ function setRoomCustomerAnalysisButtonsPending(pending, isProcessing = false) {
     const runBtn = document.getElementById('runRoomCustomerAnalysisBtn');
     const rerunBtn = document.getElementById('rerunRoomCustomerAnalysisBtn');
     const hasAnalysisResult = Boolean(currentRoomCustomerAnalysisState?.hasAnalysisResult);
-    const idleLabel = hasAnalysisResult ? '重新分析' : '分析';
+    const idleLabel = hasAnalysisResult ? '重新挖掘' : '开始挖掘';
     if (runBtn) {
         runBtn.disabled = Boolean(pending);
         runBtn.classList.toggle('loading', Boolean(pending) && Boolean(isProcessing));
         runBtn.innerHTML = pending
-            ? (isProcessing ? '后台分析中...' : '处理中...')
+            ? (isProcessing ? '后台挖掘中...' : '处理中...')
             : `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>${idleLabel}`;
     }
     if (rerunBtn) {
@@ -2415,10 +2608,11 @@ function showRoomCustomerAnalysisPending(job) {
     const currentStep = job?.currentStep || (isProcessing ? '正在后台处理中' : '等待后台调度');
     const wrap = document.getElementById('roomCustomerAnalysisResult');
     if (!wrap) return;
+    setRoomCustomerAnalysisExportState({ visible: false });
     wrap.innerHTML = `
         <div class="rounded-box border border-base-300 bg-base-100/95 p-4 space-y-3">
             <div class="flex items-center justify-between gap-3">
-                <div class="text-[10px] uppercase tracking-wide text-base-content/45">后台工作状态</div>
+                <div class="text-[10px] uppercase tracking-wide text-base-content/45">深挖任务状态</div>
                 <span class="badge ${isProcessing ? 'badge-primary' : 'badge-warning'} badge-outline badge-sm">${escapeRecapHtml(isProcessing ? '处理中' : '排队中')}</span>
             </div>
             <div class="rounded-box bg-base-200/80 px-4 py-3">
@@ -2428,7 +2622,7 @@ function showRoomCustomerAnalysisPending(job) {
                 </div>
                 <progress class="progress progress-primary w-full mt-3" value="${progress}" max="100"></progress>
             </div>
-            <div class="text-sm leading-6 text-base-content/70">已切换为后台分析，完成后会通过消息通知提醒。</div>
+            <div class="text-sm leading-6 text-base-content/70">已切换为后台深度挖掘，完成后会通过消息通知提醒。</div>
         </div>
     `;
     const statusEl = document.getElementById('roomCustomerAnalysisCacheStatus');
@@ -2449,7 +2643,8 @@ async function loadRoomCustomerAnalysis(roomId, userId) {
     const wrap = document.getElementById('roomCustomerAnalysisResult');
     const statusEl = document.getElementById('roomCustomerAnalysisCacheStatus');
     const metaEl = document.getElementById('roomCustomerAnalysisMeta');
-    if (wrap) wrap.innerHTML = '<span class="loading loading-dots loading-sm"></span> 正在加载客户分析...';
+    setRoomCustomerAnalysisExportState({ visible: false });
+    if (wrap) wrap.innerHTML = '<span class="loading loading-dots loading-sm"></span> 正在加载客户价值深度挖掘结果...';
     if (statusEl) statusEl.textContent = '';
     if (metaEl) {
         metaEl.style.display = 'none';
@@ -2458,7 +2653,7 @@ async function loadRoomCustomerAnalysis(roomId, userId) {
 
     const res = await Auth.apiFetch(`/api/rooms/${encodeURIComponent(safeRoomId)}/customer-analysis/${encodeURIComponent(safeUserId)}`);
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || '获取客户分析失败');
+    if (!res.ok) throw new Error(data.error || '获取客户价值深度挖掘结果失败');
     if (currentRoomCustomerAnalysisState.roomId !== safeRoomId || currentRoomCustomerAnalysisState.userId !== safeUserId) return;
 
     if (data.aiJob && ['queued', 'processing'].includes(String(data.aiJob.status || '').toLowerCase())) {
@@ -2470,13 +2665,13 @@ async function loadRoomCustomerAnalysis(roomId, userId) {
     clearRoomCustomerAnalysisJobPolling();
     currentRoomCustomerAnalysisState.hasAnalysisResult = Boolean(data.analyzedAt && (data.analysis || data.result));
     setRoomCustomerAnalysisButtonsPending(false);
-    renderRoomCustomerAnalysisResult(data.result || '点击分析按钮开始生成客户分析...', data.analysis || null);
+    renderRoomCustomerAnalysisResult(data.result || '点击开始客户价值深度挖掘...', data.analysis || null);
+    setRoomCustomerAnalysisExportState({ visible: currentRoomCustomerAnalysisState.hasAnalysisResult, disabled: false });
 
     const sourceMap = { member_cache: '当前账号缓存', api: '实时分析' };
     if (statusEl && data.source) statusEl.textContent = `(${sourceMap[data.source] || data.source})`;
 
     const metaParts = [];
-    if (data.chatCount) metaParts.push(`语料 ${Number(data.chatCount || 0)} 条`);
     if (data.analyzedAt) metaParts.push(`分析于 ${new Date(data.analyzedAt).toLocaleString('zh-CN')}`);
     if (metaParts.length && metaEl) {
         metaEl.style.display = '';
@@ -2505,10 +2700,13 @@ async function pollRoomCustomerAnalysisJobStatus(jobId, roomId, userId) {
 
         clearRoomCustomerAnalysisJobPolling();
         if (String(job.status || '').toLowerCase() === 'completed') {
+            refreshShellMessageBadgeSoon();
             await loadRoomCustomerAnalysis(roomId, userId);
+            addSystemMessage('客户价值深度挖掘已完成，可直接查看结果。');
             return;
         }
 
+        refreshShellMessageBadgeSoon();
         const metaEl = document.getElementById('roomCustomerAnalysisMeta');
         const statusEl = document.getElementById('roomCustomerAnalysisCacheStatus');
         if (statusEl) statusEl.textContent = '(后台失败)';
@@ -2516,8 +2714,10 @@ async function pollRoomCustomerAnalysisJobStatus(jobId, roomId, userId) {
             metaEl.style.display = '';
             metaEl.textContent = job.errorMessage || '后台处理失败，请稍后重试';
         }
+        setRoomCustomerAnalysisExportState({ visible: false });
         renderRoomCustomerAnalysisResult(`错误: ${job.errorMessage || '后台处理失败，请稍后重试'}`, null);
         setRoomCustomerAnalysisButtonsPending(false);
+        addSystemMessage(`客户价值深度挖掘处理失败：${job.errorMessage || '请稍后重试'}`);
     } catch (err) {
         console.error('pollRoomCustomerAnalysisJobStatus error:', err);
     }
@@ -2556,17 +2756,19 @@ async function openRoomCustomerAnalysisModal(roomId, userId, nickname = '', uniq
     if (tipEl) {
         const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
         tipEl.textContent = isAdmin
-            ? '管理员发起房间客户分析不扣点。'
-            : `首次生成默认消耗 ${DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS} AI点；命中当前账号 + 当前房间缓存再次查看不重复扣点。`;
+            ? '管理员发起客户价值深度挖掘不扣点。'
+            : `首次深挖默认消耗 ${DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS} AI点；命中当前账号 + 当前房间缓存再次查看不重复扣点。`;
     }
 
     document.getElementById('roomCustomerAnalysisModal')?.showModal();
+    setRoomCustomerAnalysisExportState({ visible: false });
     setRoomCustomerAnalysisButtonsPending(false);
     await loadRoomCustomerAnalysis(safeRoomId, safeUserId);
 }
 
 function closeRoomCustomerAnalysisModal() {
     clearRoomCustomerAnalysisJobPolling();
+    setRoomCustomerAnalysisExportState({ visible: false });
     currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '', hasAnalysisResult: false };
     const modal = document.getElementById('roomCustomerAnalysisModal');
     if (modal?.open) modal.close();
@@ -2580,7 +2782,7 @@ async function runRoomCustomerAnalysis(force = null) {
     const resolvedForce = typeof force === 'boolean' ? force : Boolean(currentRoomCustomerAnalysisState.hasAnalysisResult);
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
     if (resolvedForce && !isAdmin) {
-        const confirmed = window.confirm(`重新分析将重新消耗 ${DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS} AI点，是否继续？`);
+        const confirmed = window.confirm(`重新挖掘将重新消耗 ${DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS} AI点，是否继续？`);
         if (!confirmed) return;
     }
 
@@ -2591,7 +2793,8 @@ async function runRoomCustomerAnalysis(force = null) {
         metaEl.style.display = 'none';
         metaEl.textContent = '';
     }
-    renderRoomCustomerAnalysisResult('正在提交房间客户分析任务...', null);
+    setRoomCustomerAnalysisExportState({ visible: false });
+    renderRoomCustomerAnalysisResult('正在提交客户价值深度挖掘任务...', null);
     setRoomCustomerAnalysisButtonsPending(true, false);
 
     try {
@@ -2601,7 +2804,7 @@ async function runRoomCustomerAnalysis(force = null) {
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
-            const error = new Error(data.error || '提交房间客户分析失败');
+            const error = new Error(data.error || '提交客户价值深度挖掘失败');
             error.code = data.code || '';
             throw error;
         }
@@ -2616,17 +2819,17 @@ async function runRoomCustomerAnalysis(force = null) {
         if (data.skipped) {
             currentRoomCustomerAnalysisState.hasAnalysisResult = false;
             renderRoomCustomerAnalysisResult(data.result, null);
-            if (statusEl) statusEl.textContent = `(语料 ${Number(data.chatCount || 0)} 条)`;
+            setRoomCustomerAnalysisExportState({ visible: false });
             setRoomCustomerAnalysisButtonsPending(false);
             return;
         }
 
         currentRoomCustomerAnalysisState.hasAnalysisResult = Boolean(data.analysis || data.result);
         renderRoomCustomerAnalysisResult(data.result, data.analysis || null);
+        setRoomCustomerAnalysisExportState({ visible: currentRoomCustomerAnalysisState.hasAnalysisResult, disabled: false });
         const sourceMap = { member_cache: '当前账号缓存', api: '实时分析' };
         if (statusEl) statusEl.textContent = `(${sourceMap[data.source] || (data.cached ? '缓存' : '实时分析')})`;
         const metaParts = [];
-        if (data.chatCount) metaParts.push(`语料 ${Number(data.chatCount || 0)} 条`);
         if (data.analyzedAt) metaParts.push(`分析于 ${new Date(data.analyzedAt).toLocaleString('zh-CN')}`);
         if (metaParts.length && metaEl) {
             metaEl.style.display = '';
@@ -2634,9 +2837,10 @@ async function runRoomCustomerAnalysis(force = null) {
         }
         setRoomCustomerAnalysisButtonsPending(false);
     } catch (err) {
+        setRoomCustomerAnalysisExportState({ visible: false });
         renderRoomCustomerAnalysisResult(err.code === 'AI_CREDITS_EXHAUSTED'
             ? (err.message || 'AI 点数不足，请购买点数包或升级套餐')
-            : `错误: ${err.message || '提交房间客户分析失败'}`, null);
+            : `错误: ${err.message || '提交客户价值深度挖掘失败'}`, null);
         setRoomCustomerAnalysisButtonsPending(false);
     }
 }
@@ -2658,7 +2862,7 @@ function renderAlltimeTable(selector, data, icon, valueKey, roomId = currentDeta
             ? `<a href="javascript:void(0)" class="link link-hover text-accent" onclick="searchUserExact('${escapeInlineJsString(uniqueId)}')" title="点击精确搜索该用户">${escapeRecapHtml(nickname)}</a>`
             : `${escapeRecapHtml(nickname)}`;
         const aiButton = userId
-            ? `<button class="btn btn-ghost btn-xs border border-base-300 hover:border-primary/50" onclick="openRoomCustomerAnalysisModal('${escapeInlineJsString(roomId)}', '${escapeInlineJsString(userId)}', '${escapeInlineJsString(nickname)}', '${escapeInlineJsString(uniqueId)}')">AI</button>`
+            ? `<button class="btn btn-ghost btn-xs border border-base-300 hover:border-primary/50" title="客户价值深度挖掘" onclick="openRoomCustomerAnalysisModal('${escapeInlineJsString(roomId)}', '${escapeInlineJsString(userId)}', '${escapeInlineJsString(nickname)}', '${escapeInlineJsString(uniqueId)}')">深挖</button>`
             : '';
         tbody.append(`
             <tr>

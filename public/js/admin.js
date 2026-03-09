@@ -2352,7 +2352,7 @@ async function loadPromptTemplates(force = false) {
                 <div class="text-xs text-base-content/50 mb-3">可用变量：${(item.variables || []).map(v => `<code>${escapeHtml(`{{${v}}}`)}</code>`).join('、') || '无'}</div>
                 ${item.key === 'customer_analysis_review' ? `
                     <div class="rounded-box border border-base-300 bg-base-200/80 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
-                        该模板用于「房间详情 / 历史排行榜 / AI客户分析」。系统已经提前计算好客户数值、时间、排行与模型标签；编辑时请让 AI 只负责解释、总结、策略和话术，不要直出英文键名，也不要让 AI 自己重算事实。数据依据建议拆成「模型判断依据 / 价值贡献依据 / 风险趋势依据 / 互动语料观察」四个区域，避免全部堆到一个 evidence 列表里。
+                        该模板用于「房间详情 / 历史排行榜 / 客户价值深度挖掘」。系统已经提前计算好客户数值、时间、排行与模型标签；编辑时请让 AI 只负责输出直接结论、重点结论、下一步动作和主播话术，不要直出英文键名，也不要让 AI 自己重算事实。涉及贡献占比时，请明确写成“该客户近30天总贡献里投向本房/其他房间的占比”，避免歧义。
                     </div>
                 ` : ''}
                 <textarea id="prompt-template-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[22rem] font-mono text-xs leading-6">${escapeHtml(item.content || '')}</textarea>
