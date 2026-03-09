@@ -1458,7 +1458,7 @@ async function exportRoomCustomerAnalysisAsPdf() {
 
 function refreshShellMessageBadgeSoon() {
     if (typeof Auth === 'undefined' || typeof Auth.refreshMessageBadge !== 'function') return;
-    Auth.refreshMessageBadge({ silent: true }).catch(() => {});
+    Auth.refreshMessageBadge({ silent: true }).catch(() => { });
 }
 
 function setSessionRecapButtonState({ label, disabled = false, locked = false, tone = 'primary', loading = false } = {}) {
@@ -2731,7 +2731,7 @@ function startRoomCustomerAnalysisPolling(jobId, roomId, userId) {
     clearRoomCustomerAnalysisJobPolling();
     currentRoomCustomerAnalysisJobId = Number(jobId || 0);
     roomCustomerAnalysisJobPollTimer = window.setInterval(() => {
-        pollRoomCustomerAnalysisJobStatus(jobId, roomId, userId).catch(() => {});
+        pollRoomCustomerAnalysisJobStatus(jobId, roomId, userId).catch(() => { });
     }, 10000);
 }
 
@@ -2864,7 +2864,7 @@ function renderAlltimeTable(selector, data, icon, valueKey, roomId = currentDeta
             ? `<a href="javascript:void(0)" class="link link-hover text-accent" onclick="searchUserExact('${escapeInlineJsString(uniqueId)}')" title="点击精确搜索该用户">${escapeRecapHtml(nickname)}</a>`
             : `${escapeRecapHtml(nickname)}`;
         const aiButton = userId
-            ? `<button class="btn btn-ghost btn-xs border border-base-300 hover:border-primary/50" title="客户价值深度挖掘" onclick="openRoomCustomerAnalysisModal('${escapeInlineJsString(roomId)}', '${escapeInlineJsString(userId)}', '${escapeInlineJsString(nickname)}', '${escapeInlineJsString(uniqueId)}')">深挖</button>`
+            ? `<button class="btn btn-ghost btn-xs border border-base-300 hover:border-primary/50" title="客户价值深度挖掘" onclick="openRoomCustomerAnalysisModal('${escapeInlineJsString(roomId)}', '${escapeInlineJsString(userId)}', '${escapeInlineJsString(nickname)}', '${escapeInlineJsString(uniqueId)}')">AI</button>`
             : '';
         tbody.append(`
             <tr>
