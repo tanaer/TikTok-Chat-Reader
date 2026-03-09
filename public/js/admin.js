@@ -14,6 +14,7 @@ const ADMIN_SECTION_META = Object.freeze({
     eulerKeys: { title: 'Euler API Keys', permission: 'euler_keys.manage' },
     sessionMaintenance: { title: '场次运维', permission: 'session_maintenance.manage' },
     settings: { title: '系统设置', permission: 'settings.manage' },
+    schemeASettings: { title: '性能优化', permission: 'settings.manage' },
     smtpServices: { title: '邮箱服务', permission: 'smtp.manage' },
     adminAccess: { title: '管理员管理', permission: 'admins.manage' },
     docs: { title: '系统文档', permission: 'docs.manage' }
@@ -350,6 +351,7 @@ function runSectionLoader(name) {
     else if (name === 'plans') { loadPlans(); loadAddons(); loadAiCreditPackages(); }
     else if (name === 'gifts') loadAdminGiftConfig();
     else if (name === 'settings') loadSettingsForm();
+    else if (name === 'schemeASettings') loadSettingsForm();
     else if (name === 'sessionMaintenance') loadSessionMaintenanceSection();
     else if (name === 'smtpServices') loadSmtpServices();
     else if (name === 'aiWork') loadAdminAiWorkJobs(1);
@@ -952,6 +954,81 @@ async function deleteAddon(id) {
 // ==================== Settings ====================
 let adminSettingsGroups = [];
 let adminSettingsSecretConfigured = {};
+let adminSettingsActiveGroupByContainer = {};
+
+function renderAdminSettingHelpIcon(detailText) {
+    if (!detailText) return '';
+    return `
+        <span
+            class="ml-2 inline-flex h-5 w-5 items-center justify-center rounded-full border border-warning/40 bg-warning/10 text-[11px] font-bold text-warning cursor-help align-middle"
+            title="${escapeHtml(detailText)}"
+            aria-label="功能说明"
+        >!</span>
+    `;
+}
+
+function renderAdminSettingLabel(label, detailText, className = 'font-medium') {
+    return `<span class="${escapeHtml(className)}">${escapeHtml(label)}${renderAdminSettingHelpIcon(detailText)}</span>`;
+}
+
+function renderAdminSettingDescription(hintText = '', detailText = '') {
+    const normalizedHint = String(hintText || '').trim();
+    const normalizedDetail = String(detailText || '').trim();
+    const detailOnly = normalizedDetail && normalizedDetail !== normalizedHint ? normalizedDetail : '';
+
+    if (!normalizedHint && !detailOnly) {
+        return '';
+    }
+
+    return `
+        <div class="mt-2 space-y-1.5">
+            ${normalizedHint ? `<div class="text-xs text-base-content/60 leading-6">${escapeHtml(normalizedHint)}</div>` : ''}
+            ${detailOnly ? `<div class="rounded-xl border border-warning/20 bg-warning/5 px-3 py-2 text-xs text-base-content/75 leading-6">${escapeHtml(detailOnly)}</div>` : ''}
+        </div>
+    `;
+}
+
+function renderAdminSettingActions(field) {
+    if (field.key !== 'REDIS_URL') return '';
+    return `
+        <div class="mt-3 flex flex-wrap items-center gap-3">
+            <button type="button" class="btn btn-xs btn-outline btn-info" onclick="testRedisSettingsConnection(this)">测试 Redis 是否可用</button>
+            <span class="text-xs text-base-content/60 leading-6" data-redis-test-result>未测试</span>
+        </div>
+    `;
+}
+
+function isSchemeASettingsGroup(group) {
+    return String(group?.key || '').startsWith('schemeA');
+}
+
+function getAdminSettingsGroupsByScope(scope = 'core') {
+    return (Array.isArray(adminSettingsGroups) ? adminSettingsGroups : []).filter(group => (
+        scope === 'schemeA' ? isSchemeASettingsGroup(group) : !isSchemeASettingsGroup(group)
+    ));
+}
+
+function switchAdminSettingsTab(containerId, groupKey) {
+    const normalizedContainerId = String(containerId || '').trim();
+    const normalizedGroupKey = String(groupKey || '').trim();
+    if (!normalizedContainerId || !normalizedGroupKey) return false;
+
+    adminSettingsActiveGroupByContainer[normalizedContainerId] = normalizedGroupKey;
+    const container = document.getElementById(normalizedContainerId);
+    if (!container) return false;
+
+    container.querySelectorAll('[data-settings-tab-button]').forEach(button => {
+        const isActive = button.dataset.settingsTabButton === normalizedGroupKey;
+        button.classList.toggle('tab-active', isActive);
+        button.setAttribute('aria-selected', isActive ? 'true' : 'false');
+    });
+
+    container.querySelectorAll('[data-settings-tab-panel]').forEach(panel => {
+        panel.classList.toggle('hidden', panel.dataset.settingsTabPanel !== normalizedGroupKey);
+    });
+
+    return false;
+}
 
 function renderAdminSettingField(field, settings) {
     const rawValue = settings[field.key] !== undefined ? settings[field.key] : '';
@@ -959,16 +1036,17 @@ function renderAdminSettingField(field, settings) {
     const hintText = [field.hint || '', field.restartRequired ? '保存后通常需要重启主服务或重拉子 worker。' : '']
         .filter(Boolean)
         .join(' ');
+    const detailText = field.tooltip || hintText;
 
     if (field.type === 'toggle') {
         const checked = value === true || value === 'true' || value === 1 || value === '1';
         return `
-            <label class="label cursor-pointer justify-start gap-4 rounded-2xl border border-base-300 bg-base-100 px-4 py-3">
-                <input type="checkbox" class="toggle toggle-primary" data-key="${escapeHtml(field.key)}" ${checked ? 'checked' : ''}>
-                <span class="flex-1">
-                    <span class="block font-medium">${escapeHtml(field.label)}</span>
-                    <span class="block text-xs text-base-content/60 mt-1 leading-6">${escapeHtml(hintText)}</span>
-                </span>
+            <label class="label cursor-pointer justify-start gap-4 rounded-2xl border border-base-300 bg-base-100 px-4 py-3 items-start">
+                <input type="checkbox" class="toggle toggle-primary mt-1" data-key="${escapeHtml(field.key)}" ${checked ? 'checked' : ''}>
+                <div class="flex-1 min-w-0">
+                    <span class="block">${renderAdminSettingLabel(field.label, detailText)}</span>
+                    ${renderAdminSettingDescription(hintText, detailText)}
+                </div>
             </label>
         `;
     }
@@ -977,11 +1055,11 @@ function renderAdminSettingField(field, settings) {
         const options = Array.isArray(field.options) ? field.options : [];
         return `
             <label class="form-control rounded-2xl border border-base-300 bg-base-100 px-4 py-3">
-                <span class="label-text font-medium">${escapeHtml(field.label)}</span>
+                <span class="label-text">${renderAdminSettingLabel(field.label, detailText, 'label-text font-medium')}</span>
                 <select class="select select-bordered mt-2" data-key="${escapeHtml(field.key)}">
                     ${options.map(option => `<option value="${escapeHtml(option.value)}" ${String(value) === String(option.value) ? 'selected' : ''}>${escapeHtml(option.label)}</option>`).join('')}
                 </select>
-                <span class="label-text-alt text-base-content/60 mt-2 leading-6">${escapeHtml(hintText)}</span>
+                ${renderAdminSettingDescription(hintText, detailText)}
             </label>
         `;
     }
@@ -996,7 +1074,7 @@ function renderAdminSettingField(field, settings) {
 
     return `
         <label class="form-control rounded-2xl border border-base-300 bg-base-100 px-4 py-3">
-            <span class="label-text font-medium">${escapeHtml(field.label)}</span>
+            <span class="label-text">${renderAdminSettingLabel(field.label, detailText, 'label-text font-medium')}</span>
             <input
                 type="${escapeHtml(inputType)}"
                 class="input input-bordered mt-2"
@@ -1004,26 +1082,61 @@ function renderAdminSettingField(field, settings) {
                 value="${escapeHtml(displayValue)}"
                 placeholder="${escapeHtml(placeholder)}"
             >
-            <span class="label-text-alt text-base-content/60 mt-2 leading-6">${escapeHtml(hintText)}</span>
+            ${renderAdminSettingActions(field)}
+            ${renderAdminSettingDescription(hintText, detailText)}
         </label>
     `;
 }
 
-function renderAdminSettingsForm(groups, settings) {
-    const form = document.getElementById('settings-form');
+function renderAdminSettingsForm(groups, settings, containerId = 'settings-form') {
+    const form = document.getElementById(containerId);
     if (!form) return;
 
-    form.innerHTML = groups.map(group => `
-        <div class="rounded-[1.25rem] border border-base-300 bg-base-200/50 p-4">
-            <div class="mb-4">
-                <h4 class="font-semibold">${escapeHtml(group.title || '')}</h4>
-                <p class="text-xs text-base-content/60 mt-1 leading-6">${escapeHtml(group.description || '')}</p>
-            </div>
-            <div class="space-y-4">
-                ${(Array.isArray(group.fields) ? group.fields : []).map(field => renderAdminSettingField(field, settings)).join('')}
+    const normalizedGroups = Array.isArray(groups) ? groups : [];
+    if (normalizedGroups.length === 0) {
+        form.innerHTML = '<div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">当前分组暂无可配置项。</div>';
+        return;
+    }
+
+    const activeGroupKey = adminSettingsActiveGroupByContainer[containerId] && normalizedGroups.some(group => group.key === adminSettingsActiveGroupByContainer[containerId])
+        ? adminSettingsActiveGroupByContainer[containerId]
+        : String(normalizedGroups[0]?.key || '');
+    adminSettingsActiveGroupByContainer[containerId] = activeGroupKey;
+
+    const tabBar = normalizedGroups.length > 1 ? `
+        <div class="tabs tabs-boxed flex flex-wrap gap-2 bg-base-200/80 p-2 mb-4 rounded-2xl">
+            ${normalizedGroups.map(group => `
+                <button
+                    type="button"
+                    class="tab ${group.key === activeGroupKey ? 'tab-active' : ''}"
+                    data-settings-tab-button="${escapeHtml(group.key)}"
+                    aria-selected="${group.key === activeGroupKey ? 'true' : 'false'}"
+                    onclick="return switchAdminSettingsTab('${escapeHtml(containerId)}', '${escapeHtml(group.key)}')"
+                >${escapeHtml(group.title || '')}</button>
+            `).join('')}
+        </div>
+    ` : '';
+
+    const panels = normalizedGroups.map(group => `
+        <div data-settings-tab-panel="${escapeHtml(group.key)}" class="${group.key === activeGroupKey ? '' : 'hidden'}">
+            <div class="rounded-[1.25rem] border border-base-300 bg-base-200/50 p-4">
+                <div class="mb-4">
+                    <h4 class="font-semibold">${escapeHtml(group.title || '')}</h4>
+                    <p class="text-xs text-base-content/60 mt-1 leading-6">${escapeHtml(group.description || '')}</p>
+                </div>
+                <div class="space-y-4">
+                    ${(Array.isArray(group.fields) ? group.fields : []).map(field => renderAdminSettingField(field, settings)).join('')}
+                </div>
             </div>
         </div>
     `).join('');
+
+    form.innerHTML = `${tabBar}<div class="space-y-4">${panels}</div>`;
+}
+
+function renderAllAdminSettingsForms(settings) {
+    renderAdminSettingsForm(getAdminSettingsGroupsByScope('core'), settings, 'settings-form');
+    renderAdminSettingsForm(getAdminSettingsGroupsByScope('schemeA'), settings, 'schemea-settings-form');
 }
 
 async function loadSettingsForm() {
@@ -1033,12 +1146,15 @@ async function loadSettingsForm() {
 
     adminSettingsGroups = Array.isArray(data.groups) ? data.groups : [];
     adminSettingsSecretConfigured = data.secretConfigured || {};
-    renderAdminSettingsForm(adminSettingsGroups, data.settings || {});
+    renderAllAdminSettingsForms(data.settings || {});
 }
 
-async function saveSettings() {
+async function saveSettings(formSelector = '#settings-form') {
+    const normalizedSelector = String(formSelector || '#settings-form').startsWith('#')
+        ? String(formSelector || '#settings-form')
+        : `#${String(formSelector || 'settings-form')}`;
     const settings = {};
-    document.querySelectorAll('#settings-form [data-key]').forEach(el => {
+    document.querySelectorAll(`${normalizedSelector} [data-key]`).forEach(el => {
         const key = el.dataset.key;
         if (el.type === 'checkbox') settings[key] = el.checked;
         else settings[key] = el.value;
@@ -1056,6 +1172,57 @@ ${data.warning}` : data.message);
         return;
     }
     alert(data.error || '保存失败');
+}
+
+async function testRedisSettingsConnection(button) {
+    const wrapper = button?.closest('.form-control');
+    const input = wrapper?.querySelector('[data-key="REDIS_URL"]') || document.querySelector('#schemea-settings-form [data-key="REDIS_URL"]');
+    const resultEl = wrapper?.querySelector('[data-redis-test-result]');
+    const redisUrl = String(input?.value || '').trim();
+
+    if (!redisUrl) {
+        if (resultEl) {
+            resultEl.className = 'text-xs text-error leading-6';
+            resultEl.textContent = '请先填写 Redis URL';
+        }
+        return false;
+    }
+
+    if (button) {
+        button.disabled = true;
+        button.classList.add('loading');
+    }
+    if (resultEl) {
+        resultEl.className = 'text-xs text-base-content/60 leading-6';
+        resultEl.textContent = '测试中...';
+    }
+
+    try {
+        const res = await Auth.apiFetch('/api/admin/settings/redis/test', {
+            method: 'POST',
+            body: JSON.stringify({ redisUrl }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            throw new Error(data.error || data.message || 'Redis 测试失败');
+        }
+        if (resultEl) {
+            resultEl.className = 'text-xs text-success leading-6';
+            resultEl.textContent = data.message || `Redis 可用，延迟 ${data.latencyMs}ms`;
+        }
+    } catch (error) {
+        if (resultEl) {
+            resultEl.className = 'text-xs text-error leading-6';
+            resultEl.textContent = error.message || 'Redis 测试失败';
+        }
+    } finally {
+        if (button) {
+            button.disabled = false;
+            button.classList.remove('loading');
+        }
+    }
+
+    return false;
 }
 
 // ==================== Session Maintenance ====================
@@ -1260,18 +1427,18 @@ function renderSessionMaintenanceConfigForm() {
                     const value = config[field.key];
                     if (field.type === 'toggle') {
                         return `
-                            <label class="label cursor-pointer justify-start gap-4 rounded-2xl border border-base-300 bg-base-100 px-4 py-3">
-                                <input type="checkbox" class="toggle toggle-primary" data-session-maintenance-key="${field.key}" ${value ? 'checked' : ''}>
-                                <span class="flex-1">
-                                    <span class="block font-medium">${escapeHtml(field.label)}</span>
-                                    <span class="block text-xs text-base-content/60 mt-1 leading-6">${escapeHtml(field.hint || '')}</span>
-                                </span>
+                            <label class="label cursor-pointer justify-start gap-4 rounded-2xl border border-base-300 bg-base-100 px-4 py-3 items-start">
+                                <input type="checkbox" class="toggle toggle-primary mt-1" data-session-maintenance-key="${field.key}" ${value ? 'checked' : ''}>
+                                <div class="flex-1 min-w-0">
+                                    <span class="block">${renderAdminSettingLabel(field.label, field.tooltip || field.hint || '', 'font-medium')}</span>
+                                    ${renderAdminSettingDescription(field.hint || '', field.tooltip || field.hint || '')}
+                                </div>
                             </label>
                         `;
                     }
                     return `
                         <label class="form-control rounded-2xl border border-base-300 bg-base-100 px-4 py-3">
-                            <span class="label-text font-medium">${escapeHtml(field.label)}</span>
+                            <span class="label-text">${renderAdminSettingLabel(field.label, field.tooltip || field.hint || '', 'label-text font-medium')}</span>
                             <input
                                 type="number"
                                 class="input input-bordered mt-2"
@@ -1280,7 +1447,7 @@ function renderSessionMaintenanceConfigForm() {
                                 step="${field.step ?? 1}"
                                 value="${escapeHtml(value)}"
                             >
-                            <span class="label-text-alt text-base-content/60 mt-2 leading-6">${escapeHtml(field.hint || '')}</span>
+                            ${renderAdminSettingDescription(field.hint || '', field.tooltip || field.hint || '')}
                         </label>
                     `;
                 }).join('')}
@@ -1548,16 +1715,16 @@ async function loadSessionMaintenanceSection() {
 
 // ==================== SMTP Services ====================
 const smtpServiceFieldDefs = [
-    { key: 'name', label: '服务名称', type: 'text', placeholder: '主邮箱服务 / QQ 邮箱' },
-    { key: 'host', label: 'SMTP 服务器', type: 'text', placeholder: 'smtp.qq.com' },
-    { key: 'port', label: 'SMTP 端口', type: 'number', placeholder: '465' },
-    { key: 'secure', label: 'SSL/TLS', type: 'toggle' },
-    { key: 'username', label: 'SMTP 用户名', type: 'text', placeholder: 'your@email.com' },
-    { key: 'password', label: 'SMTP 密码/授权码', type: 'password', placeholder: '授权码' },
-    { key: 'fromEmail', label: '发件人地址', type: 'text', placeholder: '留空则使用 SMTP 用户名' },
-    { key: 'fromName', label: '发件人名称', type: 'text', placeholder: 'TikTok Monitor' },
-    { key: 'isActive', label: '启用该邮箱服务', type: 'toggle' },
-    { key: 'setAsDefault', label: '保存后设为默认', type: 'toggle', createOnly: true },
+    { key: 'name', label: '服务名称', type: 'text', placeholder: '主邮箱服务 / QQ 邮箱', hint: '后台识别该 SMTP 服务的备注名称。', tooltip: '仅用于后台识别和运维，不会直接暴露给普通用户。建议填写便于区分的名称，例如“腾讯企业邮主节点”或“QQ 邮箱备用”。' },
+    { key: 'host', label: 'SMTP 服务器', type: 'text', placeholder: 'smtp.qq.com', hint: 'SMTP 服务商提供的主机地址。', tooltip: '填写邮件服务商提供的 SMTP Host，例如 smtp.qq.com、smtp.exmail.qq.com 或 smtp.gmail.com。系统会据此建立发送连接。' },
+    { key: 'port', label: 'SMTP 端口', type: 'number', placeholder: '465', hint: 'SMTP 连接端口。', tooltip: '常见 SSL/TLS 端口为 465，STARTTLS 常用 587。端口需要与“SSL/TLS”开关和服务商要求匹配，否则测试连接会失败。' },
+    { key: 'secure', label: 'SSL/TLS', type: 'toggle', hint: '决定是否使用加密连接直连 SMTP。', tooltip: '开启时通常表示使用 SMTPS/SSL 直连模式（常配合 465 端口）；关闭时通常走普通连接或 STARTTLS 升级模式，具体以服务商要求为准。' },
+    { key: 'username', label: 'SMTP 用户名', type: 'text', placeholder: 'your@email.com', hint: 'SMTP 登录账号。', tooltip: '一般填写完整邮箱地址，也有少数服务商要求填写单独的账号名。该值用于 SMTP 登录认证，不一定等于最终发件人显示名称。' },
+    { key: 'password', label: 'SMTP 密码/授权码', type: 'password', placeholder: '授权码', hint: 'SMTP 登录密码或服务商签发的授权码。', tooltip: '很多邮箱服务不允许直接使用登录密码，而是要求单独生成 SMTP 授权码。请优先按服务商文档填写授权码。' },
+    { key: 'fromEmail', label: '发件人地址', type: 'text', placeholder: '留空则使用 SMTP 用户名', hint: '邮件头中显示的发件邮箱地址。', tooltip: '留空时默认使用 SMTP 用户名。若服务商允许代发或自定义发件地址，可在这里单独指定，但必须满足服务商的发信校验规则。' },
+    { key: 'fromName', label: '发件人名称', type: 'text', placeholder: 'TikTok Monitor', hint: '用户在邮箱中看到的发件人名称。', tooltip: '这是收件箱里展示的“发件人昵称”，例如“TikTok Monitor”或“系统通知中心”。不影响 SMTP 登录，只影响收件人看到的展示文案。' },
+    { key: 'isActive', label: '启用该邮箱服务', type: 'toggle', hint: '控制该 SMTP 节点是否参与发送与故障切换。', tooltip: '关闭后该服务会保留在后台，但不会参与正常发送、默认选择或故障切换；适合临时下线异常节点。' },
+    { key: 'setAsDefault', label: '保存后设为默认', type: 'toggle', createOnly: true, hint: '新增时可直接把该节点设为默认发信服务。', tooltip: '开启后，新增完成即把当前服务设为默认 SMTP 节点。默认服务会优先承担注册验证、找回密码等邮件发送任务。' },
 ];
 
 function formatSmtpStatusBadge(service) {
@@ -1609,15 +1776,16 @@ function renderSmtpPolicySummary() {
         </div>
     `;
 
+    const emailVerificationHint = '关闭后，注册流程不再要求邮箱验证码；邮件服务仍可用于找回密码和改绑邮箱。';
+    const emailVerificationTooltip = '开启后，新用户注册需要先完成邮箱验证码校验，适合提高注册账号质量；关闭后，注册流程不再强制邮箱验证，但找回密码、改绑邮箱等能力仍可继续使用邮件服务。';
+
     formEl.innerHTML = `
         <div class="form-control">
             <label class="label cursor-pointer justify-start gap-4">
-                <span class="label-text w-44">注册邮箱验证</span>
+                <span class="label-text w-44">${renderAdminSettingLabel('注册邮箱验证', emailVerificationTooltip, 'label-text font-medium')}</span>
                 <input type="checkbox" id="smtp-email-verification-enabled" class="toggle toggle-primary" ${smtpEmailSettings.emailVerificationEnabled ? 'checked' : ''}>
             </label>
-            <label class="label pt-2">
-                <span class="label-text-alt text-base-content/55">关闭后，注册流程不再要求邮箱验证码；邮件服务仍可用于找回密码和改绑邮箱。</span>
-            </label>
+            ${renderAdminSettingDescription(emailVerificationHint, emailVerificationTooltip)}
         </div>
     `;
 }
@@ -1704,16 +1872,17 @@ function renderSmtpServiceEditor() {
                 return `
                     <div class="form-control">
                         <label class="label cursor-pointer justify-start gap-4 rounded-box border border-base-300 px-4 py-3">
-                            <span class="label-text flex-1">${escapeHtml(field.label)}</span>
+                            <span class="label-text flex-1">${renderAdminSettingLabel(field.label, field.tooltip || field.hint || '', 'label-text font-medium')}</span>
                             <input type="checkbox" class="toggle toggle-primary" data-key="${escapeHtml(field.key)}" ${checked ? 'checked' : ''}>
                         </label>
+                        ${renderAdminSettingDescription(field.hint || '', field.tooltip || field.hint || '')}
                     </div>
                 `;
             }
 
             return `
                 <div class="form-control">
-                    <label class="label"><span class="label-text">${escapeHtml(field.label)}</span></label>
+                    <label class="label"><span class="label-text">${renderAdminSettingLabel(field.label, field.tooltip || field.hint || '', 'label-text font-medium')}</span></label>
                     <input
                         type="${field.type === 'password' ? 'password' : (field.type === 'number' ? 'number' : 'text')}"
                         class="input input-bordered"
@@ -1721,6 +1890,9 @@ function renderSmtpServiceEditor() {
                         value="${escapeHtml(value)}"
                         placeholder="${escapeHtml(field.placeholder || '')}"
                     >
+                    <label class="label pt-2">
+                        <span class="label-text-alt text-base-content/55">${escapeHtml(field.hint || '')}</span>
+                    </label>
                 </div>
             `;
         }).join('');

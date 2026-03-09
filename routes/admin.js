@@ -45,6 +45,7 @@ const {
     shouldPreserveSecretSetting,
     SCHEME_A_RUNTIME_SETTING_KEYS,
 } = require('../services/adminSettingsService');
+const { testRedisConnection } = require('../services/redisClient');
 
 const router = express.Router();
 
@@ -926,6 +927,23 @@ router.put('/settings', async (req, res) => {
     } catch (err) {
         console.error('[Admin] Save settings error:', err.message);
         res.status(500).json({ error: '保存失败' });
+    }
+});
+
+router.post('/settings/redis/test', async (req, res) => {
+    try {
+        const redisUrl = String(req.body?.redisUrl || '').trim();
+        const result = await testRedisConnection(redisUrl);
+        if (!result.success) {
+            return res.status(400).json(result);
+        }
+        return res.json({
+            message: `Redis 可用，延迟 ${result.latencyMs}ms`,
+            ...result,
+        });
+    } catch (err) {
+        console.error('[Admin] Test Redis error:', err.message);
+        return res.status(500).json({ error: 'Redis 测试失败' });
     }
 });
 
