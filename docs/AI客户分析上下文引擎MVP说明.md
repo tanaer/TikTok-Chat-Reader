@@ -150,6 +150,7 @@
 - AI 不得创造新的房间、日期、排行或分层标签
 - `valueLevelCurrentRoom`、`valueLevelGlobal` 必须直接沿用系统标签
 - `evidence` 必须引用系统字段、系统标签或系统数值
+- 最终面向用户的分析文案中，不应直接输出 `platform_lrfm`、`abc_current_room`、`otherRoomGrowthFlag` 这类英文键名，而应转写为“平台LRFM”“本房ABC分层”“其他房间增长信号”等中文业务表达
 - 输出必须为严格 JSON
 
 ### `session_recap_review`

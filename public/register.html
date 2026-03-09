@@ -54,6 +54,7 @@
                     <input type="password" id="confirmPassword" class="input input-bordered w-full" placeholder="再次输入密码" required>
                 </div>
                 <button type="submit" id="registerBtn" class="btn btn-primary w-full">
+                    <span id="registerBtnSpinner" class="loading loading-spinner loading-sm hidden" aria-hidden="true"></span>
                     <span id="registerBtnText">注册</span>
                 </button>
             </form>
@@ -87,6 +88,21 @@
 
         function hideError() {
             document.getElementById('errorMsg').classList.add('hidden');
+        }
+
+        function isValidEmail(value) {
+            return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+        }
+
+        function setRegisterLoading(loading, text = '注册') {
+            const btn = document.getElementById('registerBtn');
+            const btnText = document.getElementById('registerBtnText');
+            const btnSpinner = document.getElementById('registerBtnSpinner');
+
+            btn.disabled = loading;
+            btn.setAttribute('aria-busy', loading ? 'true' : 'false');
+            btnSpinner.classList.toggle('hidden', !loading);
+            btnText.textContent = text;
         }
 
         function setFieldStatus(field, message = '', tone = 'muted') {
@@ -148,7 +164,7 @@
                 if (!requireEmail) setFieldStatus('email');
                 return !requireEmail;
             }
-            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+            if (!isValidEmail(email)) {
                 if (!silent) setFieldStatus('email', '请输入有效的邮箱地址', 'error');
                 return false;
             }
@@ -204,6 +220,87 @@
             return true;
         }
 
+        async function validateRegisterAvailabilityOnSubmit({ username, email }) {
+            if (!username) {
+                setFieldStatus('username', '请输入用户名', 'error');
+                return { ok: false, error: '请输入用户名' };
+            }
+
+            if (username.length < 3 || username.length > 50) {
+                setFieldStatus('username', '用户名需为3-50个字符', 'error');
+                return { ok: false, error: '用户名需为3-50个字符' };
+            }
+
+            if (!email && emailVerificationRequired) {
+                setFieldStatus('email', '请输入邮箱地址', 'error');
+                return { ok: false, error: '请填写可用的邮箱地址' };
+            }
+
+            if (email && !isValidEmail(email)) {
+                setFieldStatus('email', '请输入有效的邮箱地址', 'error');
+                return { ok: false, error: emailVerificationRequired ? '请填写可用的邮箱地址' : '邮箱已被注册或格式不正确' };
+            }
+
+            const payload = { username };
+            if (email) payload.email = email;
+
+            setFieldStatus('username', '检查中...', 'muted');
+            if (email || emailVerificationRequired) {
+                setFieldStatus('email', '检查中...', 'muted');
+            } else {
+                setFieldStatus('email');
+            }
+
+            try {
+                const { ok, data } = await fetchRegisterAvailability(payload);
+                if (!ok) {
+                    setFieldStatus('username');
+                    if (email || emailVerificationRequired) {
+                        setFieldStatus('email');
+                    }
+                    return { ok: false, error: data.error || '检查失败，请稍后重试' };
+                }
+
+                const usernameAvailable = !!data.username?.available;
+                setFieldStatus(
+                    'username',
+                    data.username?.message || (usernameAvailable ? '用户名可用' : '用户名已被注册'),
+                    usernameAvailable ? 'success' : 'error'
+                );
+
+                let emailAvailable = true;
+                if (email) {
+                    emailAvailable = !!data.email?.available;
+                    setFieldStatus(
+                        'email',
+                        data.email?.message || (emailAvailable ? '邮箱可用' : '邮箱已被注册'),
+                        emailAvailable ? 'success' : 'error'
+                    );
+                } else if (emailVerificationRequired) {
+                    setFieldStatus('email', '请输入邮箱地址', 'error');
+                    emailAvailable = false;
+                } else {
+                    setFieldStatus('email');
+                }
+
+                if (!usernameAvailable) {
+                    return { ok: false, error: '请更换一个可用的用户名' };
+                }
+
+                if (!emailAvailable) {
+                    return { ok: false, error: emailVerificationRequired ? '请填写可用的邮箱地址' : '邮箱已被注册或格式不正确' };
+                }
+
+                return { ok: true };
+            } catch (err) {
+                setFieldStatus('username', '检查失败，请稍后重试', 'error');
+                if (email || emailVerificationRequired) {
+                    setFieldStatus('email', '检查失败，请稍后重试', 'error');
+                }
+                return { ok: false, error: '检查失败，请稍后重试' };
+            }
+        }
+
         async function initRegisterPage() {
             bindAvailabilityChecks();
 
@@ -233,40 +330,33 @@
             event.preventDefault();
             hideError();
 
-            const btn = document.getElementById('registerBtn');
-            const btnText = document.getElementById('registerBtnText');
             const username = document.getElementById('username').value.trim();
             const nickname = document.getElementById('nickname').value.trim();
             const email = document.getElementById('email').value.trim();
             const emailCode = document.getElementById('emailCode')?.value.trim();
             const password = document.getElementById('password').value;
             const confirmPassword = document.getElementById('confirmPassword').value;
+            let shouldResetLoading = true;
 
-            if (password !== confirmPassword) {
-                showError('两次输入的密码不一致');
-                return;
-            }
+            setRegisterLoading(true, '注册中...');
 
-            const usernameOk = await checkUsernameAvailability();
-            if (!usernameOk) {
-                showError('请更换一个可用的用户名');
-                return;
-            }
-
-            const emailOk = await checkEmailAvailability({ requireEmail: emailVerificationRequired });
-            if (!emailOk) {
-                showError(emailVerificationRequired ? '请填写可用的邮箱地址' : '邮箱已被注册或格式不正确');
-                return;
-            }
-
-            if (emailVerificationRequired && !emailCode) {
-                showError('请输入邮箱验证码');
-                return;
-            }
-
-            btn.disabled = true;
-            btnText.textContent = '注册中...';
             try {
+                if (password !== confirmPassword) {
+                    showError('两次输入的密码不一致');
+                    return;
+                }
+
+                const availability = await validateRegisterAvailabilityOnSubmit({ username, email });
+                if (!availability.ok) {
+                    showError(availability.error);
+                    return;
+                }
+
+                if (emailVerificationRequired && !emailCode) {
+                    showError('请输入邮箱验证码');
+                    return;
+                }
+
                 const body = { username, password, nickname, email: email || undefined };
                 if (emailCode) body.emailCode = emailCode;
 
@@ -277,19 +367,20 @@
                 });
                 const data = await res.json();
                 if (!res.ok) {
-                    btn.disabled = false;
-                    btnText.textContent = '注册';
                     showError(data.error || '注册失败');
                     return;
                 }
 
                 Auth.setTokens(data.accessToken, data.refreshToken, data.user);
-                btnText.textContent = '注册成功';
+                shouldResetLoading = false;
+                setRegisterLoading(true, '注册成功');
                 window.location.href = '/';
             } catch (err) {
-                btn.disabled = false;
-                btnText.textContent = '注册';
                 showError('网络错误，请重试');
+            } finally {
+                if (shouldResetLoading) {
+                    setRegisterLoading(false);
+                }
             }
         }
 

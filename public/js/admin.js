@@ -509,15 +509,109 @@ async function saveUserQuotaOverrides(userId) {
     await showUserDetail(userId);
 }
 
+function formatAdminBillingCycle(value) {
+    const labels = {
+        monthly: '月付',
+        quarterly: '季付',
+        yearly: '年付',
+        gift: '赠送',
+        manual: '手工调整',
+    };
+    return labels[String(value || '').trim()] || String(value || '-');
+}
+
+function formatAdminSubscriptionStatus(value) {
+    const labels = {
+        active: '生效中',
+        expired: '已过期',
+        cancelled: '已取消',
+    };
+    return labels[String(value || '').trim()] || String(value || '-');
+}
+
+async function saveUserSubscription(userId) {
+    const planId = document.getElementById('ud-subscription-plan')?.value ?? '';
+    const endDate = document.getElementById('ud-subscription-end')?.value ?? '';
+
+    if (!planId) {
+        alert('请选择会员套餐');
+        return;
+    }
+    if (!endDate) {
+        alert('请选择会员到期时间');
+        return;
+    }
+
+    const parsedEndDate = new Date(endDate);
+    if (Number.isNaN(parsedEndDate.getTime())) {
+        alert('会员到期时间无效');
+        return;
+    }
+
+    const res = await Auth.apiFetch(`/api/admin/users/${userId}/subscription`, {
+        method: 'PUT',
+        body: JSON.stringify({
+            planId: Number(planId),
+            endDate,
+        })
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        alert(data.error || '保存会员调整失败');
+        return;
+    }
+
+    alert(data.message || '会员调整已保存');
+    await loadUsers(1);
+    await showUserDetail(userId);
+}
+
 async function showUserDetail(userId) {
     try {
         currentAdminUserDetailId = userId;
-        const res = await Auth.apiFetch(`/api/admin/users/${userId}`);
-        const data = await res.json();
-        const u = data.user;
-        const quota = data.quota || {};
+        const [detailRes, plansRes] = await Promise.all([
+            Auth.apiFetch(`/api/admin/users/${userId}`),
+            Auth.apiFetch('/api/admin/plans')
+        ]);
+        const [detailData, plansData] = await Promise.all([
+            detailRes.json(),
+            plansRes.json()
+        ]);
+
+        if (!detailRes.ok) {
+            alert(detailData.error || '获取用户详情失败');
+            return;
+        }
+        if (!plansRes.ok) {
+            alert(plansData.error || '获取套餐列表失败');
+            return;
+        }
+
+        const u = detailData.user;
+        const quota = detailData.quota || {};
+        const subscriptions = Array.isArray(detailData.subscriptions) ? detailData.subscriptions : [];
+        const rooms = Array.isArray(detailData.rooms) ? detailData.rooms : [];
         const roomOverride = quota.quotaOverrides?.roomLimit || {};
         const dailyOverride = quota.quotaOverrides?.dailyCreateLimit || {};
+        const currentSubscription = quota.subscription || null;
+        const plans = Array.isArray(plansData.plans)
+            ? [...plansData.plans].sort((a, b) => {
+                if (Boolean(a.isActive) !== Boolean(b.isActive)) return a.isActive ? -1 : 1;
+                return Number(a.sortOrder || 0) - Number(b.sortOrder || 0);
+            })
+            : [];
+        const currentPlanId = currentSubscription?.planId ? Number(currentSubscription.planId) : null;
+        const currentEndDateText = currentSubscription?.endDate
+            ? new Date(currentSubscription.endDate).toLocaleString('zh-CN')
+            : '未开通';
+        const planOptionsHtml = plans.length > 0
+            ? plans.map((plan) => {
+                const isSelected = Number(plan.id) === currentPlanId;
+                const roomText = formatAdminQuotaLimit(plan.roomLimit, '0');
+                const dailyText = formatAdminQuotaLimit(plan.dailyRoomCreateLimit, '0');
+                return `<option value="${plan.id}" ${isSelected ? 'selected' : ''}>${escapeHtml(plan.name)}（${escapeHtml(plan.code)}） · 房间 ${roomText} · 每日 ${dailyText}${plan.isActive ? '' : ' · 已下架'}</option>`;
+            }).join('')
+            : '<option value="">暂无可选套餐</option>';
         const content = document.getElementById('user-detail-content');
 
         content.innerHTML = `
@@ -530,6 +624,30 @@ async function showUserDetail(userId) {
                 <div><strong>状态:</strong> ${escapeHtml(u.status)}</div>
                 <div><strong>最后登录:</strong> ${u.lastLoginAt ? new Date(u.lastLoginAt).toLocaleString('zh-CN') : '从未'}</div>
                 <div><strong>注册时间:</strong> ${new Date(u.createdAt).toLocaleString('zh-CN')}</div>
+            </div>
+            <div class="divider">会员</div>
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4 mb-4">
+                <div class="rounded-box bg-base-200 p-4 space-y-2">
+                    <div class="text-sm text-base-content/60">当前生效会员</div>
+                    <div class="text-xl font-bold">${escapeHtml(currentSubscription?.planName || '无生效会员')}</div>
+                    <div class="text-sm text-base-content/80">周期：${escapeHtml(formatAdminBillingCycle(currentSubscription?.billingCycle || '-'))}</div>
+                    <div class="text-sm text-base-content/80">状态：${escapeHtml(currentSubscription ? formatAdminSubscriptionStatus(currentSubscription.status) : '未开通')}</div>
+                    <div class="text-sm text-base-content/80">到期：${escapeHtml(currentEndDateText)}</div>
+                    <div class="text-xs text-base-content/60">保存后会立即刷新该用户的套餐配额。若只是调整同一套餐的到期时间，会直接修改当前生效记录；若切换到其他套餐，会立即停用旧套餐并新建一条新的生效记录。</div>
+                </div>
+                <div class="rounded-box border border-base-300 p-4 space-y-3">
+                    <div class="font-semibold">会员计划调整</div>
+                    <label class="form-control">
+                        <span class="label-text text-sm">选择套餐</span>
+                        <select id="ud-subscription-plan" class="select select-bordered select-sm">${planOptionsHtml}</select>
+                    </label>
+                    <label class="form-control">
+                        <span class="label-text text-sm">到期时间</span>
+                        <input id="ud-subscription-end" type="datetime-local" class="input input-bordered input-sm" value="${formatDateTimeLocalInput(currentSubscription?.endDate)}">
+                    </label>
+                    <div class="text-xs text-base-content/60">支持直接延长、缩短或切换套餐。若填写过去时间，系统会把该会员视为立即过期。</div>
+                    <button class="btn btn-sm btn-secondary" ${plans.length > 0 ? '' : 'disabled'} onclick="saveUserSubscription(${u.id})">保存会员调整</button>
+                </div>
             </div>
             <div class="divider">配额</div>
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -584,15 +702,18 @@ async function showUserDetail(userId) {
             </div>
             <div class="divider">订阅记录</div>
             <div class="overflow-x-auto"><table class="table table-xs"><thead><tr><th>套餐</th><th>周期</th><th>开始</th><th>结束</th><th>状态</th></tr></thead><tbody>
-            ${data.subscriptions.map(s => `<tr><td>${escapeHtml(s.planName)}</td><td>${escapeHtml(s.billingCycle)}</td><td>${new Date(s.startAt).toLocaleDateString('zh-CN')}</td><td>${new Date(s.endAt).toLocaleDateString('zh-CN')}</td><td><span class="badge badge-xs ${s.status === 'active' ? 'badge-success' : 'badge-ghost'}">${escapeHtml(s.status)}</span></td></tr>`).join('') || '<tr><td colspan="5" class="text-center">无</td></tr>'}
+            ${subscriptions.map(s => `<tr><td>${escapeHtml(s.planName)}</td><td>${escapeHtml(formatAdminBillingCycle(s.billingCycle))}</td><td>${new Date(s.startAt).toLocaleDateString('zh-CN')}</td><td>${new Date(s.endAt).toLocaleDateString('zh-CN')}</td><td><span class="badge badge-xs ${s.status === 'active' ? 'badge-success' : 'badge-ghost'}">${escapeHtml(formatAdminSubscriptionStatus(s.status))}</span></td></tr>`).join('') || '<tr><td colspan="5" class="text-center">无</td></tr>'}
             </tbody></table></div>
             <div class="divider">房间</div>
             <div class="flex flex-wrap gap-2">
-            ${data.rooms.map(r => `<span class="badge badge-outline">${escapeHtml(r.roomName || r.roomId)}</span>`).join('') || '<span class="text-base-content/60">无</span>'}
+            ${rooms.map(r => `<span class="badge badge-outline">${escapeHtml(r.roomName || r.roomId)}</span>`).join('') || '<span class="text-base-content/60">无</span>'}
             </div>`;
 
         document.getElementById('userDetailModal').showModal();
-    } catch (err) { console.error('User detail error:', err); }
+    } catch (err) {
+        console.error('User detail error:', err);
+        alert('获取用户详情失败');
+    }
 }
 
 function showBalanceModal(userId, username, balance) {
@@ -2278,7 +2399,7 @@ async function loadPromptTemplates(force = false) {
                 <div class="text-xs text-base-content/50 mb-3">可用变量：${(item.variables || []).map(v => `<code>${escapeHtml(`{{${v}}}`)}</code>`).join('、') || '无'}</div>
                 ${item.key === 'customer_analysis_review' ? `
                     <div class="rounded-box border border-base-300 bg-base-200/80 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
-                        系统已经提前计算好客户数值、时间、排行与模型标签；编辑该模板时，请让 AI 只负责解释、总结、策略和话术，不要让 AI 自己重算事实。
+                        该模板用于「房间详情 / 历史排行榜 / AI客户分析」。系统已经提前计算好客户数值、时间、排行与模型标签；编辑时请让 AI 只负责解释、总结、策略和话术，不要直出英文键名，也不要让 AI 自己重算事实。
                     </div>
                 ` : ''}
                 <textarea id="prompt-template-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[22rem] font-mono text-xs leading-6">${escapeHtml(item.content || '')}</textarea>

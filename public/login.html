@@ -31,6 +31,7 @@
                     <a href="/forgot-password.html" class="link link-primary text-sm">忘记密码？</a>
                 </div>
                 <button type="submit" id="loginBtn" class="btn btn-primary w-full">
+                    <span id="loginBtnSpinner" class="loading loading-spinner loading-sm hidden" aria-hidden="true"></span>
                     <span id="loginBtnText">登录</span>
                 </button>
             </form>
@@ -76,7 +77,10 @@
         function setLoginLoading(loading, text = '登录') {
             const btn = document.getElementById('loginBtn');
             const btnText = document.getElementById('loginBtnText');
+            const btnSpinner = document.getElementById('loginBtnSpinner');
             btn.disabled = loading;
+            btn.setAttribute('aria-busy', loading ? 'true' : 'false');
+            btnSpinner.classList.toggle('hidden', !loading);
             btnText.textContent = text;
         }
 

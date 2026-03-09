@@ -5,6 +5,7 @@ const PROMPT_TEMPLATE_PREFIX = 'prompt_template.';
 const PROMPT_TEMPLATES = {
     session_recap_comment_filter: {
         key: 'session_recap_comment_filter',
+        sortOrder: 10,
         title: 'AI直播复盘 · 高频弹幕筛选',
         description: '先对全场高频弹幕 Top50 做价值筛选，只保留对内容复盘、成交判断、节奏判断有用的信号。',
         variables: ['topCommentCandidatesJson'],
@@ -43,6 +44,7 @@ const PROMPT_TEMPLATES = {
     },
     session_recap_review: {
         key: 'session_recap_review',
+        sortOrder: 20,
         title: 'AI直播复盘 · 主分析流程',
         description: '根据单场直播结构化数据，生成完整 AI 直播复盘，并映射到前台各区域。',
         variables: ['sessionDataJson'],
@@ -155,6 +157,7 @@ const PROMPT_TEMPLATES = {
     },
     user_personality_analysis: {
         key: 'user_personality_analysis',
+        sortOrder: 40,
         title: 'AI用户分析 · 性格分析流程',
         description: '根据用户历史弹幕，输出旧版性格分析结果，供用户分析页直接展示。',
         variables: ['chatCorpusText'],
@@ -182,8 +185,9 @@ const PROMPT_TEMPLATES = {
     },
     customer_analysis_review: {
         key: 'customer_analysis_review',
+        sortOrder: 30,
         title: 'AI客户分析 · 主分析流程',
-        description: '根据系统生成的结构化客户上下文与最近弹幕语料，输出客户价值总结、风险判断、维护策略与话术。',
+        description: '用于房间详情 / 历史排行榜中的 AI客户分析，基于结构化客户上下文与最近弹幕语料输出客户总结、风险判断、维护策略与话术。',
         variables: ['customerContextJson', 'chatCorpusText'],
         defaultContent: [
             '你现在是娱乐直播客户运营总监，擅长识别客户价值、忠诚风险、维护动作和主播承接话术。',
@@ -212,7 +216,9 @@ const PROMPT_TEMPLATES = {
             '',
             '输出要求：',
             '1. 只能输出严格 JSON，不要加任何说明、引言、Markdown、代码块。',
-            '2. evidence 必须引用输入中的系统事实，优先引用具体字段名、指标值、标签、排行、趋势。',
+            '2. evidence 必须引用输入中的系统事实，但最终表达必须用中文业务名称，不要直接输出 platform_lrfm、abc_current_room、otherRoomGrowthFlag、currentRoomValueShare30d 这类英文键名。',
+            '2.1 如果引用模型结果，直接围绕模型评分、模型分层、系统说明来写，例如“平台LRFM分层为核心价值”“本房ABC分层为A”“近30天本房贡献占比高”。',
+            '2.2 如果引用布尔信号，必须写成中文业务描述 + 是/否，不要输出 true / false。',
             '3. keySignals / recommendedActions / outreachScript / forbiddenActions / tags / evidence 都必须是数组。',
             '4. summary 控制在 120 字以内，格式尽量接近“本房价值判断 + 当前主要风险/机会 + 下一步动作”。',
             '5. valueLevelCurrentRoom、valueLevelGlobal、loyaltyAssessment、diversionRiskAssessment、conversionStage 都必须给出字符串；没有依据时写“当前未提供该项数据”。',
@@ -244,8 +250,8 @@ const PROMPT_TEMPLATES = {
             '- recommendedActions 必须写成可执行动作，尽量包含“谁来做、何时做、做什么”。',
             '- outreachScript 要偏主播或场控可直接说的话，语气自然，不要像报告，也不要承诺输入里没有的福利、价格或权益。',
             '- forbiddenActions 必须写“不要做什么”，不能写成空泛提醒。',
-            '- evidence 每条都尽量带上输入里的原始事实关键词或数值，优先保留字段名和结论，如 room_lrfm.tier=高价值。',
-            '- keySignals 要写“信号 + 含义”，不要只抄字段名。',
+            '- evidence 每条都尽量带上输入里的原始事实关键词或数值，但必须翻译成中文业务表达，例如“本房LRFM分层=高价值”“平台LRFM评分=L3R5F5M5”“其他房间增长信号=是”。',
+            '- keySignals 要写“模型/信号 + 含义”，不要只抄字段名或英文键名。',
             '- 不要输出空洞套话，例如“加强互动”“继续观察”“做好维护”这类没有动作对象和场景的话。',
             '',
             '结构化客户上下文如下：',
@@ -266,7 +272,7 @@ function getPromptTemplateDefinition(key) {
 }
 
 function listPromptTemplateDefinitions() {
-    return Object.values(PROMPT_TEMPLATES);
+    return Object.values(PROMPT_TEMPLATES).sort((left, right) => Number(left.sortOrder || 999) - Number(right.sortOrder || 999));
 }
 
 async function listPromptTemplates() {

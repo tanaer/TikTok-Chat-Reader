@@ -57,7 +57,8 @@
 
 .app-shell-nav-user {
     color: var(--app-shell-text-soft);
-    pointer-events: none;
+    pointer-events: auto;
+    cursor: pointer;
 }
 
 .app-shell-nav-danger {
@@ -71,6 +72,24 @@
 
 .app-shell-nav-brand {
     color: var(--app-shell-text) !important;
+}
+
+.app-shell-user-dropdown {
+    padding-bottom: 0.45rem;
+    margin-bottom: -0.45rem;
+}
+
+.app-shell-user-menu {
+    margin-top: 0 !important;
+}
+
+.app-shell-user-menu::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -0.45rem;
+    height: 0.45rem;
 }
 
 @media (max-width: 768px) {
