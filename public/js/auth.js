@@ -311,7 +311,7 @@ const Auth = {
         const body = (typeof document !== 'undefined') ? document.body : null;
         return {
             showMessages: body?.dataset?.shellMessages === 'true',
-            messagePolling: body?.dataset?.shellMessagePolling || 'none',
+            messagePolling: body?.dataset?.shellMessagePolling || body?.dataset?.shellMessagePoll || 'none',
             messagePageSize: Math.max(1, Number(body?.dataset?.shellMessagePageSize || 5) || 5),
         };
     },
