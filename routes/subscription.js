@@ -12,7 +12,7 @@ const router = express.Router();
 router.get('/plans', async (req, res) => {
     try {
         const plans = await db.all(
-            `SELECT id, name, code, room_limit, open_room_limit, price_monthly, price_quarterly, price_annual, feature_flags, sort_order, daily_room_create_limit, ai_credits_monthly
+            `SELECT id, name, code, room_limit, price_monthly, price_quarterly, price_annual, feature_flags, sort_order, daily_room_create_limit, ai_credits_monthly
              FROM subscription_plans WHERE is_active = true ORDER BY sort_order`
         );
         res.json({ plans });

@@ -1317,8 +1317,6 @@ app.get('/api/rooms/quota', optionalAuth, async (req, res) => {
                     used: 0,
                     remaining: -1,
                     isUnlimited: true,
-                    openRoomLimit: -1,
-                    openRemaining: -1,
                     dailyLimit: -1,
                     dailyUsed: 0,
                     dailyRemaining: -1,
@@ -3419,14 +3417,6 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
                 return res.status(403).json({
                     error: '房间配额已满，请升级套餐或购买扩容包',
                     code: 'QUOTA_EXCEEDED',
-                    quota
-                });
-            }
-            // Check open room limit (simultaneously monitored rooms)
-            if (quota.openRoomLimit !== -1 && quota.openRemaining <= 0) {
-                return res.status(403).json({
-                    error: `同时打开的房间数已达上限（${quota.openRoomLimit}个），请关闭其他房间后再试`,
-                    code: 'OPEN_ROOM_LIMIT',
                     quota
                 });
             }
