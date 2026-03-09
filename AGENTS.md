@@ -11,6 +11,11 @@
 - 区分“实现要求”和“交付内容”：前者用于指导实现，后者才进入程序。
 - 需要长期保留的协作偏好，优先记录到 `AGENTS.md`、相关文档或记忆文件，不要混入应用产物。
 
+### AI 点数消耗确认
+- 凡是会消耗 AI 点数、额度、余额或其他可计费资源的用户操作，默认必须设计为二次确认后才能真正执行，除非用户明确要求取消该保护。
+- 二次确认要明确提示“将发生扣点/消耗”，避免把查看、试算、预览与真实扣点操作做成相同交互。
+- 涉及 AI 点数消耗的按钮、菜单、批量操作、自动触发流程或管理台功能，在交付前都要检查是否存在误触扣点风险。
+
 ### Security First
 - Treat every API response as public unless the route is explicitly admin-only.
 - For user-facing APIs, use explicit response whitelists. Do not return raw database rows or raw `metadata` blobs directly.

@@ -14,6 +14,15 @@ const {
     savePromptTemplate,
     resetPromptTemplate,
 } = require('../services/aiPromptService');
+const {
+    getPromptTemplatePreviewPreset,
+    renderAdminPromptPreview,
+} = require('../services/aiPromptPreviewService');
+const {
+    listAiStructuredDataSources,
+    getAiStructuredDataSourceDefinition,
+    testAiStructuredDataSource,
+} = require('../services/aiStructuredDataSourceService');
 const quotaService = require('../services/quotaService');
 const { listAdminAiWorkJobs, getAdminAiWorkJobDetail } = require('../services/aiWorkService');
 const keyManager = require('../utils/keyManager');
@@ -73,6 +82,7 @@ function resolveAdminRoutePermission(req) {
     if (routePath.startsWith('/settings')) return 'settings.manage';
     if (routePath.startsWith('/session-maintenance')) return 'session_maintenance.manage';
     if (routePath.startsWith('/prompt-templates')) return 'prompts.manage';
+    if (routePath.startsWith('/structured-sources')) return 'ai_channels.manage';
     if (routePath.startsWith('/ai-work')) return 'ai_work.manage';
     if (routePath.startsWith('/euler-keys')) return 'euler_keys.manage';
     if (routePath.startsWith('/ai-channels') || routePath.startsWith('/ai-models')) return 'ai_channels.manage';
@@ -1387,7 +1397,20 @@ router.post('/session-maintenance/actions/:action', async (req, res) => {
 router.get('/prompt-templates', async (req, res) => {
     try {
         const templates = await listPromptTemplates();
-        res.json({ templates });
+        const sources = listAiStructuredDataSources();
+        const sourceMap = sources.reduce((map, item) => {
+            const list = map.get(item.scene) || [];
+            list.push(item);
+            map.set(item.scene, list);
+            return map;
+        }, new Map());
+
+        res.json({
+            templates: templates.map(item => ({
+                ...item,
+                structuredSources: sourceMap.get(item.key) || []
+            }))
+        });
     } catch (err) {
         console.error('[Admin] Load prompt templates error:', err.message);
         res.status(500).json({ error: '获取提示词失败' });
@@ -1426,6 +1449,96 @@ router.post('/prompt-templates/:key/reset', async (req, res) => {
     } catch (err) {
         console.error('[Admin] Reset prompt template error:', err.message);
         res.status(500).json({ error: '恢复默认失败' });
+    }
+});
+
+router.get('/prompt-templates/:key/preview-preset', async (req, res) => {
+    try {
+        const templateKey = String(req.params.key || '').trim();
+        if (!getPromptTemplateDefinition(templateKey)) {
+            return res.status(404).json({ error: '提示词不存在' });
+        }
+
+        res.json({
+            success: true,
+            templateKey,
+            preset: getPromptTemplatePreviewPreset(templateKey)
+        });
+    } catch (err) {
+        console.error('[Admin] Load prompt template preview preset error:', err.message);
+        res.status(500).json({ error: '获取预览预设失败' });
+    }
+});
+
+router.post('/prompt-templates/:key/preview', async (req, res) => {
+    try {
+        const templateKey = String(req.params.key || '').trim();
+        if (!getPromptTemplateDefinition(templateKey)) {
+            return res.status(404).json({ error: '提示词不存在' });
+        }
+
+        const content = req.body?.content;
+        const input = req.body?.input;
+        const variables = req.body?.variables;
+
+        if (content != null && typeof content !== 'string') {
+            return res.status(400).json({ error: '预览内容必须是字符串' });
+        }
+        if (input != null && (typeof input !== 'object' || Array.isArray(input))) {
+            return res.status(400).json({ error: '预览输入必须是 JSON 对象' });
+        }
+        if (variables != null && (typeof variables !== 'object' || Array.isArray(variables))) {
+            return res.status(400).json({ error: '预览变量必须是 JSON 对象' });
+        }
+
+        const result = await renderAdminPromptPreview({
+            templateKey,
+            content: typeof content === 'string' ? content : '',
+            input: input || {},
+            variables: variables || {}
+        });
+
+        res.json({
+            success: true,
+            preview: result
+        });
+    } catch (err) {
+        console.error('[Admin] Render prompt preview error:', err.message);
+        const isInputError = /不能为空|必须是 JSON 对象|参数|预览/i.test(String(err.message || ''));
+        res.status(isInputError ? 400 : 500).json({ error: err.message || '渲染提示词预览失败' });
+    }
+});
+
+router.get('/structured-sources', async (req, res) => {
+    try {
+        const scene = String(req.query.scene || '').trim();
+        const sources = listAiStructuredDataSources({ scene });
+        res.json({ sources });
+    } catch (err) {
+        console.error('[Admin] Load structured sources error:', err.message);
+        res.status(500).json({ error: '获取结构化数据源失败' });
+    }
+});
+
+router.post('/structured-sources/:key/test', async (req, res) => {
+    try {
+        const key = String(req.params.key || '').trim();
+        const definition = getAiStructuredDataSourceDefinition(key);
+        if (!definition) {
+            return res.status(404).json({ error: '结构化数据源不存在' });
+        }
+
+        const input = req.body?.input;
+        if (input != null && (typeof input !== 'object' || Array.isArray(input))) {
+            return res.status(400).json({ error: '测试输入必须是 JSON 对象' });
+        }
+
+        const result = await testAiStructuredDataSource(key, input || {});
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.error('[Admin] Test structured source error:', err.message);
+        const isInputError = /不能为空|必须是 JSON 对象|参数/i.test(String(err.message || ''));
+        res.status(isInputError ? 400 : 500).json({ error: err.message || '测试结构化数据源失败' });
     }
 });
 

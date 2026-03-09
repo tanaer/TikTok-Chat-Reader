@@ -1108,34 +1108,34 @@ class Manager {
 
         const participantAggSql = `
             SELECT
-                COALESCE(NULLIF(user_id, ''), NULLIF(unique_id, ''), nickname) as participantKey,
-                MAX(user_id) as userId,
+                COALESCE(NULLIF(user_id, ''), NULLIF(unique_id, ''), nickname) as participant_key,
+                MAX(user_id) as user_id,
                 MAX(nickname) as nickname,
-                MAX(unique_id) as uniqueId,
-                SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as sessionGiftValue,
-                SUM(CASE WHEN type = 'gift' THEN COALESCE(repeat_count, 1) ELSE 0 END) as giftCount,
-                COUNT(*) FILTER (WHERE type = 'chat') as chatCount,
-                SUM(CASE WHEN type = 'like' THEN COALESCE(like_count, 0) ELSE 0 END) as likeCount,
-                COUNT(*) FILTER (WHERE type = 'member') as enterCount,
-                MIN(timestamp) FILTER (WHERE type = 'member') as firstEnterAt,
-                MAX(timestamp) as lastActiveAt
+                MAX(unique_id) as unique_id,
+                SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as session_gift_value,
+                SUM(CASE WHEN type = 'gift' THEN COALESCE(repeat_count, 1) ELSE 0 END) as gift_count,
+                COUNT(*) FILTER (WHERE type = 'chat') as chat_count,
+                SUM(CASE WHEN type = 'like' THEN COALESCE(like_count, 0) ELSE 0 END) as like_count,
+                COUNT(*) FILTER (WHERE type = 'member') as enter_count,
+                MIN(timestamp) FILTER (WHERE type = 'member') as first_enter_at,
+                MAX(timestamp) as last_active_at
             FROM event
             ${whereClause} AND COALESCE(NULLIF(user_id, ''), NULLIF(unique_id, ''), nickname) IS NOT NULL
-            GROUP BY participantKey
+            GROUP BY participant_key
         `;
 
         const participantSummary = await get(`
             SELECT
                 COUNT(*) as participants,
-                COUNT(*) FILTER (WHERE sessionGiftValue > 0) as payingUsers,
-                COUNT(*) FILTER (WHERE chatCount > 0) as chattingUsers
+                COUNT(*) FILTER (WHERE gift_count > 0) as paying_users,
+                COUNT(*) FILTER (WHERE chat_count > 0) as chatting_users
             FROM (${participantAggSql}) participant_base
         `, params);
 
         const participants = await query(`
             SELECT *
             FROM (${participantAggSql}) participant_base
-            ORDER BY sessionGiftValue DESC, chatCount DESC, likeCount DESC
+            ORDER BY session_gift_value DESC, chat_count DESC, like_count DESC
             LIMIT 48
         `, params);
 
@@ -1157,12 +1157,14 @@ class Manager {
             const enterCount = parseInt(participant.enterCount) || 0;
             const participantKey = participant.participantKey || participant.userId || participant.uniqueId || participant.nickname || '';
             const historicalValue = parseInt(history?.totalValue) || 0;
+            const hasGiftAction = giftCount > 0;
             return {
                 participantKey,
                 userId: participant.userId,
                 nickname: participant.nickname || participant.uniqueId || '匿名',
                 uniqueId: participant.uniqueId || '',
                 sessionGiftValue,
+                hasGiftAction,
                 giftCount,
                 chatCount,
                 likeCount,
@@ -1222,7 +1224,9 @@ class Manager {
             .slice(0, 5)
             .map(item => asCard(
                 item,
-                `互动信号强（${item.chatCount}条弹幕 / ${item.likeCount}点赞），但本场转化仍偏低。`,
+                item.hasGiftAction
+                    ? `互动信号强（${item.chatCount}条弹幕 / ${item.likeCount}点赞），已出手但仍有继续放大的空间。`
+                    : `互动信号强（${item.chatCount}条弹幕 / ${item.likeCount}点赞），但本场转化仍偏低。`,
                 '适合在高互动节点做轻成交引导，优先尝试首单转化。'
             ));
 
@@ -1230,7 +1234,7 @@ class Manager {
 
         let risk = enriched
             .filter(item => !used.has(item.participantKey))
-            .filter(item => item.historicalValue >= 1000 && item.sessionGiftValue === 0)
+            .filter(item => item.historicalValue >= 1000 && !item.hasGiftAction)
             .sort((a, b) => (b.historicalValue - a.historicalValue) || (b.enterCount - a.enterCount))
             .slice(0, 5)
             .map(item => asCard(

@@ -10,6 +10,7 @@ const ADMIN_SECTION_META = Object.freeze({
     notifications: { title: '通知系统', permission: 'notifications.manage' },
     aiWork: { title: 'AI工作中心', permission: 'ai_work.manage' },
     prompts: { title: '提示词管理', permission: 'prompts.manage' },
+    structuredSources: { title: '结构化数据源', permission: 'ai_channels.manage' },
     aiModels: { title: 'AI 通道配置', permission: 'ai_channels.manage' },
     eulerKeys: { title: 'Euler API Keys', permission: 'euler_keys.manage' },
     sessionMaintenance: { title: '场次运维', permission: 'session_maintenance.manage' },
@@ -28,6 +29,7 @@ const ADMIN_REQUEST_TARGET_HINTS = Object.freeze([
     ['smtp', '邮箱服务'],
     ['/docs', '系统文档'],
     ['prompt-templates', '提示词管理'],
+    ['structured-sources', '结构化数据源'],
     ['ai-work', 'AI工作中心'],
     ['ai-models', 'AI 通道配置'],
     ['ai-channels', 'AI 通道配置'],
@@ -272,6 +274,8 @@ let adminAdminsCache = [];
 let adminCandidatesCache = [];
 let adminRoleEditingSnapshot = null;
 let adminRoleEditorId = null;
+let structuredSourcesCache = [];
+let currentStructuredSourceKey = '';
 
 function getDefaultMenuPermissions() {
     return [...new Set(Object.values(ADMIN_SECTION_META).map((item) => item.permission).filter(Boolean))];
@@ -360,6 +364,7 @@ function runSectionLoader(name) {
     else if (name === 'smtpServices') loadSmtpServices();
     else if (name === 'aiWork') loadAdminAiWorkJobs(1);
     else if (name === 'prompts') loadPromptTemplates();
+    else if (name === 'structuredSources') loadStructuredSources();
     else if (name === 'docs') loadAdminDocs();
     else if (name === 'eulerKeys') loadEulerKeys();
     else if (name === 'aiModels') loadAiModels();
@@ -2382,7 +2387,9 @@ async function loadPromptTemplates(force = false) {
         }
 
         wrap.dataset.loaded = 'true';
-        wrap.innerHTML = templates.map(item => `
+        wrap.innerHTML = templates.map(item => {
+            const structuredSources = Array.isArray(item.structuredSources) ? item.structuredSources : [];
+            return `
             <div class="rounded-box border border-base-300 bg-base-100 p-5 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
                     <div>
@@ -2396,18 +2403,80 @@ async function loadPromptTemplates(force = false) {
                     </div>
                 </div>
                 <div class="text-xs text-base-content/50 mb-3">可用变量：${(item.variables || []).map(v => `<code>${escapeHtml(`{{${v}}}`)}</code>`).join('、') || '无'}</div>
+                ${structuredSources.length ? `
+                    <div class="rounded-box border border-base-300 bg-base-200/70 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
+                        <div class="flex flex-wrap items-center justify-between gap-3">
+                            <div class="font-semibold text-base-content/80">可插入结构化数据源</div>
+                            <button class="btn btn-xs btn-outline" onclick="showSection('structuredSources')">打开结构化数据源</button>
+                        </div>
+                        <div class="mt-2 space-y-2">
+                            ${structuredSources.map(source => `
+                                <div>
+                                    <code>${escapeHtml(`{{${source.token}}}`)}</code>
+                                    <span class="text-base-content/80"> · ${escapeHtml(source.title || source.key)}</span>
+                                    <span class="text-base-content/55"> · ${escapeHtml(source.description || '')}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                ` : ''}
                 ${item.key === 'customer_analysis_review' ? `
                     <div class="rounded-box border border-base-300 bg-base-200/80 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
-                        该模板用于「房间详情 / 历史排行榜 / 客户价值深度挖掘」。系统已经提前计算好客户数值、时间、排行与模型标签；编辑时请让 AI 只负责输出直接结论、重点结论、下一步动作和主播话术，不要直出英文键名，也不要让 AI 自己重算事实。涉及贡献占比时，请明确写成“该客户近30天总贡献里投向本房/其他房间的占比”，避免歧义。
+                        该模板用于「房间详情 / 历史排行榜 / AI客户分析」。系统已经提前计算好客户数值、时间、排行与模型标签；编辑时请让 AI 只负责输出直接结论、重点结论、下一步动作和主播话术，不要直出英文键名，也不要让 AI 自己重算事实。涉及贡献占比时，请明确写成“该客户近30天总贡献里投向本房/其他房间的占比”，避免歧义。
                     </div>
                 ` : ''}
                 <textarea id="prompt-template-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[22rem] font-mono text-xs leading-6">${escapeHtml(item.content || '')}</textarea>
                 <div class="flex flex-wrap items-center gap-3 mt-4">
                     <button class="btn btn-primary btn-sm" onclick="savePromptTemplate('${escapeHtml(item.key)}')">保存提示词</button>
                     <button class="btn btn-outline btn-sm" onclick="resetPromptTemplate('${escapeHtml(item.key)}')">恢复默认</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPromptPreviewPreset('${escapeHtml(item.key)}')">加载测试参数</button>
+                    <button class="btn btn-outline btn-sm" onclick="previewPromptTemplate('${escapeHtml(item.key)}')">渲染预览</button>
+                </div>
+                <div class="rounded-box border border-base-300 bg-base-200/60 px-4 py-4 mt-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <div>
+                            <div class="font-semibold text-sm">Prompt 渲染预览</div>
+                            <div class="text-xs text-base-content/55 mt-1">可在保存前测试结构化数据注入、手动变量覆盖和最终渲染结果。</div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button id="prompt-preview-copy-${escapeHtml(item.key)}" class="btn btn-xs btn-outline btn-disabled" onclick="copyPromptPreviewResult('${escapeHtml(item.key)}')" disabled>复制结果</button>
+                            <button id="prompt-preview-download-${escapeHtml(item.key)}" class="btn btn-xs btn-outline btn-disabled" onclick="downloadPromptPreviewResult('${escapeHtml(item.key)}')" disabled>下载TXT</button>
+                            <div id="prompt-preview-meta-${escapeHtml(item.key)}" class="text-xs text-base-content/55">尚未渲染预览</div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        <div class="space-y-2">
+                            <div class="text-xs font-semibold text-base-content/70">结构化输入（JSON）</div>
+                            <textarea id="prompt-preview-input-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[10rem] font-mono text-xs leading-6" spellcheck="false">{}</textarea>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="text-xs font-semibold text-base-content/70">手动变量覆盖（JSON）</div>
+                            <textarea id="prompt-preview-vars-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[10rem] font-mono text-xs leading-6" spellcheck="false">{}</textarea>
+                        </div>
+                    </div>
+                    <div id="prompt-preview-status-${escapeHtml(item.key)}" class="text-xs text-base-content/55 mt-3">未加载测试参数</div>
+                    <div id="prompt-preview-token-notes-${escapeHtml(item.key)}" class="hidden rounded-box border border-base-300 bg-base-100/80 px-3 py-3 text-xs leading-6 text-base-content/70 mt-3"></div>
+                    <div class="collapse collapse-arrow border border-base-300 bg-base-100/80 mt-3">
+                        <input type="checkbox" />
+                        <div class="collapse-title min-h-0 py-3 text-sm font-semibold">查看模板对比</div>
+                        <div class="collapse-content pt-0">
+                            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                <div class="space-y-2">
+                                    <div class="text-xs font-semibold text-base-content/70">当前模板内容</div>
+                                    <pre id="prompt-preview-raw-${escapeHtml(item.key)}" class="rounded-box border border-base-300 bg-base-200 px-4 py-4 text-xs leading-6 whitespace-pre-wrap break-all">尚未渲染预览</pre>
+                                </div>
+                                <div class="space-y-2">
+                                    <div class="text-xs font-semibold text-base-content/70">系统补入后的有效模板</div>
+                                    <pre id="prompt-preview-effective-${escapeHtml(item.key)}" class="rounded-box border border-base-300 bg-base-200 px-4 py-4 text-xs leading-6 whitespace-pre-wrap break-all">尚未渲染预览</pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <pre id="prompt-preview-result-${escapeHtml(item.key)}" class="rounded-box border border-base-300 bg-base-100 px-4 py-4 text-xs leading-6 whitespace-pre-wrap break-all mt-3">尚未渲染预览</pre>
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
     } catch (err) {
         wrap.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-5 py-8 text-sm text-error">${escapeHtml(err.message || '加载提示词失败')}</div>`;
     }
@@ -2443,6 +2512,410 @@ async function resetPromptTemplate(key) {
         return;
     }
     alert(data.error || '恢复默认失败');
+}
+
+function getPromptPreviewElements(key) {
+    return {
+        templateEl: document.getElementById(`prompt-template-${key}`),
+        inputEl: document.getElementById(`prompt-preview-input-${key}`),
+        varsEl: document.getElementById(`prompt-preview-vars-${key}`),
+        resultEl: document.getElementById(`prompt-preview-result-${key}`),
+        rawEl: document.getElementById(`prompt-preview-raw-${key}`),
+        effectiveEl: document.getElementById(`prompt-preview-effective-${key}`),
+        metaEl: document.getElementById(`prompt-preview-meta-${key}`),
+        statusEl: document.getElementById(`prompt-preview-status-${key}`),
+        tokenNotesEl: document.getElementById(`prompt-preview-token-notes-${key}`),
+        copyBtn: document.getElementById(`prompt-preview-copy-${key}`),
+        downloadBtn: document.getElementById(`prompt-preview-download-${key}`)
+    };
+}
+
+function setPromptPreviewActionState(key, { ready = false, copyLabel = '复制结果' } = {}) {
+    const { copyBtn, downloadBtn } = getPromptPreviewElements(key);
+    [copyBtn, downloadBtn].forEach((btn) => {
+        if (!btn) return;
+        btn.disabled = !ready;
+        btn.classList.toggle('btn-disabled', !ready);
+    });
+    if (copyBtn) copyBtn.textContent = copyLabel;
+}
+
+function renderPromptPreviewTokenNotes(key, preview = {}) {
+    const { tokenNotesEl } = getPromptPreviewElements(key);
+    if (!tokenNotesEl) return;
+
+    const autoAppendedTokens = Array.isArray(preview.autoAppendedTokens) ? preview.autoAppendedTokens : [];
+    const unresolvedTokens = Array.isArray(preview.unresolvedTokens) ? preview.unresolvedTokens : [];
+    const skippedSources = Array.isArray(preview.skippedSources) ? preview.skippedSources : [];
+
+    const segments = [];
+    if (autoAppendedTokens.length) {
+        segments.push(`
+            <div>
+                <div class="font-semibold text-base-content/80 mb-1">系统自动补入</div>
+                <div class="flex flex-wrap gap-2">
+                    ${autoAppendedTokens.map(token => `<span class="badge badge-outline badge-sm">${escapeHtml(`{{${token}}}`)}</span>`).join('')}
+                </div>
+            </div>
+        `);
+    }
+    if (unresolvedTokens.length) {
+        segments.push(`
+            <div>
+                <div class="font-semibold text-warning mb-1">仍未替换的占位符</div>
+                <div class="flex flex-wrap gap-2">
+                    ${unresolvedTokens.map(token => `<span class="badge badge-warning badge-sm">${escapeHtml(`{{${token}}}`)}</span>`).join('')}
+                </div>
+            </div>
+        `);
+    }
+    if (skippedSources.length) {
+        segments.push(`
+            <div>
+                <div class="font-semibold text-base-content/80 mb-1">本次跳过的数据源</div>
+                <div class="space-y-1">
+                    ${skippedSources.map(item => `
+                        <div>
+                            <code>${escapeHtml(`{{${item.token}}}`)}</code>
+                            <span> · ${escapeHtml(item.reason || '已跳过')}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `);
+    }
+
+    if (!segments.length) {
+        tokenNotesEl.classList.add('hidden');
+        tokenNotesEl.innerHTML = '';
+        return;
+    }
+
+    tokenNotesEl.classList.remove('hidden');
+    tokenNotesEl.innerHTML = segments.join('');
+}
+
+async function copyTextWithFallback(text) {
+    const normalized = String(text || '');
+    if (!normalized) return false;
+
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(normalized);
+            return true;
+        }
+    } catch {
+    }
+
+    try {
+        const textarea = document.createElement('textarea');
+        textarea.value = normalized;
+        textarea.setAttribute('readonly', 'readonly');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return copied;
+    } catch {
+        return false;
+    }
+}
+
+function downloadTextAsFile(text, filename) {
+    const blob = new Blob([String(text || '')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function buildPromptPreviewFileName(key) {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+    return `Prompt预览_${String(key || 'template').trim() || 'template'}_${stamp}.txt`.replace(/[\/:*?"<>|\s]+/g, '_');
+}
+
+async function loadPromptPreviewPreset(key) {
+    const { inputEl, varsEl, statusEl, metaEl, resultEl, rawEl, effectiveEl } = getPromptPreviewElements(key);
+    if (!inputEl || !varsEl) return;
+
+    if (statusEl) statusEl.textContent = '正在加载测试参数...';
+    if (metaEl) metaEl.textContent = '正在加载';
+    setPromptPreviewActionState(key, { ready: false });
+    renderPromptPreviewTokenNotes(key, {});
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/prompt-templates/${encodeURIComponent(key)}/preview-preset`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '加载预览预设失败');
+
+        inputEl.value = formatJsonBlock(data.preset?.input || {}, '{}');
+        varsEl.value = formatJsonBlock(data.preset?.variables || {}, '{}');
+        if (statusEl) statusEl.textContent = '测试参数已加载，可直接点“渲染预览”';
+        if (metaEl) metaEl.textContent = '预设已加载';
+        if (resultEl) resultEl.textContent = '尚未渲染预览';
+        if (rawEl) rawEl.textContent = '尚未渲染预览';
+        if (effectiveEl) effectiveEl.textContent = '尚未渲染预览';
+    } catch (err) {
+        if (statusEl) statusEl.textContent = `加载失败：${err.message || '预设加载失败'}`;
+        if (metaEl) metaEl.textContent = '预设加载失败';
+    }
+}
+
+async function previewPromptTemplate(key) {
+    const { templateEl, inputEl, varsEl, resultEl, rawEl, effectiveEl, metaEl, statusEl } = getPromptPreviewElements(key);
+    if (!templateEl || !inputEl || !varsEl || !resultEl || !metaEl) return;
+
+    let input = {};
+    let variables = {};
+
+    try {
+        input = JSON.parse(String(inputEl.value || '{}').trim() || '{}');
+    } catch {
+        alert('结构化输入必须是合法 JSON');
+        return;
+    }
+
+    try {
+        variables = JSON.parse(String(varsEl.value || '{}').trim() || '{}');
+    } catch {
+        alert('手动变量覆盖必须是合法 JSON');
+        return;
+    }
+
+    if (statusEl) statusEl.textContent = '正在渲染预览...';
+    resultEl.textContent = '正在渲染预览...';
+    if (rawEl) rawEl.textContent = '正在渲染预览...';
+    if (effectiveEl) effectiveEl.textContent = '正在渲染预览...';
+    metaEl.textContent = '正在渲染';
+    setPromptPreviewActionState(key, { ready: false });
+    renderPromptPreviewTokenNotes(key, {});
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/prompt-templates/${encodeURIComponent(key)}/preview`, {
+            method: 'POST',
+            body: JSON.stringify({
+                content: templateEl.value,
+                input,
+                variables
+            })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '渲染预览失败');
+
+        const preview = data.preview || {};
+        const summaryParts = [];
+        summaryParts.push(`长度 ${Number(preview.promptLength || 0)} 字`);
+        if (Array.isArray(preview.autoAppendedTokens) && preview.autoAppendedTokens.length) {
+            summaryParts.push(`自动补全 ${preview.autoAppendedTokens.map(item => `{{${item}}}`).join('、')}`);
+        }
+        if (Array.isArray(preview.unresolvedTokens) && preview.unresolvedTokens.length) {
+            summaryParts.push(`未替换 ${preview.unresolvedTokens.map(item => `{{${item}}}`).join('、')}`);
+        }
+        if (statusEl) {
+            const resolvedText = Array.isArray(preview.resolvedSources) && preview.resolvedSources.length
+                ? `已注入：${preview.resolvedSources.map(item => `{{${item.token}}}`).join('、')}`
+                : '本次没有注入结构化数据源';
+            const skippedText = Array.isArray(preview.skippedSources) && preview.skippedSources.length
+                ? `；跳过：${preview.skippedSources.map(item => `{{${item.token}}}（${item.reason}）`).join('、')}`
+                : '';
+            statusEl.textContent = `${resolvedText}${skippedText}`;
+        }
+        metaEl.textContent = summaryParts.join(' · ') || '渲染完成';
+        if (rawEl) rawEl.textContent = String(preview.rawContent || '').trim() || '模板为空';
+        if (effectiveEl) effectiveEl.textContent = String(preview.effectiveContent || '').trim() || '有效模板为空';
+        resultEl.textContent = String(preview.renderedPrompt || '').trim() || '渲染结果为空';
+        resultEl.dataset.renderedPrompt = String(preview.renderedPrompt || '').trim();
+        setPromptPreviewActionState(key, { ready: Boolean(resultEl.dataset.renderedPrompt) });
+        renderPromptPreviewTokenNotes(key, preview);
+    } catch (err) {
+        resultEl.textContent = `错误：${err.message || '渲染失败'}`;
+        if (rawEl) rawEl.textContent = '渲染失败';
+        if (effectiveEl) effectiveEl.textContent = '渲染失败';
+        resultEl.dataset.renderedPrompt = '';
+        metaEl.textContent = '渲染失败';
+        if (statusEl) statusEl.textContent = '渲染失败';
+        setPromptPreviewActionState(key, { ready: false });
+        renderPromptPreviewTokenNotes(key, {});
+    }
+}
+
+async function copyPromptPreviewResult(key) {
+    const { resultEl } = getPromptPreviewElements(key);
+    const promptText = String(resultEl?.dataset?.renderedPrompt || resultEl?.textContent || '').trim();
+    if (!promptText || promptText === '尚未渲染预览') return;
+
+    const copied = await copyTextWithFallback(promptText);
+    setPromptPreviewActionState(key, {
+        ready: true,
+        copyLabel: copied ? '✓ 已复制' : '复制失败'
+    });
+    window.setTimeout(() => {
+        setPromptPreviewActionState(key, { ready: true });
+    }, 1200);
+}
+
+function downloadPromptPreviewResult(key) {
+    const { resultEl } = getPromptPreviewElements(key);
+    const promptText = String(resultEl?.dataset?.renderedPrompt || resultEl?.textContent || '').trim();
+    if (!promptText || promptText === '尚未渲染预览') return;
+    downloadTextAsFile(promptText, buildPromptPreviewFileName(key));
+}
+
+function getStructuredSourceByKey(key) {
+    const normalizedKey = String(key || '').trim();
+    return structuredSourcesCache.find(item => item.key === normalizedKey) || null;
+}
+
+function renderStructuredSourceList() {
+    const wrap = document.getElementById('structured-sources-list');
+    if (!wrap) return;
+
+    if (!structuredSourcesCache.length) {
+        wrap.innerHTML = '<div class="rounded-box bg-base-200 px-4 py-6 text-sm text-base-content/60">当前没有可用结构化数据源。</div>';
+        return;
+    }
+
+    wrap.innerHTML = structuredSourcesCache.map(item => {
+        const isActive = item.key === currentStructuredSourceKey;
+        return `
+            <button class="w-full text-left rounded-box border px-4 py-4 transition ${isActive ? 'border-primary bg-primary/10 shadow-sm' : 'border-base-300 bg-base-100 hover:bg-base-200/70'}"
+                onclick="selectStructuredSource('${escapeHtml(item.key)}')">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="font-semibold text-sm text-base-content/90">${escapeHtml(item.title || item.key)}</div>
+                        <div class="text-xs text-base-content/55 mt-1">${escapeHtml(item.description || '')}</div>
+                    </div>
+                    <span class="badge badge-outline badge-sm">${escapeHtml(item.category || '未分类')}</span>
+                </div>
+                <div class="text-[11px] text-base-content/50 mt-3 flex flex-wrap gap-2">
+                    <span>Token: <code>${escapeHtml(`{{${item.token}}}`)}</code></span>
+                    <span>场景: ${escapeHtml(item.sceneLabel || item.scene || '-')}</span>
+                </div>
+            </button>
+        `;
+    }).join('');
+}
+
+function renderStructuredSourceDetail(source) {
+    const emptyEl = document.getElementById('structured-source-empty');
+    const detailEl = document.getElementById('structured-source-detail');
+    const titleEl = document.getElementById('structured-source-title');
+    const subtitleEl = document.getElementById('structured-source-subtitle');
+    const badgesEl = document.getElementById('structured-source-badges');
+    const descEl = document.getElementById('structured-source-description');
+    const schemaEl = document.getElementById('structured-source-schema');
+    const inputEl = document.getElementById('structured-source-test-input');
+    const resultEl = document.getElementById('structured-source-test-result');
+    const metaEl = document.getElementById('structured-source-test-meta');
+
+    if (!source) {
+        currentStructuredSourceKey = '';
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        if (detailEl) detailEl.classList.add('hidden');
+        if (titleEl) titleEl.textContent = '请选择左侧数据源';
+        if (subtitleEl) subtitleEl.textContent = '支持查看 token、输入参数、场景说明与测试结果。';
+        if (badgesEl) badgesEl.innerHTML = '';
+        if (descEl) descEl.textContent = '';
+        if (schemaEl) schemaEl.textContent = '暂无';
+        if (inputEl) inputEl.value = '';
+        if (resultEl) resultEl.textContent = '尚未执行测试';
+        if (metaEl) metaEl.textContent = '尚未执行测试';
+        return;
+    }
+
+    currentStructuredSourceKey = source.key;
+    if (emptyEl) emptyEl.classList.add('hidden');
+    if (detailEl) detailEl.classList.remove('hidden');
+    if (titleEl) titleEl.textContent = source.title || source.key;
+    if (subtitleEl) subtitleEl.textContent = `Token：{{${source.token}}} · 场景：${source.sceneLabel || source.scene || '-'}`;
+    if (badgesEl) {
+        badgesEl.innerHTML = `
+            <span class="badge badge-outline">Key: ${escapeHtml(source.key || '-')}</span>
+            <span class="badge badge-primary badge-outline">Token: ${escapeHtml(`{{${source.token}}}`)}</span>
+            <span class="badge badge-ghost">${escapeHtml(source.category || '未分类')}</span>
+        `;
+    }
+    if (descEl) descEl.textContent = source.description || '暂无说明';
+    if (schemaEl) schemaEl.textContent = formatJsonBlock(source.inputSchema || {});
+    if (inputEl) inputEl.value = formatJsonBlock(source.defaultTestInput || {});
+    if (resultEl) resultEl.textContent = '尚未执行测试';
+    if (metaEl) metaEl.textContent = '尚未执行测试';
+}
+
+function selectStructuredSource(key) {
+    renderStructuredSourceDetail(getStructuredSourceByKey(key));
+    renderStructuredSourceList();
+}
+
+async function loadStructuredSources(force = false) {
+    const wrap = document.getElementById('structured-sources-list');
+    if (!wrap) return;
+    if (force || !wrap.dataset.loaded) {
+        wrap.innerHTML = '<div class="rounded-box bg-base-200 px-4 py-6 text-sm text-base-content/60">正在加载结构化数据源...</div>';
+    }
+
+    try {
+        const res = await Auth.apiFetch('/api/admin/structured-sources');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '加载结构化数据源失败');
+
+        structuredSourcesCache = Array.isArray(data.sources) ? data.sources : [];
+        wrap.dataset.loaded = 'true';
+        const nextKey = getStructuredSourceByKey(currentStructuredSourceKey)?.key || structuredSourcesCache[0]?.key || '';
+        renderStructuredSourceDetail(getStructuredSourceByKey(nextKey));
+        renderStructuredSourceList();
+    } catch (err) {
+        wrap.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-4 py-6 text-sm text-error">${escapeHtml(err.message || '加载结构化数据源失败')}</div>`;
+        renderStructuredSourceDetail(null);
+    }
+}
+
+async function testStructuredSource(explicitKey = '') {
+    const source = getStructuredSourceByKey(explicitKey || currentStructuredSourceKey);
+    if (!source) {
+        alert('请先选择一个结构化数据源');
+        return;
+    }
+
+    const inputEl = document.getElementById('structured-source-test-input');
+    const resultEl = document.getElementById('structured-source-test-result');
+    const metaEl = document.getElementById('structured-source-test-meta');
+    if (!inputEl || !resultEl || !metaEl) return;
+
+    let parsedInput = {};
+    const rawInput = String(inputEl.value || '').trim();
+    if (rawInput) {
+        try {
+            parsedInput = JSON.parse(rawInput);
+        } catch {
+            alert('测试参数必须是合法 JSON');
+            return;
+        }
+    }
+
+    resultEl.textContent = '正在测试数据源...';
+    metaEl.textContent = '正在执行测试';
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/structured-sources/${encodeURIComponent(source.key)}/test`, {
+            method: 'POST',
+            body: JSON.stringify({ input: parsedInput })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '测试结构化数据源失败');
+
+        resultEl.textContent = formatJsonBlock(data.output ?? data.renderedValue ?? {});
+        metaEl.textContent = `测试成功 · 耗时 ${Number(data.durationMs || 0)} ms · 输出版本 ${data.version || '-'}`;
+    } catch (err) {
+        resultEl.textContent = `错误：${err.message || '测试失败'}`;
+        metaEl.textContent = '测试失败';
+    }
 }
 
 // ==================== Utility ====================

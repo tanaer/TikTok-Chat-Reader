@@ -1,5 +1,9 @@
 const { getPromptTemplate, renderPromptTemplate } = require('./aiPromptService');
 const { buildCustomerContext, CUSTOMER_CONTEXT_VERSION } = require('./aiContextService');
+const {
+    resolveAiStructuredDataVariables,
+    injectMissingStructuredDataTokens
+} = require('./aiStructuredDataSourceService');
 
 const CUSTOMER_ANALYSIS_PROMPT_KEY = 'customer_analysis_review';
 
@@ -326,12 +330,30 @@ async function prepareCustomerAnalysis({ userId, roomId = null, roomFilter = nul
         throw new Error('客户分析提示词模板不存在');
     }
 
-    const renderedPrompt = renderPromptTemplate(template.content, contextPayload.promptVariables);
+    const templateContent = injectMissingStructuredDataTokens({
+        scene: CUSTOMER_ANALYSIS_PROMPT_KEY,
+        templateContent: template.content || ''
+    });
+    const structuredVariables = await resolveAiStructuredDataVariables({
+        scene: CUSTOMER_ANALYSIS_PROMPT_KEY,
+        context: {
+            userId,
+            roomId,
+            roomFilter,
+            now,
+            customerContextPayload: contextPayload
+        }
+    });
+    const renderedPrompt = renderPromptTemplate(templateContent, {
+        ...contextPayload.promptVariables,
+        ...structuredVariables
+    });
     const promptUpdatedAt = template.updatedAt || null;
 
     return {
         ...contextPayload,
         promptTemplate: template,
+        promptTemplateContent: templateContent,
         promptKey: CUSTOMER_ANALYSIS_PROMPT_KEY,
         promptUpdatedAt,
         renderedPrompt,

@@ -10,6 +10,24 @@ let currentDetailAiJobId = 0;
 let aiAnalysisJobPollTimer = null;
 const DEFAULT_PERSONALITY_ANALYSIS_POINTS = 1;
 
+function confirmPersonalityAnalysisConsumption(pointCost = DEFAULT_PERSONALITY_ANALYSIS_POINTS, { force = false, batchSize = 0 } = {}) {
+    const safePointCost = Math.max(0, Number(pointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS));
+    if (batchSize > 0) {
+        const safeBatchSize = Math.max(1, Number(batchSize || 0));
+        const maxPointCost = safePointCost * safeBatchSize;
+        const actionLabel = force ? '批量重新分析' : '批量生成 AI性格分析';
+        const detailLabel = force
+            ? '本批次会按实际成功重跑的用户逐个扣点，语料不足的用户会自动跳过。'
+            : '本批次会按实际成功生成的用户逐个扣点，语料不足的用户会自动跳过。';
+        return window.confirm(
+            `${actionLabel}将处理 ${safeBatchSize} 个用户，最多消耗 ${maxPointCost} AI点。\n${detailLabel}\n确认后会立即开始，是否继续？`
+        );
+    }
+
+    const actionLabel = force ? '重新分析将重新消耗' : '本次 AI性格分析将消耗';
+    return window.confirm(`${actionLabel} ${safePointCost} AI点。\n确认后会立即开始生成，是否继续？`);
+}
+
 function setUserPageSize(size) {
     userListPageSize = parseInt(size) || 50;
     userListPage = 1;  // Reset to first page
@@ -705,8 +723,8 @@ function renderDetailChart(canvasId, labels, data, color) {
 function runAiAnalysis(userId, force = false) {
     currentDetailAiUserId = String(userId || '').trim();
     const isAdminUser = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
-    if (force && !isAdminUser) {
-        const confirmed = window.confirm(`重新分析将重新消耗 ${DEFAULT_PERSONALITY_ANALYSIS_POINTS} AI点，是否继续？`);
+    if (!isAdminUser) {
+        const confirmed = confirmPersonalityAnalysisConsumption(DEFAULT_PERSONALITY_ANALYSIS_POINTS, { force });
         if (!confirmed) return;
     }
 
@@ -718,13 +736,21 @@ function runAiAnalysis(userId, force = false) {
     Auth.apiFetch('/api/analysis/ai', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: userId, force: force })
+        body: JSON.stringify({ userId: userId, force: force, confirmConsumption: !isAdminUser })
     })
     .then(r => {
         if (!r.ok) return r.json().then(d => { throw d; });
         return r.json();
     })
     .then(res => {
+        if (res.accepted && res.job) {
+            showAiAnalysisJobPending(res.job);
+            startAiAnalysisJobPolling(res.job.id, userId);
+            if (res.message) {
+                $('#aiMeta').show().text(res.message);
+            }
+            return;
+        }
         if (res.skipped) {
             renderAiAnalysisResult(res.result, null);
             $('#aiCacheStatus').text(`(语料 ${res.chatCount} 条)`);
@@ -747,7 +773,7 @@ function runAiAnalysis(userId, force = false) {
     })
     .catch(err => {
         const msg = err.error || err.message || '分析失败';
-        if (err.code === 'AI_CREDITS_EXHAUSTED') {
+        if (err.code === 'AI_CREDITS_EXHAUSTED' || err.code === 'AI_CONSUMPTION_CONFIRM_REQUIRED') {
             $('#aiResult').html(`<span class="text-warning">${escapeAiHtml(msg)}</span>`);
         } else {
             renderAiAnalysisResult('错误: ' + msg, null);
@@ -973,11 +999,15 @@ let batchAIRunning = false;
 async function startBatchAI(forceReanalyze) {
     if (batchAIRunning) return;
     batchAIRunning = true;
+    const isAdminUser = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
 
     // Show progress, hide options
     $('#batchAIOptions').hide();
     $('#batchAIProgress').show();
     $('#batchAIClose').prop('disabled', true);
+    $('#batchAIStatus').text('正在计算本批次预计扣点...');
+    $('#batchAIBar').val(0);
+    $('#batchAICount').text('0/0');
 
     try {
         // Fetch top users
@@ -1003,6 +1033,19 @@ async function startBatchAI(forceReanalyze) {
             batchAIRunning = false;
             $('#batchAIClose').prop('disabled', false);
             return;
+        }
+
+        if (!isAdminUser) {
+            const confirmed = confirmPersonalityAnalysisConsumption(DEFAULT_PERSONALITY_ANALYSIS_POINTS, {
+                force: forceReanalyze,
+                batchSize: users.length
+            });
+            if (!confirmed) {
+                $('#batchAIOptions').show();
+                $('#batchAIProgress').hide();
+                $('#batchAIErrors').hide().text('');
+                return;
+            }
         }
 
         const total = users.length;
@@ -1037,7 +1080,11 @@ async function startBatchAI(forceReanalyze) {
                         const res = await Auth.apiFetch('/api/analysis/ai', {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({ userId: user.userId, force: forceReanalyze })
+                            body: JSON.stringify({
+                                userId: user.userId,
+                                force: forceReanalyze,
+                                confirmConsumption: !isAdminUser
+                            })
                         });
                         if (!res.ok) {
                             const errData = await res.json().catch(() => ({}));
@@ -1046,6 +1093,12 @@ async function startBatchAI(forceReanalyze) {
                                 queue.length = 0;
                                 errors++;
                                 $('#batchAIErrors').show().text('AI 点数不足，批量分析中止');
+                                break;
+                            }
+                            if (errData.code === 'AI_CONSUMPTION_CONFIRM_REQUIRED') {
+                                queue.length = 0;
+                                errors++;
+                                $('#batchAIErrors').show().text(errData.error || '批量分析缺少扣点确认，任务已中止');
                                 break;
                             }
                             errors++;

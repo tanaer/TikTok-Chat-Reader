@@ -20,6 +20,8 @@ var roomCustomerAnalysisJobPollTimer = null;
 var currentRoomCustomerAnalysisJobId = 0;
 var currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '', hasAnalysisResult: false };
 var currentRoomLoadRequestId = 0;
+var globalLoadingVariant = 'default';
+var globalLoadingMessage = '加载中...';
 const DEFAULT_SESSION_RECAP_POINTS = 20;
 const DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS = 3;
 const SESSION_RECAP_LOADING_TIPS = [
@@ -28,6 +30,18 @@ const SESSION_RECAP_LOADING_TIPS = [
     '正在识别核心客户、潜力客户与风险客户',
     '正在整理老板能直接转发的 AI直播复盘'
 ];
+
+function confirmSessionRecapConsumption(pointCost = DEFAULT_SESSION_RECAP_POINTS, { force = false } = {}) {
+    const safePointCost = Math.max(0, Number(pointCost || DEFAULT_SESSION_RECAP_POINTS));
+    const actionLabel = force ? '重新生成 AI直播复盘将重新消耗' : '本次 AI直播复盘将消耗';
+    return window.confirm(`${actionLabel} ${safePointCost} AI点。\n确认后会立即提交后台任务，是否继续？`);
+}
+
+function confirmRoomCustomerAnalysisConsumption(pointCost = DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS, { force = false } = {}) {
+    const safePointCost = Math.max(0, Number(pointCost || DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS));
+    const actionLabel = force ? '重新挖掘将重新消耗' : '本次客户价值深度挖掘将消耗';
+    return window.confirm(`${actionLabel} ${safePointCost} AI点。\n确认后会立即提交后台任务，是否继续？`);
+}
 
 
 function normalizeFeatureFlags(rawFlags) {
@@ -45,6 +59,30 @@ function normalizeFeatureFlags(rawFlags) {
 function hasFeatureFlag(flags, ...keys) {
     const normalized = normalizeFeatureFlags(flags);
     return keys.some(key => Boolean(normalized?.[key]));
+}
+
+function nextPaint(frames = 1) {
+    const safeFrames = Math.max(1, Number(frames || 1));
+    return new Promise(resolve => {
+        let remaining = safeFrames;
+        const step = () => {
+            remaining -= 1;
+            if (remaining <= 0) {
+                resolve();
+                return;
+            }
+            if (typeof window.requestAnimationFrame === 'function') {
+                window.requestAnimationFrame(step);
+                return;
+            }
+            window.setTimeout(step, 16);
+        };
+        if (typeof window.requestAnimationFrame === 'function') {
+            window.requestAnimationFrame(step);
+            return;
+        }
+        window.setTimeout(step, 16);
+    });
 }
 
 function getMonitorDeepLinkState() {
@@ -114,30 +152,39 @@ async function handleMonitorDeepLink() {
 }
 
 
-function setGlobalLoadingVisible(visible, message = '加载中...') {
+function setGlobalLoadingVisible(visible, message = '加载中...', options = {}) {
     const overlay = document.getElementById('globalLoadingOverlay');
     const textEl = document.getElementById('globalLoadingText');
     if (!overlay || !textEl) return;
 
     textEl.textContent = message;
+    overlay.dataset.variant = options.variant === 'compact' ? 'compact' : 'default';
     overlay.classList.toggle('is-visible', visible);
     overlay.setAttribute('aria-hidden', visible ? 'false' : 'true');
 }
 
-function showGlobalLoading(message = '加载中...') {
+function showGlobalLoading(message = '加载中...', options = {}) {
     globalLoadingCount += 1;
-    setGlobalLoadingVisible(true, message);
+    globalLoadingMessage = message;
+    globalLoadingVariant = options.variant === 'compact' ? 'compact' : 'default';
+    setGlobalLoadingVisible(true, message, { variant: globalLoadingVariant });
 }
 
 function hideGlobalLoading() {
     globalLoadingCount = Math.max(0, globalLoadingCount - 1);
     if (globalLoadingCount === 0) {
-        setGlobalLoadingVisible(false);
+        globalLoadingVariant = 'default';
+        globalLoadingMessage = '加载中...';
+        setGlobalLoadingVisible(false, globalLoadingMessage, { variant: globalLoadingVariant });
     }
 }
 
-async function withGlobalLoading(message, task) {
-    showGlobalLoading(message);
+async function withGlobalLoading(message, task, options = {}) {
+    showGlobalLoading(message, options);
+    const paintFrames = Math.max(0, Number(options.paintFrames || 0));
+    if (paintFrames > 0) {
+        await nextPaint(paintFrames);
+    }
     try {
         return await task();
     } finally {
@@ -1081,6 +1128,29 @@ function setSessionRecapExportState({ visible = false, disabled = true, loadingT
     });
 }
 
+function getAdaptiveExportPixelRatio(width, height) {
+    const safeWidth = Math.max(1, Number(width || 0));
+    const safeHeight = Math.max(1, Number(height || 0));
+    const area = safeWidth * safeHeight;
+    const deviceRatio = Math.max(1, Number(window.devicePixelRatio || 1));
+
+    if (area >= 12000000) return Math.min(deviceRatio, 1);
+    if (area >= 8000000) return Math.min(deviceRatio, 1.1);
+    if (area >= 5000000) return Math.min(deviceRatio, 1.2);
+    if (area >= 3000000) return Math.min(deviceRatio, 1.35);
+    return Math.min(deviceRatio, 1.5);
+}
+
+function getRoomCustomerAnalysisActionElements() {
+    return {
+        wraps: Array.from(document.querySelectorAll('[data-room-customer-export-wrap="true"]')),
+        menuButtons: Array.from(document.querySelectorAll('[data-room-customer-export-menu-btn="true"]')),
+        imageButtons: Array.from(document.querySelectorAll('[data-room-customer-export-image-btn="true"]')),
+        pdfButtons: Array.from(document.querySelectorAll('[data-room-customer-export-pdf-btn="true"]')),
+        runButtons: Array.from(document.querySelectorAll('[data-room-customer-run-btn="true"]'))
+    };
+}
+
 function normalizeRecapCustomerIdentity(value) {
     return String(value || '').trim().toLowerCase();
 }
@@ -1211,7 +1281,7 @@ async function captureSessionRecapCanvas() {
 
         return await window.htmlToImage.toCanvas(target, {
             cacheBust: true,
-            pixelRatio: Math.min(2, Math.max(1.5, window.devicePixelRatio || 1)),
+            pixelRatio: getAdaptiveExportPixelRatio(exportWidth, exportHeight),
             backgroundColor: '#f4f7fb',
             width: exportWidth,
             height: exportHeight,
@@ -1247,11 +1317,12 @@ async function exportSessionRecapAsImage() {
     try {
         document.getElementById('sessionRecapExportMenuBtn')?.blur();
         setSessionRecapExportState({ visible: true, disabled: true, loadingType: 'image' });
-        await withGlobalLoading('正在导出复盘图片...', async () => {
+        await withGlobalLoading('正在导出复盘图片，请稍候...', async () => {
             const canvas = await captureSessionRecapCanvas();
+            await nextPaint(1);
             const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 1));
             downloadBlob(blob, buildSessionRecapExportFileName('png'));
-        });
+        }, { variant: 'compact', paintFrames: 2 });
     } catch (err) {
         alert(err?.message || '导出图片失败，请稍后重试');
     } finally {
@@ -1271,8 +1342,9 @@ async function exportSessionRecapAsPdf() {
 
         document.getElementById('sessionRecapExportMenuBtn')?.blur();
         setSessionRecapExportState({ visible: true, disabled: true, loadingType: 'pdf' });
-        await withGlobalLoading('正在导出复盘 PDF...', async () => {
+        await withGlobalLoading('正在导出复盘 PDF，请稍候...', async () => {
             const canvas = await captureSessionRecapCanvas();
+            await nextPaint(1);
             const pdf = new jsPDF('p', 'pt', 'a4');
             const pageWidth = pdf.internal.pageSize.getWidth();
             const pageHeight = pdf.internal.pageSize.getHeight();
@@ -1294,7 +1366,7 @@ async function exportSessionRecapAsPdf() {
             }
 
             pdf.save(buildSessionRecapExportFileName('pdf'));
-        });
+        }, { variant: 'compact', paintFrames: 2 });
     } catch (err) {
         alert(err?.message || '导出 PDF 失败，请稍后重试');
     } finally {
@@ -1303,16 +1375,13 @@ async function exportSessionRecapAsPdf() {
 }
 
 function setRoomCustomerAnalysisExportState({ visible = false, disabled = true, loadingType = '' } = {}) {
-    const wrap = document.getElementById('roomCustomerAnalysisExportActions');
-    const menuBtn = document.getElementById('roomCustomerAnalysisExportMenuBtn');
-    const imageBtn = document.getElementById('exportRoomCustomerAnalysisImageBtn');
-    const pdfBtn = document.getElementById('exportRoomCustomerAnalysisPdfBtn');
+    const { wraps, menuButtons, imageButtons, pdfButtons } = getRoomCustomerAnalysisActionElements();
 
-    if (wrap) {
+    wraps.forEach(wrap => {
         wrap.classList.toggle('hidden', !visible);
-    }
+    });
 
-    if (menuBtn) {
+    menuButtons.forEach(menuBtn => {
         if (!menuBtn.dataset.defaultLabel) menuBtn.dataset.defaultLabel = '导出结果';
         menuBtn.disabled = !visible || disabled;
         menuBtn.classList.toggle('btn-disabled', !visible || disabled);
@@ -1323,9 +1392,9 @@ function setRoomCustomerAnalysisExportState({ visible = false, disabled = true, 
                 ? '导出PDF中...'
                 : menuBtn.dataset.defaultLabel;
         if (loadingType) menuBtn.classList.add('loading');
-    }
+    });
 
-    [imageBtn, pdfBtn].forEach(btn => {
+    [...imageButtons, ...pdfButtons].forEach(btn => {
         if (!btn) return;
         btn.disabled = !visible || disabled;
     });
@@ -1361,13 +1430,14 @@ async function captureRoomCustomerAnalysisCanvas() {
     const exportHeight = Math.max(target.scrollHeight, target.offsetHeight);
 
     try {
+        target.classList.add('room-customer-analysis-exporting');
         target.style.width = `${exportWidth}px`;
         target.style.maxWidth = `${exportWidth}px`;
         await sleep(80);
 
         return await window.htmlToImage.toCanvas(target, {
             cacheBust: true,
-            pixelRatio: Math.min(2, Math.max(1.5, window.devicePixelRatio || 1)),
+            pixelRatio: getAdaptiveExportPixelRatio(exportWidth, exportHeight),
             backgroundColor: '#f4f7fb',
             width: exportWidth,
             height: exportHeight,
@@ -1384,6 +1454,7 @@ async function captureRoomCustomerAnalysisCanvas() {
         }
         throw err;
     } finally {
+        target.classList.remove('room-customer-analysis-exporting');
         target.style.width = previous.width;
         target.style.maxWidth = previous.maxWidth;
         roomCustomerAnalysisExporting = false;
@@ -1398,13 +1469,14 @@ async function exportRoomCustomerAnalysisAsImage() {
     }
 
     try {
-        document.getElementById('roomCustomerAnalysisExportMenuBtn')?.blur();
+        document.querySelectorAll('[data-room-customer-export-menu-btn="true"]').forEach(btn => btn.blur());
         setRoomCustomerAnalysisExportState({ visible: true, disabled: true, loadingType: 'image' });
-        await withGlobalLoading('正在导出深挖图片...', async () => {
+        await withGlobalLoading('正在导出深挖图片，请稍候...', async () => {
             const canvas = await captureRoomCustomerAnalysisCanvas();
+            await nextPaint(1);
             const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png', 1));
             downloadBlob(blob, buildRoomCustomerAnalysisExportFileName('png'));
-        });
+        }, { variant: 'compact', paintFrames: 2 });
     } catch (err) {
         alert(err?.message || '导出图片失败，请稍后重试');
     } finally {
@@ -1423,10 +1495,11 @@ async function exportRoomCustomerAnalysisAsPdf() {
         const jsPDF = window.jspdf?.jsPDF;
         if (typeof jsPDF !== 'function') throw new Error('PDF 导出组件尚未加载完成，请刷新页面后重试');
 
-        document.getElementById('roomCustomerAnalysisExportMenuBtn')?.blur();
+        document.querySelectorAll('[data-room-customer-export-menu-btn="true"]').forEach(btn => btn.blur());
         setRoomCustomerAnalysisExportState({ visible: true, disabled: true, loadingType: 'pdf' });
-        await withGlobalLoading('正在导出深挖 PDF...', async () => {
+        await withGlobalLoading('正在导出深挖 PDF，请稍候...', async () => {
             const canvas = await captureRoomCustomerAnalysisCanvas();
+            await nextPaint(1);
             const pdf = new jsPDF('p', 'pt', 'a4');
             const pageWidth = pdf.internal.pageSize.getWidth();
             const pageHeight = pdf.internal.pageSize.getHeight();
@@ -1448,7 +1521,7 @@ async function exportRoomCustomerAnalysisAsPdf() {
             }
 
             pdf.save(buildRoomCustomerAnalysisExportFileName('pdf'));
-        });
+        }, { variant: 'compact', paintFrames: 2 });
     } catch (err) {
         alert(err?.message || '导出 PDF 失败，请稍后重试');
     } finally {
@@ -1931,6 +2004,12 @@ function renderRecapCustomerSegment(containerId, items = [], emptyText = '暂无
     wrap.innerHTML = items.map(item => {
         const metaBadges = [];
         const sessionGiftValue = Number(item?.sessionGiftValue ?? 0);
+        const giftCount = Number(item?.giftCount ?? 0);
+        const sessionGiftBadge = sessionGiftValue > 0
+            ? `本场💎 ${sessionGiftValue.toLocaleString()}`
+            : giftCount > 0
+                ? '本场已送礼'
+                : '本场未出手';
         if (segmentType === 'risk') {
             metaBadges.push(`<span class="badge badge-ghost badge-sm">${escapeRecapHtml(formatRecapTimeText(item.enterTime || item.firstEnterAt))} → ${escapeRecapHtml(formatRecapTimeText(item.leaveTime || item.lastActiveAt))}</span>`);
         }
@@ -1941,7 +2020,7 @@ function renderRecapCustomerSegment(containerId, items = [], emptyText = '暂无
                     <div class="font-semibold truncate" title="${escapeRecapHtml(item.nickname || '匿名')}">${escapeRecapHtml(item.nickname || '匿名')}</div>
                     <div class="text-xs opacity-60 mt-1 truncate" title="${escapeRecapHtml(item.uniqueId || '未记录账号')}">${escapeRecapHtml(item.uniqueId || '未记录账号')}</div>
                 </div>
-                <span class="badge badge-outline shrink-0 whitespace-nowrap self-start">${sessionGiftValue > 0 ? `本场💎 ${sessionGiftValue.toLocaleString()}` : '本场未出手'}</span>
+                <span class="badge badge-outline shrink-0 whitespace-nowrap self-start">${sessionGiftBadge}</span>
             </div>
             ${metaBadges.length ? `<div class="flex flex-wrap gap-2 mt-3 text-xs opacity-70">${metaBadges.join('')}</div>` : ''}
             <div class="text-xs leading-6 mt-3 opacity-80 break-words">${escapeRecapHtml(item.keyBehavior || item.reason || '')}</div>
@@ -2215,11 +2294,14 @@ async function generateSessionAiReview(force = false) {
     const requestSessionId = currentSessionId;
     const pointCost = Number(currentSessionRecap?.pointCost || DEFAULT_SESSION_RECAP_POINTS);
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
-    if (!force && currentSessionRecap?.aiReview) {
-        const confirmText = isAdmin
-            ? '当前场次已经生成过 AI直播复盘，是否重新生成？'
-            : `当前场次已经生成过 AI直播复盘，重新生成将再消耗 ${pointCost} AI点，是否继续？`;
-        if (!confirm(confirmText)) return;
+    const isRegenerate = Boolean(currentSessionRecap?.aiReview);
+    if (!isAdmin) {
+        const confirmed = confirmSessionRecapConsumption(pointCost, { force: isRegenerate });
+        if (!confirmed) return;
+    } else if (isRegenerate && !confirm('当前场次已经生成过 AI直播复盘，是否重新生成？')) {
+        return;
+    }
+    if (!force && isRegenerate) {
         force = true;
     }
 
@@ -2235,7 +2317,7 @@ async function generateSessionAiReview(force = false) {
     try {
         const res = await Auth.apiFetch(`/api/rooms/${requestRoomId}/session-recap/ai`, {
             method: 'POST',
-            body: JSON.stringify({ sessionId: requestSessionId, force })
+            body: JSON.stringify({ sessionId: requestSessionId, force, confirmConsumption: !isAdmin })
         });
         const data = await res.json().catch(() => ({}));
 
@@ -2257,6 +2339,10 @@ async function generateSessionAiReview(force = false) {
             restoreSessionRecapStage(previousRecap);
             if (data.code === 'AI_CREDITS_EXHAUSTED') {
                 alert(data.error || 'AI 点数不足');
+                return;
+            }
+            if (data.code === 'AI_CONSUMPTION_CONFIRM_REQUIRED') {
+                alert(data.error || '该操作需要先确认扣点');
                 return;
             }
             throw new Error(data.error || '提交 AI 直播复盘失败');
@@ -2580,17 +2666,18 @@ function renderRoomCustomerAnalysisResult(resultText, analysisPayload = null) {
 }
 
 function setRoomCustomerAnalysisButtonsPending(pending, isProcessing = false) {
-    const runBtn = document.getElementById('runRoomCustomerAnalysisBtn');
+    const { runButtons } = getRoomCustomerAnalysisActionElements();
     const rerunBtn = document.getElementById('rerunRoomCustomerAnalysisBtn');
     const hasAnalysisResult = Boolean(currentRoomCustomerAnalysisState?.hasAnalysisResult);
     const idleLabel = hasAnalysisResult ? '重新挖掘' : '开始挖掘';
-    if (runBtn) {
+
+    runButtons.forEach(runBtn => {
         runBtn.disabled = Boolean(pending);
         runBtn.classList.toggle('loading', Boolean(pending) && Boolean(isProcessing));
         runBtn.innerHTML = pending
             ? (isProcessing ? '后台挖掘中...' : '处理中...')
             : `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>${idleLabel}`;
-    }
+    });
     if (rerunBtn) {
         rerunBtn.disabled = true;
         rerunBtn.classList.add('hidden');
@@ -2784,8 +2871,8 @@ async function runRoomCustomerAnalysis(force = null) {
 
     const resolvedForce = typeof force === 'boolean' ? force : Boolean(currentRoomCustomerAnalysisState.hasAnalysisResult);
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
-    if (resolvedForce && !isAdmin) {
-        const confirmed = window.confirm(`重新挖掘将重新消耗 ${DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS} AI点，是否继续？`);
+    if (!isAdmin) {
+        const confirmed = confirmRoomCustomerAnalysisConsumption(DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS, { force: resolvedForce });
         if (!confirmed) return;
     }
 
@@ -2803,7 +2890,7 @@ async function runRoomCustomerAnalysis(force = null) {
     try {
         const res = await Auth.apiFetch(`/api/rooms/${encodeURIComponent(roomId)}/customer-analysis`, {
             method: 'POST',
-            body: JSON.stringify({ userId, force: resolvedForce })
+            body: JSON.stringify({ userId, force: resolvedForce, confirmConsumption: !isAdmin })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -2841,7 +2928,7 @@ async function runRoomCustomerAnalysis(force = null) {
         setRoomCustomerAnalysisButtonsPending(false);
     } catch (err) {
         setRoomCustomerAnalysisExportState({ visible: false });
-        renderRoomCustomerAnalysisResult(err.code === 'AI_CREDITS_EXHAUSTED'
+        renderRoomCustomerAnalysisResult(['AI_CREDITS_EXHAUSTED', 'AI_CONSUMPTION_CONFIRM_REQUIRED'].includes(err.code)
             ? (err.message || 'AI 点数不足，请购买点数包或升级套餐')
             : `错误: ${err.message || '提交客户价值深度挖掘失败'}`, null);
         setRoomCustomerAnalysisButtonsPending(false);

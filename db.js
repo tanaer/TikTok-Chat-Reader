@@ -861,6 +861,7 @@ async function initDb() {
                 prompt_updated_at TIMESTAMP,
                 context_version TEXT,
                 current_room_id TEXT,
+                source_job_id INTEGER,
                 latency_ms INTEGER DEFAULT 0,
                 source TEXT DEFAULT 'api',
                 created_at TIMESTAMP DEFAULT NOW()
@@ -879,6 +880,8 @@ async function initDb() {
         await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS prompt_updated_at TIMESTAMP`);
         await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS context_version TEXT`);
         await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS current_room_id TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS source_job_id INTEGER`);
+        await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_user_ai_analysis_source_job_unique ON user_ai_analysis(source_job_id) WHERE source_job_id IS NOT NULL`);
 
         // Single-session AI review cache table
         await pool.query(`
