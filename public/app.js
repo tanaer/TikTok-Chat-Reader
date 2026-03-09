@@ -1930,6 +1930,7 @@ function renderRecapCustomerSegment(containerId, items = [], emptyText = '暂无
     }
     wrap.innerHTML = items.map(item => {
         const metaBadges = [];
+        const sessionGiftValue = Number(item?.sessionGiftValue ?? 0);
         if (segmentType === 'risk') {
             metaBadges.push(`<span class="badge badge-ghost badge-sm">${escapeRecapHtml(formatRecapTimeText(item.enterTime || item.firstEnterAt))} → ${escapeRecapHtml(formatRecapTimeText(item.leaveTime || item.lastActiveAt))}</span>`);
         }
@@ -1940,7 +1941,7 @@ function renderRecapCustomerSegment(containerId, items = [], emptyText = '暂无
                     <div class="font-semibold truncate" title="${escapeRecapHtml(item.nickname || '匿名')}">${escapeRecapHtml(item.nickname || '匿名')}</div>
                     <div class="text-xs opacity-60 mt-1 truncate" title="${escapeRecapHtml(item.uniqueId || '未记录账号')}">${escapeRecapHtml(item.uniqueId || '未记录账号')}</div>
                 </div>
-                <span class="badge badge-outline shrink-0 whitespace-nowrap self-start">${Number(item.totalGiftValue || item.sessionGiftValue || 0) > 0 ? `💎 ${Number(item.totalGiftValue || item.sessionGiftValue || 0).toLocaleString()}` : '本场未出手'}</span>
+                <span class="badge badge-outline shrink-0 whitespace-nowrap self-start">${sessionGiftValue > 0 ? `本场💎 ${sessionGiftValue.toLocaleString()}` : '本场未出手'}</span>
             </div>
             ${metaBadges.length ? `<div class="flex flex-wrap gap-2 mt-3 text-xs opacity-70">${metaBadges.join('')}</div>` : ''}
             <div class="text-xs leading-6 mt-3 opacity-80 break-words">${escapeRecapHtml(item.keyBehavior || item.reason || '')}</div>

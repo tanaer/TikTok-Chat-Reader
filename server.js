@@ -2421,15 +2421,17 @@ function normalizeAiReviewCustomerArray(value, segment = 'core', limit = 8, fall
 }
 
 function serializeValueCustomer(item = {}) {
+    const sessionGiftValue = Number(item.sessionGiftValue ?? item.totalGiftValue ?? 0);
     return {
         nickname: item.nickname || '匿名',
         uniqueId: item.uniqueId || '',
-        sessionGiftValue: Number(item.sessionGiftValue || 0),
-        giftCount: Number(item.giftCount || 0),
-        historicalValue: Number(item.historicalValue || 0),
-        chatCount: Number(item.chatCount || 0),
-        likeCount: Number(item.likeCount || 0),
-        enterCount: Number(item.enterCount || 0),
+        totalGiftValue: sessionGiftValue,
+        sessionGiftValue,
+        giftCount: Number(item.giftCount ?? 0),
+        historicalValue: Number(item.historicalValue ?? 0),
+        chatCount: Number(item.chatCount ?? 0),
+        likeCount: Number(item.likeCount ?? 0),
+        enterCount: Number(item.enterCount ?? 0),
         firstEnterAt: item.firstEnterAt || null,
         lastActiveAt: item.lastActiveAt || null,
         reason: item.reason || '',
