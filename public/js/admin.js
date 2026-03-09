@@ -2772,6 +2772,130 @@ function getStructuredSourceByKey(key) {
     return structuredSourcesCache.find(item => item.key === normalizedKey) || null;
 }
 
+function getStructuredSourceFieldConfigs(source) {
+    const schema = source?.inputSchema || {};
+    const requiredSet = new Set(Array.isArray(schema.required) ? schema.required : []);
+    const properties = schema.properties && typeof schema.properties === 'object' ? schema.properties : {};
+
+    return Object.entries(properties).map(([key, config]) => ({
+        key,
+        type: String(config?.type || 'string').trim() || 'string',
+        label: String(config?.label || key).trim() || key,
+        description: String(config?.description || '').trim(),
+        required: requiredSet.has(key),
+        defaultValue: source?.defaultTestInput?.[key] ?? ''
+    }));
+}
+
+function renderStructuredSourceForm(source) {
+    const wrap = document.getElementById('structured-source-form-fields');
+    const hintEl = document.getElementById('structured-source-form-hint');
+    if (!wrap || !hintEl) return;
+
+    if (!source) {
+        wrap.innerHTML = '<div class="text-xs text-base-content/60">请选择数据源后填写参数。</div>';
+        hintEl.textContent = '必填项会在这里直接展示，无需编辑左侧输入结构。';
+        return;
+    }
+
+    const fields = getStructuredSourceFieldConfigs(source);
+    if (!fields.length) {
+        wrap.innerHTML = '<div class="text-xs text-base-content/60">该数据源当前无需额外输入参数。</div>';
+        hintEl.textContent = '可直接点击“测试数据源”。';
+        return;
+    }
+
+    wrap.innerHTML = fields.map(field => `
+        <label class="form-control w-full">
+            <div class="label pb-1">
+                <span class="label-text text-sm font-medium">
+                    ${escapeHtml(field.label)}
+                    ${field.required ? '<span class="text-error ml-1">*</span>' : ''}
+                </span>
+            </div>
+            <input
+                id="structured-source-field-${escapeHtml(field.key)}"
+                data-structured-source-field="true"
+                data-field-key="${escapeHtml(field.key)}"
+                data-field-type="${escapeHtml(field.type)}"
+                class="input input-bordered w-full"
+                type="text"
+                value="${escapeHtml(field.defaultValue == null ? '' : String(field.defaultValue))}"
+                placeholder="${escapeHtml(field.description || field.label)}"
+                oninput="syncStructuredSourceFormToJson()"
+            >
+            ${field.description ? `<div class="label pt-1"><span class="label-text-alt text-base-content/55">${escapeHtml(field.description)}</span></div>` : ''}
+        </label>
+    `).join('');
+
+    const requiredLabels = fields.filter(field => field.required).map(field => field.label);
+    hintEl.textContent = requiredLabels.length
+        ? `请先填写必填项：${requiredLabels.join('、')}。右侧 JSON 会自动同步。`
+        : '可选参数可直接填写，右侧 JSON 会自动同步。';
+}
+
+function collectStructuredSourceFormInput() {
+    const inputs = Array.from(document.querySelectorAll('[data-structured-source-field="true"]'));
+    return inputs.reduce((acc, input) => {
+        const key = String(input.dataset.fieldKey || '').trim();
+        if (!key) return acc;
+        const rawValue = String(input.value || '');
+        acc[key] = rawValue;
+        return acc;
+    }, {});
+}
+
+function normalizeStructuredSourceInputValue(rawValue, type = 'string') {
+    if (type === 'number' || type === 'integer') {
+        const trimmed = String(rawValue || '').trim();
+        if (!trimmed) return '';
+        const numeric = Number(trimmed);
+        return Number.isFinite(numeric) ? numeric : trimmed;
+    }
+    if (type === 'boolean') {
+        const normalized = String(rawValue || '').trim().toLowerCase();
+        if (!normalized) return '';
+        if (['true', '1', 'yes', 'y'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'n'].includes(normalized)) return false;
+    }
+    return String(rawValue || '');
+}
+
+function syncStructuredSourceFormToJson() {
+    const source = getStructuredSourceByKey(currentStructuredSourceKey);
+    const inputEl = document.getElementById('structured-source-test-input');
+    if (!source || !inputEl) return;
+
+    const fields = getStructuredSourceFieldConfigs(source);
+    const rawForm = collectStructuredSourceFormInput();
+    const payload = {};
+
+    fields.forEach(field => {
+        const normalizedValue = normalizeStructuredSourceInputValue(rawForm[field.key], field.type);
+        if (normalizedValue === '') return;
+        payload[field.key] = normalizedValue;
+    });
+
+    inputEl.value = formatJsonBlock(payload, '{}');
+}
+
+function validateStructuredSourceRequiredInput(source, parsedInput = {}) {
+    const fields = getStructuredSourceFieldConfigs(source);
+    const missingLabels = fields
+        .filter(field => field.required)
+        .filter(field => {
+            const value = parsedInput?.[field.key];
+            if (typeof value === 'string') return !value.trim();
+            return value == null;
+        })
+        .map(field => field.label);
+
+    return {
+        valid: missingLabels.length === 0,
+        missingLabels
+    };
+}
+
 function renderStructuredSourceList() {
     const wrap = document.getElementById('structured-sources-list');
     if (!wrap) return;
@@ -2824,6 +2948,7 @@ function renderStructuredSourceDetail(source) {
         if (descEl) descEl.textContent = '';
         if (schemaEl) schemaEl.textContent = '暂无';
         if (inputEl) inputEl.value = '';
+        renderStructuredSourceForm(null);
         if (resultEl) resultEl.textContent = '尚未执行测试';
         if (metaEl) metaEl.textContent = '尚未执行测试';
         return;
@@ -2843,6 +2968,7 @@ function renderStructuredSourceDetail(source) {
     }
     if (descEl) descEl.textContent = source.description || '暂无说明';
     if (schemaEl) schemaEl.textContent = formatJsonBlock(source.inputSchema || {});
+    renderStructuredSourceForm(source);
     if (inputEl) inputEl.value = formatJsonBlock(source.defaultTestInput || {});
     if (resultEl) resultEl.textContent = '尚未执行测试';
     if (metaEl) metaEl.textContent = '尚未执行测试';
@@ -2897,6 +3023,12 @@ async function testStructuredSource(explicitKey = '') {
             alert('测试参数必须是合法 JSON');
             return;
         }
+    }
+
+    const validation = validateStructuredSourceRequiredInput(source, parsedInput);
+    if (!validation.valid) {
+        alert(`请先填写必填参数：${validation.missingLabels.join('、')}`);
+        return;
     }
 
     resultEl.textContent = '正在测试数据源...';
