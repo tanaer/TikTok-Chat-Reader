@@ -2403,7 +2403,10 @@ async function loadPromptTemplates(force = false) {
                     </div>
                 </div>
                 <div class="rounded-box border border-base-300 bg-base-200/60 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
-                    <div class="font-semibold text-base-content/80 mb-2">可用变量</div>
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+                        <div class="font-semibold text-base-content/80">可用变量 / 数据源</div>
+                        <button class="btn btn-xs btn-outline" onclick="showSection('structuredSources')">打开结构化数据源</button>
+                    </div>
                     <div class="space-y-2">
                         ${(Array.isArray(item.variableSourceMappings) ? item.variableSourceMappings : []).map(mapping => `
                             <div>
@@ -2418,23 +2421,6 @@ async function loadPromptTemplates(force = false) {
                         `).join('') || '<div>无</div>'}
                     </div>
                 </div>
-                ${structuredSources.length ? `
-                    <div class="rounded-box border border-base-300 bg-base-200/70 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
-                        <div class="flex flex-wrap items-center justify-between gap-3">
-                            <div class="font-semibold text-base-content/80">可插入结构化数据源</div>
-                            <button class="btn btn-xs btn-outline" onclick="showSection('structuredSources')">打开结构化数据源</button>
-                        </div>
-                        <div class="mt-2 space-y-2">
-                            ${structuredSources.map(source => `
-                                <div>
-                                    <code>${escapeHtml(`{{${source.token}}}`)}</code>
-                                    <span class="text-base-content/80"> · ${escapeHtml(source.title || source.key)}</span>
-                                    <span class="text-base-content/55"> · ${escapeHtml(source.description || '')}</span>
-                                </div>
-                            `).join('')}
-                        </div>
-                    </div>
-                ` : ''}
                 ${item.key === 'customer_analysis_review' ? `
                     <div class="rounded-box border border-base-300 bg-base-200/80 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
                         该模板用于「房间详情 / 历史排行榜 / AI客户分析」。系统已经提前计算好客户数值、时间、排行与模型标签；编辑时请让 AI 只负责输出直接结论、重点结论、下一步动作和主播话术，不要直出英文键名，也不要让 AI 自己重算事实。涉及贡献占比时，请明确写成“该客户近30天总贡献里投向本房/其他房间的占比”，避免歧义。

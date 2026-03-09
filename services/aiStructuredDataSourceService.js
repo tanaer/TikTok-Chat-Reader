@@ -5,6 +5,7 @@ const { buildCustomerContext } = require('./aiContextService');
 const AI_STRUCTURED_DATA_SOURCE_VERSION = 'ai-structured-data-source.v1';
 const SESSION_RECAP_COMMENT_FILTER_SCENE = 'session_recap_comment_filter';
 const SESSION_RECAP_PROMPT_SCENE = 'session_recap_review';
+const USER_PERSONALITY_ANALYSIS_SCENE = 'user_personality_analysis';
 const CUSTOMER_ANALYSIS_PROMPT_SCENE = 'customer_analysis_review';
 const SESSION_RECAP_BENCHMARK_BASELINE_HOURS = 6;
 const SESSION_RECAP_BENCHMARK_BASELINE_GIFT_VALUE = 64000;
@@ -13,6 +14,7 @@ const SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD = 15;
 const SCENE_LABELS = Object.freeze({
     [SESSION_RECAP_COMMENT_FILTER_SCENE]: 'AI直播复盘 · 高频弹幕筛选',
     [SESSION_RECAP_PROMPT_SCENE]: 'AI直播复盘 · 主分析流程',
+    [USER_PERSONALITY_ANALYSIS_SCENE]: 'AI用户分析 · 性格分析流程',
     [CUSTOMER_ANALYSIS_PROMPT_SCENE]: 'AI客户分析 · 主分析流程'
 });
 
@@ -119,6 +121,14 @@ function buildSessionRecapCommentFilterCandidates(recap = {}) {
     return normalizedCandidates
         .filter(item => item.count <= SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD)
         .slice(0, 50);
+}
+
+function formatUserChatCorpusText(history = []) {
+    const normalizedHistory = Array.isArray(history) ? history : [];
+    return normalizedHistory
+        .map(item => String(item?.comment || '').trim())
+        .filter(Boolean)
+        .join('\n');
 }
 
 function serializeValueCustomer(item = {}) {
@@ -369,6 +379,38 @@ async function loadCustomerContextBundle(context = {}, runtime = {}) {
     return bundle;
 }
 
+async function loadUserPersonalityChatCorpusBundle(context = {}, runtime = {}) {
+    const normalizedUserId = safeTrimString(context.userId, 120);
+    if (!normalizedUserId) {
+        throw new Error('userId 不能为空');
+    }
+
+    const cache = ensureRuntimeCache(runtime);
+    const cacheKey = normalizedUserId;
+    if (cache.userPersonalityBundles?.[cacheKey]) {
+        return cache.userPersonalityBundles[cacheKey];
+    }
+
+    const chatCorpusText = safeTrimString(context.chatCorpusText, 60000);
+    const roomFilter = context.roomFilter || null;
+    const history = chatCorpusText
+        ? []
+        : await manager.getUserChatHistory(normalizedUserId, 200, roomFilter);
+    const resolvedChatCorpusText = chatCorpusText || formatUserChatCorpusText(history);
+
+    const bundle = {
+        userId: normalizedUserId,
+        chatCorpusText: resolvedChatCorpusText,
+        chatCount: chatCorpusText
+            ? resolvedChatCorpusText.split('\n').filter(Boolean).length
+            : (Array.isArray(history) ? history.length : 0)
+    };
+
+    cache.userPersonalityBundles = cache.userPersonalityBundles || {};
+    cache.userPersonalityBundles[cacheKey] = bundle;
+    return bundle;
+}
+
 const AI_STRUCTURED_DATA_SOURCES = Object.freeze([
     {
         key: 'session_recap.comment_filter_candidates_json',
@@ -392,6 +434,11 @@ const AI_STRUCTURED_DATA_SOURCES = Object.freeze([
         },
         autoAppendWhenMissing: false,
         resolver: async (input = {}, runtime = {}) => {
+            if (Array.isArray(input?.commentCandidates)) {
+                return normalizeCommentFilterCandidates(input.commentCandidates, 100)
+                    .filter(item => item.count <= SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD)
+                    .slice(0, 50);
+            }
             const bundle = await loadSessionRecapBundle(input, runtime);
             return buildSessionRecapCommentFilterCandidates(bundle.recap);
         }
@@ -475,6 +522,30 @@ const AI_STRUCTURED_DATA_SOURCES = Object.freeze([
         }
     },
     {
+        key: 'user_personality.chat_corpus_text',
+        token: 'chatCorpusText',
+        scene: USER_PERSONALITY_ANALYSIS_SCENE,
+        sceneLabel: SCENE_LABELS[USER_PERSONALITY_ANALYSIS_SCENE],
+        category: '用户分析',
+        title: '用户历史弹幕语料',
+        description: 'AI用户分析 · 性格分析流程使用的历史弹幕语料，默认聚合该用户近 200 条可用弹幕内容。',
+        inputSchema: {
+            type: 'object',
+            required: ['userId'],
+            properties: {
+                userId: { type: 'string', label: '用户ID' }
+            }
+        },
+        defaultTestInput: {
+            userId: ''
+        },
+        autoAppendWhenMissing: false,
+        resolver: async (input = {}, runtime = {}) => {
+            const bundle = await loadUserPersonalityChatCorpusBundle(input, runtime);
+            return bundle.chatCorpusText;
+        }
+    },
+    {
         key: 'customer_analysis.context_json',
         token: 'customerContextJson',
         scene: CUSTOMER_ANALYSIS_PROMPT_SCENE,
@@ -498,6 +569,32 @@ const AI_STRUCTURED_DATA_SOURCES = Object.freeze([
         resolver: async (input = {}, runtime = {}) => {
             const bundle = await loadCustomerContextBundle(input, runtime);
             return bundle.payload.customerContext;
+        }
+    },
+    {
+        key: 'customer_analysis.chat_corpus_text',
+        token: 'chatCorpusText',
+        scene: CUSTOMER_ANALYSIS_PROMPT_SCENE,
+        sceneLabel: SCENE_LABELS[CUSTOMER_ANALYSIS_PROMPT_SCENE],
+        category: '客户分析',
+        title: '客户最近弹幕语料',
+        description: 'AI客户分析使用的最近弹幕语料，来自结构化客户上下文中的近期待分析聊天内容。',
+        inputSchema: {
+            type: 'object',
+            required: ['userId'],
+            properties: {
+                userId: { type: 'string', label: '用户ID' },
+                roomId: { type: 'string', label: '房间ID', description: '为空时自动选择当前最相关房间' }
+            }
+        },
+        defaultTestInput: {
+            userId: '',
+            roomId: ''
+        },
+        autoAppendWhenMissing: false,
+        resolver: async (input = {}, runtime = {}) => {
+            const bundle = await loadCustomerContextBundle(input, runtime);
+            return bundle.payload.chatCorpusText || '';
         }
     }
 ]);
@@ -599,6 +696,7 @@ module.exports = {
     AI_STRUCTURED_DATA_SOURCE_VERSION,
     SESSION_RECAP_COMMENT_FILTER_SCENE,
     SESSION_RECAP_PROMPT_SCENE,
+    USER_PERSONALITY_ANALYSIS_SCENE,
     CUSTOMER_ANALYSIS_PROMPT_SCENE,
     SCENE_LABELS,
     buildSessionRecapCommentFilterCandidates,

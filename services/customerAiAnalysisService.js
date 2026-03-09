@@ -345,7 +345,6 @@ async function prepareCustomerAnalysis({ userId, roomId = null, roomFilter = nul
         }
     });
     const renderedPrompt = renderPromptTemplate(templateContent, {
-        ...contextPayload.promptVariables,
         ...structuredVariables
     });
     const promptUpdatedAt = template.updatedAt || null;

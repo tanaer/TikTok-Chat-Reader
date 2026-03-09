@@ -71,6 +71,7 @@ const {
 const {
     resolveAiStructuredDataVariables,
     injectMissingStructuredDataTokens,
+    USER_PERSONALITY_ANALYSIS_SCENE,
 } = require('./services/aiStructuredDataSourceService');
 const {
     runRoomStatsRefreshJob,
@@ -4008,7 +4009,19 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
         await markAiWorkJobStarted(job.id, '正在生成性格分析');
 
         try {
-            const promptText = renderPromptTemplate(template?.content || '', { chatCorpusText });
+            const templateContent = injectMissingStructuredDataTokens({
+                scene: USER_PERSONALITY_ANALYSIS_SCENE,
+                templateContent: template?.content || ''
+            });
+            const structuredVariables = await resolveAiStructuredDataVariables({
+                scene: USER_PERSONALITY_ANALYSIS_SCENE,
+                context: {
+                    userId: String(userId || '').trim(),
+                    roomFilter,
+                    chatCorpusText
+                }
+            });
+            const promptText = renderPromptTemplate(templateContent, structuredVariables);
             const { completion, modelName, latencyMs: aiLatency } = await requestAiChatCompletion({
                 requestLabel: `user personality analysis ${userId}`,
                 messages: [{ role: 'user', content: promptText }]
