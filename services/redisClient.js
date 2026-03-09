@@ -193,9 +193,59 @@ async function withRedisClient(fn) {
     }
 }
 
+async function testRedisConnection(rawUrl = '') {
+    const redisUrl = String(rawUrl || getRedisUrl() || '').trim();
+    if (!redisUrl) {
+        return {
+            success: false,
+            error: 'Redis URL 不能为空',
+            code: 'REDIS_URL_REQUIRED',
+        };
+    }
+
+    const client = createClient({
+        url: redisUrl,
+        socket: {
+            connectTimeout: REDIS_CONNECT_TIMEOUT_MS,
+            reconnectStrategy: false,
+        },
+    });
+
+    const startedAt = Date.now();
+    try {
+        await Promise.race([
+            client.connect(),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Redis 连接超时')), REDIS_CONNECT_TIMEOUT_MS)),
+        ]);
+        const pong = await client.ping();
+        return {
+            success: true,
+            latencyMs: Date.now() - startedAt,
+            pong,
+        };
+    } catch (error) {
+        return {
+            success: false,
+            latencyMs: Date.now() - startedAt,
+            error: metricsService.safeErrorMessage(error),
+            code: 'REDIS_TEST_FAILED',
+        };
+    } finally {
+        try {
+            if (client.isOpen) {
+                await client.quit();
+            } else {
+                client.disconnect();
+            }
+        } catch (_) {
+        }
+    }
+}
+
 module.exports = {
     isRedisConfigured,
     getRedisClient,
     withRedisClient,
     disconnectRedisClient,
+    testRedisConnection,
 };

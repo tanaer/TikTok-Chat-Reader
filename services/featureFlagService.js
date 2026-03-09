@@ -102,7 +102,7 @@ function getSchemeAConfig() {
             enabled: parseBooleanEnv(getRawRuntimeSetting('ENABLE_SCHEME_A_OBSERVABILITY'), false),
         },
         redis: {
-            url: String(getRawRuntimeSetting('REDIS_URL', '') || ''),
+            url: String(getRawRuntimeSetting('REDIS_URL', 'redis://127.0.0.1:6379') || 'redis://127.0.0.1:6379'),
             enableRoomCache: parseBooleanEnv(getRawRuntimeSetting('ENABLE_REDIS_ROOM_CACHE'), false),
             enableLiveState: parseBooleanEnv(getRawRuntimeSetting('ENABLE_REDIS_LIVE_STATE'), false),
         },
