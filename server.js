@@ -1824,11 +1824,16 @@ app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
         // This shows a TikTok user's analysis; access requires login
         if (!req.user) return res.status(401).json({ error: '请先登录' });
         const roomFilter = await getUserRoomFilter(req);
-        const data = await getCachedUserAnalysisBase(req, req.params.userId, roomFilter);
+        const shouldLoadMemberAnalysis = req.user.role !== 'admin';
+        const [data, memberAnalysis] = await Promise.all([
+            getCachedUserAnalysisBase(req, req.params.userId, roomFilter),
+            shouldLoadMemberAnalysis
+                ? getCachedLatestMemberAnalysis(req.user.id, req.params.userId)
+                : Promise.resolve(null)
+        ]);
 
         const response = serializeUserAnalysisDetail(data);
-        if (req.user.role !== 'admin') {
-            const memberAnalysis = await getLatestMemberAnalysis(req.user.id, req.params.userId);
+        if (shouldLoadMemberAnalysis) {
             response.aiAnalysis = memberAnalysis?.result || null;
             response.aiAnalysisJson = safeParseJsonObject(memberAnalysis?.resultJson);
         }
@@ -1866,7 +1871,17 @@ app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
         if (roomFilter) filters.roomFilter = roomFilter;
 
         // Get user list first
-        const result = await manager.getTopGifters(1, limit, filters);
+        const exportListCacheKey = buildAnalysisCacheKey('users_export_list', req, roomFilter, {
+            limit,
+            lang: filters.lang,
+            languageFilter: filters.languageFilter,
+            minRooms: filters.minRooms,
+            activeHour: filters.activeHour,
+            activeHourEnd: filters.activeHourEnd,
+            search: filters.search,
+            giftPreference: filters.giftPreference
+        });
+        const result = await getCachedAnalysisPayload(exportListCacheKey, () => manager.getTopGifters(1, limit, filters));
         const memberAnalysisMap = req.user.role === 'admin'
             ? new Map()
             : await getLatestMemberAnalysisMap(req.user.id, result.users.map(user => user.userId));
@@ -1970,6 +1985,48 @@ function safeParseJsonObject(value) {
     } catch (err) {
         return null;
     }
+}
+
+function buildMemberAnalysisVersionKey(memberId, targetUserId) {
+    return cacheService.buildCacheKey('analysis', 'member_ai_version', memberId, targetUserId);
+}
+
+function buildMemberAnalysisCacheKey(memberId, targetUserId, cacheVersion = 0) {
+    return cacheService.buildCacheKey('analysis', 'member_ai_latest', memberId, targetUserId, Number(cacheVersion || 0));
+}
+
+async function getMemberAnalysisCacheVersion(memberId, targetUserId) {
+    if (!memberId || !targetUserId || !cacheService.isRoomCacheEnabled()) {
+        return 0;
+    }
+
+    const version = await cacheService.getNumber(buildMemberAnalysisVersionKey(memberId, targetUserId));
+    return Number.isFinite(version) && version > 0 ? version : 0;
+}
+
+async function invalidateMemberAnalysisCache(memberId, targetUserId) {
+    if (!memberId || !targetUserId || !cacheService.isRoomCacheEnabled()) {
+        return 0;
+    }
+
+    return cacheService.increment(buildMemberAnalysisVersionKey(memberId, targetUserId), 1);
+}
+
+async function getCachedLatestMemberAnalysis(memberId, targetUserId) {
+    if (!memberId || !targetUserId || !cacheService.isRoomCacheEnabled() || ANALYSIS_CACHE_TTL_MS <= 0) {
+        return getLatestMemberAnalysis(memberId, targetUserId);
+    }
+
+    const cacheVersion = await getMemberAnalysisCacheVersion(memberId, targetUserId);
+    const cacheKey = buildMemberAnalysisCacheKey(memberId, targetUserId, cacheVersion);
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const latest = await getLatestMemberAnalysis(memberId, targetUserId);
+    if (latest) {
+        await cacheService.setJson(cacheKey, latest, { ttlMs: ANALYSIS_CACHE_TTL_MS });
+    }
+    return latest;
 }
 
 async function getLatestMemberAnalysis(memberId, targetUserId) {
@@ -3201,6 +3258,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
                         'INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, ?, ?)',
                         [memberId, 'analysis', CUSTOMER_ANALYSIS_AI_POINTS, userId]
                     );
+                    await invalidateMemberAnalysisCache(memberId, userId);
 
                     console.log(`[AI] Reused system cache for member ${memberId}, target ${userId}, simulated ${simulatedLatency}ms`);
                     return res.json({
@@ -3287,6 +3345,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
                 'INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, ?, ?)',
                 [memberId, 'analysis', CUSTOMER_ANALYSIS_AI_POINTS, userId]
             );
+            await invalidateMemberAnalysisCache(memberId, userId);
         }
 
         res.json({
