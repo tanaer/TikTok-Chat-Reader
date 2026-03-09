@@ -11,6 +11,7 @@ const CUSTOMER_ANALYSIS_SYSTEM_GUARDRAILS = [
     '如果引用模型结果，必须直接围绕模型评分、模型分层和系统说明写结论，不要直接抄英文键名。',
     '输出中不要出现 platform_lrfm、room_lrfm、abc_current_room、clv_current_room_30d、otherRoomGrowthFlag、currentRoomValueShare30d 这类英文键名。',
     '如果引用布尔信号，统一写成中文业务描述和“是/否”，不要输出 true/false。',
+    '结果要适合专业运营页面分区展示：数据依据优先拆成模型判断依据、价值贡献依据、风险趋势依据、互动语料观察四组，不要把所有证据堆成一个列表。',
     '只能输出合法 JSON，不要输出 Markdown、代码块或额外说明。'
 ].join('\n');
 
@@ -22,7 +23,12 @@ const CUSTOMER_ANALYSIS_TEXT_REPLACEMENTS = [
     ['currentRoomValueShare30d', '近30天本房贡献占比'],
     ['otherRoomsValueShare30d', '近30天其他房间贡献占比'],
     ['giftTrend7dVsPrev7d', '近7天礼物趋势（较前7天）'],
+    ['watchTrend7dVsPrev7d', '近7天观看趋势（较前7天）'],
     ['danmuTrend7dVsPrev7d', '近7天弹幕趋势（较前7天）'],
+    ['platformGiftTopPercent30d', '平台近30天送礼排名'],
+    ['platformGiftTopPercentLabel30d', '平台近30天送礼排名'],
+    ['currentRoomGiftTopPercent30d', '本房近30天送礼排名'],
+    ['currentRoomGiftTopPercentLabel30d', '本房近30天送礼排名'],
     ['otherRoomGrowthFlag', '其他房间增长信号'],
     ['currentRoomInactiveDays', '本房未活跃天数'],
     ['platformInactiveDays', '平台未活跃天数'],
@@ -30,11 +36,102 @@ const CUSTOMER_ANALYSIS_TEXT_REPLACEMENTS = [
     ['onlyGiftNoChatFlag', '只送不聊信号'],
     ['gift_value', '送礼值'],
     ['danmu_count', '弹幕条数'],
+    ['watch_minutes', '观看时长'],
     ['signals', '信号'],
     ['models', '模型'],
     ['corpus', '语料'],
     ['tier', '分层']
 ];
+
+const EVIDENCE_BUCKETS = [
+    {
+        key: 'modelEvidence',
+        keywords: ['LRFM', 'ABC', '分层', '评分', '核心价值', '高价值', '潜力', '价值定位']
+    },
+    {
+        key: 'contributionEvidence',
+        keywords: ['贡献占比', '送礼排名', '前', '本房近30天', '平台近30天', '送礼值', '客户价值']
+    },
+    {
+        key: 'riskEvidence',
+        keywords: ['分流', '增长信号', '趋势', '未活跃', '流失', '摇摆', '召回', '其他房间']
+    },
+    {
+        key: 'interactionEvidence',
+        keywords: ['弹幕', '聊天', '语料', '互动', '观看', '只看未送', '只送不聊', '情绪', '偏好']
+    }
+];
+
+function stripTrailingZeros(value) {
+    return String(value || '')
+        .replace(/\.0+$/, '')
+        .replace(/(\.\d*?)0+$/, '$1')
+        .replace(/\.$/, '');
+}
+
+function formatPercentNumber(value, digits = 2) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return '';
+    return `${stripTrailingZeros((numeric * 100).toFixed(digits))}%`;
+}
+
+function formatTopPercentNumber(value, digits = 1) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric <= 0) return '';
+    return `前${stripTrailingZeros(numeric.toFixed(digits))}%`;
+}
+
+function escapeRegExp(value) {
+    return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function replaceLabelNumber(text, label, formatter) {
+    const pattern = new RegExp(`${escapeRegExp(label)}\\s*[=:：]\\s*(-?[0-9][0-9,.]*)`, 'g');
+    return String(text || '').replace(pattern, (_match, rawValue) => {
+        const numeric = Number(String(rawValue || '').replace(/,/g, ''));
+        const formatted = formatter(numeric);
+        return formatted || _match;
+    });
+}
+
+function replaceValueDisplay(text) {
+    let output = String(text || '').trim();
+    if (!output) return '';
+
+    output = replaceLabelNumber(output, '近30天本房贡献占比', numeric => `${'近30天本房贡献占比'}约${formatPercentNumber(numeric)}`);
+    output = replaceLabelNumber(output, '近30天其他房间贡献占比', numeric => `${'近30天其他房间贡献占比'}约${formatPercentNumber(numeric)}`);
+
+    output = replaceLabelNumber(output, '近7天礼物趋势（较前7天）', numeric => {
+        if (Math.abs(numeric) < 0.005) return '近7天礼物趋势（较前7天）基本持平';
+        return `近7天礼物趋势（较前7天）${numeric > 0 ? '增长约' : '下降约'}${formatPercentNumber(Math.abs(numeric))}`;
+    });
+    output = replaceLabelNumber(output, '近7天观看趋势（较前7天）', numeric => {
+        if (Math.abs(numeric) < 0.005) return '近7天观看趋势（较前7天）基本持平';
+        return `近7天观看趋势（较前7天）${numeric > 0 ? '增长约' : '下降约'}${formatPercentNumber(Math.abs(numeric))}`;
+    });
+    output = replaceLabelNumber(output, '近7天弹幕趋势（较前7天）', numeric => {
+        if (Math.abs(numeric) < 0.005) return '近7天弹幕趋势（较前7天）基本持平';
+        return `近7天弹幕趋势（较前7天）${numeric > 0 ? '增长约' : '下降约'}${formatPercentNumber(Math.abs(numeric))}`;
+    });
+
+    output = replaceLabelNumber(output, '平台近30天送礼排名', numeric => `平台近30天送礼排名${formatTopPercentNumber(numeric) ? `位于${formatTopPercentNumber(numeric)}` : ''}`);
+    output = replaceLabelNumber(output, '本房近30天送礼排名', numeric => `本房近30天送礼排名${formatTopPercentNumber(numeric) ? `位于${formatTopPercentNumber(numeric)}` : ''}`);
+
+    return output
+        .replace(/位于前/g, '位于前')
+        .replace(/排名位于前/g, '排名位于前')
+        .trim();
+}
+
+function convertRankFractionToTopPercent(text) {
+    return String(text || '').replace(/排名\s*([0-9][0-9,]*)\s*\/\s*([0-9][0-9,]*)/g, (_match, rankText, totalText) => {
+        const rank = Number(String(rankText || '').replace(/,/g, ''));
+        const total = Number(String(totalText || '').replace(/,/g, ''));
+        if (!rank || !total || total <= 0) return _match;
+        const topPercent = Math.max(1, Math.min(100, Math.ceil((rank / total) * 100)));
+        return `位于前${topPercent}%`;
+    });
+}
 
 function localizeCustomerAnalysisText(value) {
     let output = String(value || '').trim();
@@ -53,18 +150,9 @@ function localizeCustomerAnalysisText(value) {
         .replace(/\bfalse\b/gi, '否');
 
     output = convertRankFractionToTopPercent(output);
+    output = replaceValueDisplay(output);
 
     return output;
-}
-
-function convertRankFractionToTopPercent(text) {
-    return String(text || '').replace(/排名\s*([0-9][0-9,]*)\s*\/\s*([0-9][0-9,]*)/g, (_match, rankText, totalText) => {
-        const rank = Number(String(rankText || '').replace(/,/g, ''));
-        const total = Number(String(totalText || '').replace(/,/g, ''));
-        if (!rank || !total || total <= 0) return _match;
-        const topPercent = Math.max(1, Math.min(100, Math.ceil((rank / total) * 100)));
-        return `位于前${topPercent}%`;
-    });
 }
 
 function stripMarkdownCodeFence(text) {
@@ -94,7 +182,57 @@ function normalizeStringArray(value, limit = 6) {
         .slice(0, limit);
 }
 
+function dedupeStringArray(items = [], limit = 6) {
+    const seen = new Set();
+    const result = [];
+    for (const item of items) {
+        const normalized = String(item || '').trim();
+        if (!normalized) continue;
+        if (seen.has(normalized)) continue;
+        seen.add(normalized);
+        result.push(normalized);
+        if (result.length >= limit) break;
+    }
+    return result;
+}
+
+function readEvidenceArray(payload = {}, key = '', limit = 4) {
+    return normalizeStringArray(payload?.[key], limit);
+}
+
+function classifyEvidenceItems(items = []) {
+    const buckets = {
+        modelEvidence: [],
+        contributionEvidence: [],
+        riskEvidence: [],
+        interactionEvidence: [],
+        remainingEvidence: []
+    };
+
+    for (const item of items) {
+        const normalized = String(item || '').trim();
+        if (!normalized) continue;
+        const matchedBucket = EVIDENCE_BUCKETS.find(bucket => bucket.keywords.some(keyword => normalized.includes(keyword)));
+        if (matchedBucket) {
+            buckets[matchedBucket.key].push(normalized);
+        } else {
+            buckets.remainingEvidence.push(normalized);
+        }
+    }
+
+    return {
+        modelEvidence: dedupeStringArray(buckets.modelEvidence, 4),
+        contributionEvidence: dedupeStringArray(buckets.contributionEvidence, 4),
+        riskEvidence: dedupeStringArray(buckets.riskEvidence, 4),
+        interactionEvidence: dedupeStringArray(buckets.interactionEvidence, 4),
+        remainingEvidence: dedupeStringArray(buckets.remainingEvidence, 4)
+    };
+}
+
 function normalizeAnalysisPayload(payload = {}) {
+    const legacyEvidence = normalizeStringArray(payload.evidence, 8);
+    const fallbackBuckets = classifyEvidenceItems(legacyEvidence);
+
     return {
         summary: localizeCustomerAnalysisText(payload.summary || ''),
         valueLevelCurrentRoom: localizeCustomerAnalysisText(payload.valueLevelCurrentRoom || ''),
@@ -107,16 +245,36 @@ function normalizeAnalysisPayload(payload = {}) {
         outreachScript: normalizeStringArray(payload.outreachScript, 4),
         forbiddenActions: normalizeStringArray(payload.forbiddenActions, 4),
         tags: normalizeStringArray(payload.tags, 8),
-        evidence: normalizeStringArray(payload.evidence, 6)
+        modelEvidence: dedupeStringArray([
+            ...readEvidenceArray(payload, 'modelEvidence', 4),
+            ...fallbackBuckets.modelEvidence
+        ], 4),
+        contributionEvidence: dedupeStringArray([
+            ...readEvidenceArray(payload, 'contributionEvidence', 4),
+            ...fallbackBuckets.contributionEvidence
+        ], 4),
+        riskEvidence: dedupeStringArray([
+            ...readEvidenceArray(payload, 'riskEvidence', 4),
+            ...fallbackBuckets.riskEvidence
+        ], 4),
+        interactionEvidence: dedupeStringArray([
+            ...readEvidenceArray(payload, 'interactionEvidence', 4),
+            ...fallbackBuckets.interactionEvidence
+        ], 4),
+        evidence: dedupeStringArray([
+            ...readEvidenceArray(payload, 'generalEvidence', 4),
+            ...fallbackBuckets.remainingEvidence
+        ], 4)
     };
 }
 
 function parseCustomerAnalysisPayload(text) {
     const jsonCandidate = extractJsonCandidate(text);
     const parsed = JSON.parse(jsonCandidate);
+    const normalizedAnalysis = normalizeAnalysisPayload(parsed);
     return {
-        analysis: normalizeAnalysisPayload(parsed),
-        jsonText: JSON.stringify(normalizeAnalysisPayload(parsed), null, 2)
+        analysis: normalizedAnalysis,
+        jsonText: JSON.stringify(normalizedAnalysis, null, 2)
     };
 }
 
@@ -128,32 +286,44 @@ function formatCustomerAnalysisResult(analysis = {}) {
     }
 
     const overviewRows = [
-        analysis.valueLevelCurrentRoom ? `本房价值：${analysis.valueLevelCurrentRoom}` : '',
-        analysis.valueLevelGlobal ? `平台价值：${analysis.valueLevelGlobal}` : '',
-        analysis.loyaltyAssessment ? `忠诚判断：${analysis.loyaltyAssessment}` : '',
-        analysis.diversionRiskAssessment ? `分流风险：${analysis.diversionRiskAssessment}` : '',
+        analysis.valueLevelCurrentRoom ? `本房价值定位：${analysis.valueLevelCurrentRoom}` : '',
+        analysis.valueLevelGlobal ? `平台价值定位：${analysis.valueLevelGlobal}` : '',
+        analysis.loyaltyAssessment ? `忠诚稳定性：${analysis.loyaltyAssessment}` : '',
+        analysis.diversionRiskAssessment ? `跨房分流风险：${analysis.diversionRiskAssessment}` : '',
         analysis.conversionStage ? `转化阶段：${analysis.conversionStage}` : ''
     ].filter(Boolean);
     if (overviewRows.length) {
         sections.push(`核心判断\n${overviewRows.join('\n')}`);
     }
 
-    if (analysis.keySignals.length) {
+    if (analysis.keySignals?.length) {
         sections.push(`关键信号\n${analysis.keySignals.map(item => `- ${item}`).join('\n')}`);
     }
-    if (analysis.evidence.length) {
-        sections.push(`数据证据\n${analysis.evidence.map(item => `- ${item}`).join('\n')}`);
+    if (analysis.modelEvidence?.length) {
+        sections.push(`模型判断依据\n${analysis.modelEvidence.map(item => `- ${item}`).join('\n')}`);
     }
-    if (analysis.recommendedActions.length) {
+    if (analysis.contributionEvidence?.length) {
+        sections.push(`价值贡献依据\n${analysis.contributionEvidence.map(item => `- ${item}`).join('\n')}`);
+    }
+    if (analysis.riskEvidence?.length) {
+        sections.push(`风险趋势依据\n${analysis.riskEvidence.map(item => `- ${item}`).join('\n')}`);
+    }
+    if (analysis.interactionEvidence?.length) {
+        sections.push(`互动语料观察\n${analysis.interactionEvidence.map(item => `- ${item}`).join('\n')}`);
+    }
+    if (analysis.evidence?.length) {
+        sections.push(`补充事实依据\n${analysis.evidence.map(item => `- ${item}`).join('\n')}`);
+    }
+    if (analysis.recommendedActions?.length) {
         sections.push(`建议动作\n${analysis.recommendedActions.map(item => `- ${item}`).join('\n')}`);
     }
-    if (analysis.outreachScript.length) {
+    if (analysis.outreachScript?.length) {
         sections.push(`建议话术\n${analysis.outreachScript.map(item => `- ${item}`).join('\n')}`);
     }
-    if (analysis.forbiddenActions.length) {
+    if (analysis.forbiddenActions?.length) {
         sections.push(`不建议动作\n${analysis.forbiddenActions.map(item => `- ${item}`).join('\n')}`);
     }
-    if (analysis.tags.length) {
+    if (analysis.tags?.length) {
         sections.push(`标签\n${analysis.tags.join(' ')}`);
     }
 
@@ -229,5 +399,7 @@ module.exports = {
     prepareCustomerAnalysis,
     runCustomerAnalysis,
     formatCustomerAnalysisResult,
-    parseCustomerAnalysisPayload
+    parseCustomerAnalysisPayload,
+    normalizeAnalysisPayload,
+    localizeCustomerAnalysisText
 };

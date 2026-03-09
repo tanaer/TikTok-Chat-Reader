@@ -64,6 +64,7 @@ const liveStateService = require('./services/liveStateService');
 const {
     prepareCustomerAnalysis,
     runCustomerAnalysis,
+    normalizeAnalysisPayload,
 } = require('./services/customerAiAnalysisService');
 const {
     runRoomStatsRefreshJob,
@@ -3324,7 +3325,7 @@ async function processCustomerAnalysisAiWorkJob(job) {
         if (!forceRegenerate) {
             const memberCache = await getLatestMemberRoomCustomerAnalysis(job.userId, targetUserId, currentRoomId || requestedRoomId);
             if (isCustomerAnalysisCacheReusable(memberCache, preparedAnalysis.cacheSignature)) {
-                const cachedAnalysis = safeParseJsonObject(memberCache.resultJson);
+                const cachedAnalysis = normalizeAnalysisPayload(safeParseJsonObject(memberCache.resultJson) || {});
                 const cachedChatCount = Number(memberCache.chatCount || chatCount || 0);
                 const cachedResult = String(memberCache.result || '').trim();
                 const cachedModelName = String(memberCache.modelName || '').trim();
@@ -3728,7 +3729,7 @@ app.get('/api/rooms/:id/customer-analysis/:userId', optionalAuth, async (req, re
 
         res.json({
             result: memberAnalysis?.result || null,
-            analysis: safeParseJsonObject(memberAnalysis?.resultJson),
+            analysis: memberAnalysis?.resultJson ? normalizeAnalysisPayload(safeParseJsonObject(memberAnalysis.resultJson) || {}) : null,
             chatCount: Number(memberAnalysis?.chatCount || 0),
             analyzedAt: memberAnalysis?.createdAt || null,
             source: memberAnalysis?.source || null,
