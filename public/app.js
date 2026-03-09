@@ -2025,7 +2025,7 @@ function renderRecapCustomerSegment(containerId, items = [], emptyText = '暂无
             ${metaBadges.length ? `<div class="flex flex-wrap gap-2 mt-3 text-xs opacity-70">${metaBadges.join('')}</div>` : ''}
             <div class="text-xs leading-6 mt-3 opacity-80 break-words">${escapeRecapHtml(item.keyBehavior || item.reason || '')}</div>
             <div class="text-xs leading-6 mt-2 text-primary break-words">${escapeRecapHtml(item.maintenanceSuggestion || item.action || item.recoveryStrategy || '')}</div>
-            ${segmentType === 'potential' && item.conversionScript ? `<div class="mt-3 rounded-box session-recap-note-box px-3 py-3 text-xs leading-6">转化话术：${escapeRecapHtml(item.conversionScript)}</div>` : ''}
+            ${segmentType === 'potential' && item.conversionScript ? `<div class="mt-3 rounded-box session-recap-note-box px-3 py-3 text-xs leading-6">承接话术：${escapeRecapHtml(item.conversionScript)}</div>` : ''}
             ${segmentType === 'risk' && item.riskReason ? `<div class="mt-3 rounded-box session-recap-risk-box px-3 py-3 text-xs leading-6">流失原因：${escapeRecapHtml(item.riskReason)}</div>` : ''}
         </div>
     `;

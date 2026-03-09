@@ -1667,22 +1667,45 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
             }
         }
 
-        const job = await createAiWorkJob({
-            userId: req.user.id,
-            jobType: AI_WORK_JOB_TYPE_SESSION_RECAP,
-            roomId,
-            sessionId,
-            pointCost: SESSION_RECAP_AI_POINTS,
-            forceRegenerate: force,
-            isAdmin,
-            requestPayload: {
-                trigger: 'user_submit',
+        const creationResult = await createAiWorkJobWithLock({
+            lockScope: 'ai_work_job:session_recap',
+            lockIdentity: `${req.user.id}:${roomId}:${sessionId}`,
+            findExistingJob: () => findReusableAiWorkJob({
+                userId: req.user.id,
+                jobType: AI_WORK_JOB_TYPE_SESSION_RECAP,
+                roomId,
+                sessionId
+            }),
+            createJob: client => createAiWorkJob({
+                userId: req.user.id,
+                jobType: AI_WORK_JOB_TYPE_SESSION_RECAP,
                 roomId,
                 sessionId,
-                force,
-                pointCost: SESSION_RECAP_AI_POINTS
-            }
+                pointCost: SESSION_RECAP_AI_POINTS,
+                forceRegenerate: force,
+                isAdmin,
+                requestPayload: {
+                    trigger: 'user_submit',
+                    roomId,
+                    sessionId,
+                    force,
+                    pointCost: SESSION_RECAP_AI_POINTS
+                },
+                client
+            })
         });
+        const job = creationResult.job;
+        if (creationResult.reused) {
+            return res.status(202).json({
+                accepted: true,
+                queued: job.status === 'queued',
+                processing: job.status === 'processing',
+                reused: true,
+                pointCost: SESSION_RECAP_AI_POINTS,
+                job: serializeSessionAiWorkJobForClient(job),
+                message: 'AI 已启动，正在后台工作中，无需一直等待，完成后会主动通知。'
+            });
+        }
 
         await appendAiWorkJobLog(job.id, {
             phase: 'queued',
@@ -2185,6 +2208,39 @@ function buildAiConsumptionConfirmationPayload(actionLabel, pointCost) {
     };
 }
 
+async function createAiWorkJobWithLock({
+    lockScope,
+    lockIdentity,
+    findExistingJob,
+    createJob
+} = {}) {
+    const client = await db.pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query(
+            'SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))',
+            [String(lockScope || 'ai_work_job'), String(lockIdentity || 'default')]
+        );
+
+        const existingJob = typeof findExistingJob === 'function'
+            ? await findExistingJob()
+            : null;
+        if (existingJob) {
+            await client.query('COMMIT');
+            return { job: existingJob, reused: true };
+        }
+
+        const job = await createJob(client);
+        await client.query('COMMIT');
+        return { job, reused: false };
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => { });
+        throw err;
+    } finally {
+        client.release();
+    }
+}
+
 async function consumeCustomerAnalysisCredits(memberId, targetUserId, points = CUSTOMER_ANALYSIS_AI_POINTS) {
     const safePoints = Math.max(0, Number(points || 0));
     if (safePoints <= 0) {
@@ -2210,50 +2266,6 @@ async function consumeCustomerAnalysisCredits(memberId, targetUserId, points = C
     );
 
     return { success: true, chargedPoints: safePoints };
-}
-
-async function saveMemberCustomerAnalysisRecord({
-    memberId,
-    targetUserId,
-    result,
-    resultJson = null,
-    chatCount = 0,
-    modelName = '',
-    modelVersion = '',
-    promptKey = null,
-    promptUpdatedAt = null,
-    contextVersion = null,
-    currentRoomId = null,
-    latencyMs = 0,
-    source = 'api'
-} = {}) {
-    await db.run(
-        `INSERT INTO user_ai_analysis (
-            member_id, target_user_id, result, result_json, chat_count, model_name, model_version,
-            prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-            memberId,
-            targetUserId,
-            result,
-            resultJson || null,
-            Number(chatCount || 0),
-            modelName || '',
-            modelVersion || '',
-            promptKey,
-            promptUpdatedAt,
-            contextVersion,
-            currentRoomId,
-            Number(latencyMs || 0),
-            source || 'api'
-        ]
-    );
-
-    const normalizedPromptKey = String(promptKey || '').trim();
-    const normalizedCurrentRoomId = String(currentRoomId || '').trim();
-    if (!normalizedCurrentRoomId && normalizedPromptKey === USER_PERSONALITY_ANALYSIS_PROMPT_KEY) {
-        await invalidateMemberPersonalityAnalysisCache(memberId, targetUserId);
-    }
 }
 
 async function insertMemberAnalysisRecordTx(client, {
@@ -2331,7 +2343,7 @@ async function finalizeMemberAnalysisJob({
         await client.query('BEGIN');
 
         const jobResult = await client.query(
-            'SELECT * FROM ai_work_job WHERE id = $1 LIMIT 1 FOR UPDATE',
+            'SELECT * FROM ai_work_job WHERE id = $1 FOR UPDATE LIMIT 1',
             [safeJobId]
         );
         if (!jobResult.rows.length) {
@@ -2353,7 +2365,7 @@ async function finalizeMemberAnalysisJob({
         effectiveChargedPoints = Math.max(0, Number(lockedJob.chargedPoints || 0));
 
         const existingAnalysisResult = await client.query(
-            'SELECT id FROM user_ai_analysis WHERE source_job_id = $1 LIMIT 1 FOR UPDATE',
+            'SELECT id FROM user_ai_analysis WHERE source_job_id = $1 FOR UPDATE LIMIT 1',
             [safeJobId]
         );
 
@@ -2594,11 +2606,64 @@ function normalizeAiReviewValuableComments(value, limit = 10) {
     }).filter(Boolean).slice(0, limit);
 }
 
+function containsEcommerceConversionText(text = '') {
+    const normalized = String(text || '').trim();
+    if (!normalized) return false;
+    return /下单|订单|拍下|链接|购买|付款|优惠券|客服|发货/.test(normalized);
+}
+
+function buildEntertainmentConversionScript(item = {}, index = 0) {
+    const nickname = safeTrimString(item.nickname || '这位家人', 24) || '这位家人';
+    const likeCount = clampNumber(item.likeCount, 0, 999999999, 0);
+    const chatCount = clampNumber(item.chatCount, 0, 999999, 0);
+    const sessionGiftValue = clampNumber(item.sessionGiftValue ?? item.totalGiftValue, 0, 999999999, 0);
+    const variants = [];
+
+    if (sessionGiftValue > 0) {
+        variants.push(`${nickname}，你今天已经有参与感了，主播这边直接接住你，下一轮氛围起来时可以再一起把排面往上抬一点。`);
+        variants.push(`${nickname}，刚刚你已经给到支持了，主播记住你了，待会儿节奏上来你再跟一手，会更有存在感。`);
+        variants.push(`${nickname}，你今天已经出手了，后面如果这段你也喜欢，可以顺着气氛再补一下，主播这边会更容易把你接住。`);
+    } else if (chatCount >= 30 || likeCount >= 300) {
+        variants.push(`${nickname}，你今天互动这么足，主播其实已经注意到你了，待会儿氛围点起来时你轻轻支持一下，会更容易被点名接住。`);
+        variants.push(`${nickname}，你现在互动感很强，主播这边先把你想听的接稳，等到情绪点起来你再给一点小支持就很自然。`);
+        variants.push(`${nickname}，你已经把场子陪热了，后面如果主播这段戳中你，可以顺手给个小心意，把关系再往前推一步。`);
+    } else {
+        variants.push(`${nickname}，你可以先继续跟主播聊，等聊到你最有感觉的那一下，再顺着气氛给一点支持，会更自然。`);
+        variants.push(`${nickname}，主播这边先把你想听的内容接住，后面情绪到位了你再轻轻表示一下，更容易形成记忆点。`);
+        variants.push(`${nickname}，先把互动感保持住，等主播状态最好的那一段再跟一下支持，体验会更顺。`);
+    }
+
+    return variants[index % variants.length];
+}
+
+function normalizePotentialCustomerScripts(items = []) {
+    if (!Array.isArray(items) || !items.length) return [];
+    const seenScripts = new Set();
+
+    return items.map((item, index) => {
+        const next = { ...item };
+        const rawScript = safeTrimString(next.conversionScript || '', 200);
+        let normalizedScript = rawScript;
+
+        if (!normalizedScript || containsEcommerceConversionText(normalizedScript) || seenScripts.has(normalizedScript)) {
+            normalizedScript = buildEntertainmentConversionScript(next, index);
+        }
+
+        if (seenScripts.has(normalizedScript)) {
+            normalizedScript = buildEntertainmentConversionScript(next, index + 1);
+        }
+
+        seenScripts.add(normalizedScript);
+        next.conversionScript = normalizedScript;
+        return next;
+    });
+}
+
 function normalizeAiReviewCustomerArray(value, segment = 'core', limit = 8, fallbackItems = []) {
     const source = Array.isArray(value) && value.length ? value : fallbackItems;
     if (!Array.isArray(source)) return [];
 
-    return source.map(item => {
+    const normalizedItems = source.map(item => {
         if (!item) return null;
         return {
             nickname: safeTrimString(item.nickname || '匿名', 60) || '匿名',
@@ -2630,8 +2695,8 @@ function normalizeAiReviewCustomerArray(value, segment = 'core', limit = 8, fall
             return {
                 ...item,
                 keyBehavior: item.keyBehavior || '互动高但转化偏弱，具备承接空间。',
-                maintenanceSuggestion: item.maintenanceSuggestion || '建议在互动高点补轻成交引导。',
-                conversionScript: item.conversionScript || '你刚刚问得很细，说明你是真关注这个点的，我先帮你把重点说透，你觉得合适我再给你一个更省心的下单方式。'
+                maintenanceSuggestion: item.maintenanceSuggestion || '建议在互动高点顺势承接，优先把情绪和存在感再往上推一档。',
+                conversionScript: item.conversionScript || ''
             };
         }
         return {
@@ -2641,6 +2706,10 @@ function normalizeAiReviewCustomerArray(value, segment = 'core', limit = 8, fall
             recoveryStrategy: item.recoveryStrategy || '建议下场提前预热并做定向召回。'
         };
     });
+
+    return segment === 'potential'
+        ? normalizePotentialCustomerScripts(normalizedItems)
+        : normalizedItems;
 }
 
 function serializeValueCustomer(item = {}) {
@@ -2788,7 +2857,7 @@ async function saveSessionAiReviewRecord(jobId, userId, roomId, sessionId, revie
         await client.query('BEGIN');
 
         const jobResult = await client.query(
-            'SELECT * FROM ai_work_job WHERE id = $1 LIMIT 1 FOR UPDATE',
+            'SELECT * FROM ai_work_job WHERE id = $1 FOR UPDATE LIMIT 1',
             [safeJobId]
         );
         if (!jobResult.rows.length) {
@@ -2812,8 +2881,8 @@ async function saveSessionAiReviewRecord(jobId, userId, roomId, sessionId, revie
             `SELECT credits_used
              FROM session_ai_review
              WHERE user_id = $1 AND room_id = $2 AND session_id = $3
-             LIMIT 1
-             FOR UPDATE`,
+             FOR UPDATE
+             LIMIT 1`,
             [userId, roomId, sessionId]
         );
         if (existingReviewResult.rows.length) {
@@ -3879,28 +3948,51 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
         const targetProfile = await db.get('SELECT nickname, unique_id FROM "user" WHERE user_id = ?', [userId]);
         const targetNickname = String(targetProfile?.nickname || '').trim();
         const targetUniqueId = String(targetProfile?.uniqueId || '').trim();
-        const job = await createAiWorkJob({
-            userId: memberId,
-            jobType: AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS,
-            roomId: '',
-            sessionId: '',
-            title: `AI性格分析 · 用户 ${targetNickname ? `${targetNickname} (${userId})` : userId}`,
-            pointCost: USER_PERSONALITY_AI_POINTS,
-            forceRegenerate: force,
-            isAdmin,
-            requestPayload: {
-                analysisScene: 'personality',
-                targetUserId: String(userId || '').trim(),
-                targetNickname,
-                targetUniqueId,
-                force,
-                chatCount,
+        const creationResult = await createAiWorkJobWithLock({
+            lockScope: 'ai_work_job:personality',
+            lockIdentity: `${memberId}:${String(userId || '').trim()}`,
+            findExistingJob: () => getLatestPersonalityAiWorkJobForUser(memberId, userId).then(existingJob => (
+                existingJob && ['queued', 'processing'].includes(String(existingJob.status || '').toLowerCase())
+                    ? existingJob
+                    : null
+            )),
+            createJob: client => createAiWorkJob({
+                userId: memberId,
+                jobType: AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS,
+                roomId: '',
+                sessionId: '',
+                title: `AI性格分析 · 用户 ${targetNickname ? `${targetNickname} (${userId})` : userId}`,
                 pointCost: USER_PERSONALITY_AI_POINTS,
-                promptKey: USER_PERSONALITY_ANALYSIS_PROMPT_KEY,
-                promptUpdatedAt,
-                contextVersion: USER_PERSONALITY_ANALYSIS_CONTEXT_VERSION
-            }
+                forceRegenerate: force,
+                isAdmin,
+                requestPayload: {
+                    analysisScene: 'personality',
+                    targetUserId: String(userId || '').trim(),
+                    targetNickname,
+                    targetUniqueId,
+                    force,
+                    chatCount,
+                    pointCost: USER_PERSONALITY_AI_POINTS,
+                    promptKey: USER_PERSONALITY_ANALYSIS_PROMPT_KEY,
+                    promptUpdatedAt,
+                    contextVersion: USER_PERSONALITY_ANALYSIS_CONTEXT_VERSION
+                },
+                client
+            })
         });
+        const job = creationResult.job;
+        if (creationResult.reused) {
+            return res.status(202).json({
+                accepted: true,
+                queued: job.status === 'queued',
+                processing: job.status === 'processing',
+                reused: true,
+                cached: false,
+                pointCost: USER_PERSONALITY_AI_POINTS,
+                job: serializeSessionAiWorkJobForClient(job),
+                message: 'AI 已启动，正在后台生成性格分析，完成后会自动刷新。'
+            });
+        }
 
         await appendAiWorkJobLog(job.id, {
             phase: 'start',
@@ -4058,31 +4150,54 @@ app.post('/api/rooms/:id/customer-analysis', optionalAuth, async (req, res) => {
         const targetProfile = await db.get('SELECT nickname, unique_id FROM "user" WHERE user_id = ?', [targetUserId]);
         const targetNickname = String(targetProfile?.nickname || '').trim();
         const targetUniqueId = String(targetProfile?.uniqueId || '').trim();
-        const job = await createAiWorkJob({
-            userId: memberId,
-            jobType: AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS,
-            roomId,
-            sessionId: '',
-            title: buildAiWorkTitle(AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS, {
-                roomId,
+        const creationResult = await createAiWorkJobWithLock({
+            lockScope: 'ai_work_job:room_customer',
+            lockIdentity: `${memberId}:${roomId}:${targetUserId}`,
+            findExistingJob: () => findReusableCustomerAnalysisAiWorkJob({
+                userId: memberId,
                 targetUserId,
-                targetNickname
+                roomId
             }),
-            pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
-            forceRegenerate: force,
-            isAdmin,
-            requestPayload: {
-                analysisScene: 'room_customer',
-                trigger: 'room_detail_submit',
-                targetUserId,
-                targetNickname,
-                targetUniqueId,
-                requestedRoomId: roomId,
-                currentRoomId: roomId,
-                force,
-                pointCost: CUSTOMER_ANALYSIS_AI_POINTS
-            }
+            createJob: client => createAiWorkJob({
+                userId: memberId,
+                jobType: AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS,
+                roomId,
+                sessionId: '',
+                title: buildAiWorkTitle(AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS, {
+                    roomId,
+                    targetUserId,
+                    targetNickname
+                }),
+                pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+                forceRegenerate: force,
+                isAdmin,
+                requestPayload: {
+                    analysisScene: 'room_customer',
+                    trigger: 'room_detail_submit',
+                    targetUserId,
+                    targetNickname,
+                    targetUniqueId,
+                    requestedRoomId: roomId,
+                    currentRoomId: roomId,
+                    force,
+                    pointCost: CUSTOMER_ANALYSIS_AI_POINTS
+                },
+                client
+            })
         });
+        const job = creationResult.job;
+        if (creationResult.reused) {
+            return res.status(202).json({
+                accepted: true,
+                queued: job.status === 'queued',
+                processing: job.status === 'processing',
+                reused: true,
+                cached: false,
+                pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+                job: serializeSessionAiWorkJobForClient(job),
+                message: 'AI 已启动，正在后台分析客户，完成后会主动通知。'
+            });
+        }
 
         await appendAiWorkJobLog(job.id, {
             phase: 'queued',

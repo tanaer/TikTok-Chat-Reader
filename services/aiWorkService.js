@@ -202,11 +202,13 @@ async function createAiWorkJob({
     pointCost = 0,
     forceRegenerate = false,
     isAdmin = false,
-    requestPayload = null
+    requestPayload = null,
+    client = null
 }) {
     const safeJobType = normalizeAiWorkJobType(jobType);
     const safeTitle = String(title || '').trim() || buildAiWorkTitle(safeJobType, { roomId, sessionId });
-    const result = await db.pool.query(
+    const executor = client || db.pool;
+    const result = await executor.query(
         `INSERT INTO ai_work_job (
             user_id, job_type, room_id, session_id, title, status, current_step,
             progress_percent, point_cost, charged_points, force_regenerate, is_admin,

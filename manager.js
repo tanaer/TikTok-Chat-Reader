@@ -1227,7 +1227,9 @@ class Manager {
                 item.hasGiftAction
                     ? `互动信号强（${item.chatCount}条弹幕 / ${item.likeCount}点赞），已出手但仍有继续放大的空间。`
                     : `互动信号强（${item.chatCount}条弹幕 / ${item.likeCount}点赞），但本场转化仍偏低。`,
-                '适合在高互动节点做轻成交引导，优先尝试首单转化。'
+                item.hasGiftAction
+                    ? '适合在高互动节点顺势抬档承接，优先放大参与感和连续支持。'
+                    : '适合在高互动节点先加热关系，再试探第一次轻支持。'
             ));
 
         for (const item of potential) used.add(item.participantKey);

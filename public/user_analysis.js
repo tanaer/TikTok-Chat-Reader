@@ -723,6 +723,7 @@ function renderDetailChart(canvasId, labels, data, color) {
 function runAiAnalysis(userId, force = false) {
     currentDetailAiUserId = String(userId || '').trim();
     const isAdminUser = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
+    let keepPendingState = false;
     if (!isAdminUser) {
         const confirmed = confirmPersonalityAnalysisConsumption(DEFAULT_PERSONALITY_ANALYSIS_POINTS, { force });
         if (!confirmed) return;
@@ -744,6 +745,7 @@ function runAiAnalysis(userId, force = false) {
     })
     .then(res => {
         if (res.accepted && res.job) {
+            keepPendingState = true;
             showAiAnalysisJobPending(res.job);
             startAiAnalysisJobPolling(res.job.id, userId);
             if (res.message) {
@@ -780,7 +782,9 @@ function runAiAnalysis(userId, force = false) {
         }
     })
     .finally(() => {
-        setAiAnalysisButtonsPending(false);
+        if (!keepPendingState) {
+            setAiAnalysisButtonsPending(false);
+        }
     });
 }
 

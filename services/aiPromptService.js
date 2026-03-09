@@ -138,6 +138,8 @@ const PROMPT_TEMPLATES = {
             '- coreCustomers / potentialCustomers / riskCustomers 各返回 5-8 条；如果数据不够，可以少于 5 条，但不要凑数。',
             '- coreCustomers 优先选择“本场送礼高 + 历史总价值高”的用户，maintenanceSuggestion 要写清楚怎么维护、谁来维护。',
             '- potentialCustomers 优先选择“互动高但送礼低 / 首次送礼 / 明显有兴趣”的用户，conversionScript 要给 1-2 句主播或场控可直接使用的话术，而且话术对象必须与该用户本人一致，不能串到别的用户身上。',
+            '- 娱乐直播场景不要写电商式话术，不要出现“下单 / 订单 / 链接 / 购买 / 付款 / 优惠券 / 发货 / 客服”这类词。应围绕情绪价值、存在感、陪伴感、排面感、互动承接、轻支持来写。',
+            '- potentialCustomers 里的 conversionScript 不能整组复用同一句模板；每个客户至少要结合他的互动强度、是否已送礼、当前关系温度做差异化表达。',
             '- riskCustomers 优先选择“历史高价值但本场明显变弱、只来不出手、早退、互动降温”的用户，riskReason 和 recoveryStrategy 不能空泛。',
             '- valuableComments 返回 5-10 条高价值弹幕；如果输入里没有，就返回空数组，不要凑数。',
             '- 同一用户默认不要重复出现在 coreCustomers / potentialCustomers / riskCustomers 三个数组里。',
@@ -387,7 +389,8 @@ function shouldRepairSessionRecapReviewTemplate(content = '') {
         'potentialCustomers',
         'riskCustomers',
         '"uniqueId": "账号ID"',
-        '不要把 A 用户的话术'
+        '不要把 A 用户的话术',
+        '娱乐直播场景不要写电商式话术'
     ];
     return requiredMarkers.some(marker => !normalized.includes(marker));
 }
