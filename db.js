@@ -485,9 +485,6 @@ async function initDb() {
         // Migration: 套餐每日新建房间次数限制
         await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS daily_room_create_limit INTEGER DEFAULT -1`);
 
-        // Migration: 套餐打开房间数限制 (同时启用监控的房间数, -1=不限)
-        await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS open_room_limit INTEGER DEFAULT -1`);
-
         // Per-user quota overrides for admin adjustments
         await pool.query(`
             CREATE TABLE IF NOT EXISTS user_quota_overrides (
@@ -495,9 +492,6 @@ async function initDb() {
                 room_limit_permanent INTEGER,
                 room_limit_temporary INTEGER,
                 room_limit_temporary_expires_at TIMESTAMP,
-                open_room_limit_permanent INTEGER,
-                open_room_limit_temporary INTEGER,
-                open_room_limit_temporary_expires_at TIMESTAMP,
                 daily_room_create_limit_permanent INTEGER,
                 daily_room_create_limit_temporary INTEGER,
                 daily_room_create_limit_temporary_expires_at TIMESTAMP,
@@ -704,6 +698,40 @@ async function initDb() {
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         `);
+
+        await pool.query(`ALTER TABLE euler_api_keys ADD COLUMN IF NOT EXISTS premium_room_lookup_level TEXT DEFAULT 'basic'`);
+        await pool.query(`UPDATE euler_api_keys SET premium_room_lookup_level = 'basic' WHERE premium_room_lookup_level IS NULL OR TRIM(premium_room_lookup_level) = ''`).catch(() => {});
+        await pool.query(`ALTER TABLE euler_api_keys ADD COLUMN IF NOT EXISTS premium_room_lookup_state TEXT DEFAULT 'unknown'`);
+        await pool.query(`ALTER TABLE euler_api_keys ADD COLUMN IF NOT EXISTS premium_room_lookup_checked_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE euler_api_keys ADD COLUMN IF NOT EXISTS premium_room_lookup_last_status INTEGER`);
+        await pool.query(`ALTER TABLE euler_api_keys ADD COLUMN IF NOT EXISTS premium_room_lookup_last_error TEXT`);
+        await pool.query(`ALTER TABLE euler_api_keys ADD COLUMN IF NOT EXISTS premium_room_lookup_probe_unique_id TEXT`);
+        await pool.query(`
+            UPDATE euler_api_keys
+               SET premium_room_lookup_checked_at = NULL,
+                   premium_room_lookup_last_status = NULL,
+                   premium_room_lookup_last_error = NULL,
+                   premium_room_lookup_probe_unique_id = NULL,
+                   premium_room_lookup_state = CASE
+                       WHEN COALESCE(premium_room_lookup_level, 'basic') = 'premium' THEN 'enabled'
+                       WHEN COALESCE(premium_room_lookup_level, 'basic') = 'basic' THEN 'disabled'
+                       ELSE 'unknown'
+                   END,
+                   updated_at = NOW()
+             WHERE COALESCE(premium_room_lookup_level, 'basic') <> 'premium'
+        `).catch(() => {});
+        await pool.query(`
+            UPDATE euler_api_keys
+               SET last_error = NULL,
+                   last_status = CASE WHEN COALESCE(last_status, 'unknown') = 'error' THEN 'ok' ELSE last_status END,
+                   updated_at = NOW()
+             WHERE COALESCE(premium_room_lookup_level, 'basic') <> 'premium'
+               AND (
+                    LOWER(COALESCE(last_error, '')) LIKE '%euler room lookup%'
+                 OR LOWER(COALESCE(last_error, '')) LIKE '%euler live status lookup%'
+                 OR LOWER(COALESCE(last_error, '')) LIKE '%premium room lookup%'
+               )
+        `).catch(() => {});
 
         await pool.query(`
             CREATE TABLE IF NOT EXISTS smtp_services (
