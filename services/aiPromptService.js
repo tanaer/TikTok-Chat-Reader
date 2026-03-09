@@ -210,21 +210,34 @@ const PROMPT_TEMPLATES = {
             '1. valueLevelCurrentRoom 必须直接沿用系统标签，优先使用 room_lrfm.tier；若 room_lrfm.tier 缺失，再参考 abc_current_room.tier，并结合 clv_current_room_30d.value 做补充解释。',
             '2. valueLevelGlobal 必须直接沿用 platform_lrfm.tier；缺失时写“当前未提供该项数据”。',
             '3. loyaltyAssessment 优先参考 currentRoomValueShare30d、currentRoomInactiveDays、platformInactiveDays；输出“高忠诚 / 摇摆 / 易流失”之一，若证据不足可写“当前未提供该项数据”。',
-            '4. diversionRiskAssessment 优先参考 otherRoomsValueShare30d、otherRoomGrowthFlag；输出“低 / 中 / 高”之一，若证据不足可写“当前未提供该项数据”。',
+            '4. diversionRiskAssessment 优先参考 otherRoomsValueShare30d、otherRoomGrowthFlag、giftTrend7dVsPrev7d、watchTrend7dVsPrev7d；输出“低 / 中 / 高”之一，若证据不足可写“当前未提供该项数据”。',
             '5. conversionStage 优先参考 gift_value、danmu_count、onlyWatchNoGiftFlag、onlyGiftNoChatFlag；输出“未激活 / 观察中 / 待转化 / 已转化 / 需召回”之一，若证据不足可写“当前未提供该项数据”。',
             '6. tags 是运营标签，不是模型标签；可以总结现象，但不能伪造新的系统分层。',
             '',
+            '页面分区目标：',
+            '1. 页面顶部展示一句客户总结。',
+            '2. 中部展示 5 个核心判断：本房价值定位、平台价值定位、忠诚稳定性、跨房分流风险、转化阶段。',
+            '3. 数据依据必须拆成 4 个区域，不要混成一组：模型判断依据、价值贡献依据、风险趋势依据、互动语料观察。',
+            '4. 建议动作、主播承接话术、不建议动作要和数据依据分开展示。',
+            '',
             '输出要求：',
             '1. 只能输出严格 JSON，不要加任何说明、引言、Markdown、代码块。',
-            '2. evidence 必须引用输入中的系统事实，但最终表达必须用中文业务名称，不要直接输出 platform_lrfm、abc_current_room、otherRoomGrowthFlag、currentRoomValueShare30d 这类英文键名。',
-            '2.1 如果引用模型结果，直接围绕模型评分、模型分层、系统说明来写，例如“平台LRFM分层为核心价值”“本房ABC分层为A”“近30天本房贡献占比高”。如需表达排行强弱，优先直接写“前X%”，不要写“排名13/1511”这类分子分母。',
-            '2.2 如果引用布尔信号，必须写成中文业务描述 + 是/否，不要输出 true / false。',
-            '3. keySignals / recommendedActions / outreachScript / forbiddenActions / tags / evidence 都必须是数组。',
-            '4. summary 控制在 120 字以内，格式尽量接近“本房价值判断 + 当前主要风险/机会 + 下一步动作”。',
-            '5. valueLevelCurrentRoom、valueLevelGlobal、loyaltyAssessment、diversionRiskAssessment、conversionStage 都必须给出字符串；没有依据时写“当前未提供该项数据”。',
-            '6. keySignals 返回 2-4 条，recommendedActions 返回 2-4 条，outreachScript 返回 2-3 条，forbiddenActions 返回 1-3 条，tags 返回 2-5 条，evidence 返回 2-4 条。',
-            '7. evidence 至少 1 条来自 models.*，至少 1 条来自 signals.* 或 corpus.*；如果 chatCorpusText 为空，就不要虚构弹幕证据。',
-            '8. recommendedActions 每条尽量包含“谁来做、何时做、做什么”；outreachScript 每条尽量是主播或场控可直接说出口的自然短句。',
+            '2. 所有数组内容都必须使用中文业务表达，不要直接输出 platform_lrfm、abc_current_room、otherRoomGrowthFlag、currentRoomValueShare30d、watchTrend7dVsPrev7d 这类英文键名。',
+            '3. 如果引用布尔信号，必须写成中文业务描述 + 是/否，不要输出 true / false。',
+            '4. 如果引用比例、小数或排名，优先转写成更适合页面展示的中文表达：',
+            '4.1 贡献占比优先写成百分比，例如“近30天本房贡献占比约34.27%”。',
+            '4.2 趋势优先写成“增长约xx% / 下降约xx% / 基本持平”。',
+            '4.3 排名强弱优先直接写“位于前X%”，不要写“排名13/1511”。',
+            '5. keySignals / recommendedActions / outreachScript / forbiddenActions / tags / modelEvidence / contributionEvidence / riskEvidence / interactionEvidence / evidence 都必须是数组。',
+            '6. summary 控制在 120 字以内，格式尽量接近“本房价值判断 + 当前主要风险/机会 + 下一步动作”。',
+            '7. valueLevelCurrentRoom、valueLevelGlobal、loyaltyAssessment、diversionRiskAssessment、conversionStage 都必须给出字符串；没有依据时写“当前未提供该项数据”。',
+            '8. keySignals 返回 2-4 条，recommendedActions 返回 2-4 条，outreachScript 返回 2-3 条，forbiddenActions 返回 1-3 条，tags 返回 2-5 条。',
+            '9. modelEvidence 重点写 LRFM / ABC / 模型分层判断，返回 1-3 条。',
+            '10. contributionEvidence 重点写贡献占比、礼物排名、价值强弱，返回 1-3 条。',
+            '11. riskEvidence 重点写趋势、跨房增长、沉默/流失/活跃变化，返回 1-3 条。',
+            '12. interactionEvidence 重点写弹幕语气、互动深度、行为信号；如果 chatCorpusText 为空，就返回空数组，不要虚构。',
+            '13. evidence 是兼容字段，可返回 0-2 条补充事实；不要把前 4 组证据重复堆进去。',
+            '14. recommendedActions 每条尽量包含“谁来做、何时做、做什么”；outreachScript 每条尽量是主播或场控可直接说出口的自然短句。',
             '',
             '输出 JSON 结构必须严格如下：',
             '{',
@@ -239,18 +252,19 @@ const PROMPT_TEMPLATES = {
             '  "outreachScript": ["话术1", "话术2"],',
             '  "forbiddenActions": ["不建议动作1"],',
             '  "tags": ["#标签1", "#标签2"],',
-            '  "evidence": ["证据1", "证据2"]',
+            '  "modelEvidence": ["模型依据1"],',
+            '  "contributionEvidence": ["价值依据1"],',
+            '  "riskEvidence": ["风险依据1"],',
+            '  "interactionEvidence": ["互动依据1"],',
+            '  "evidence": ["补充事实1"]',
             '}',
             '',
             '约束补充：',
             '- 不要重新创造新的数值字段。',
-            '- 不要输出输入中不存在的房间、日期、排行。需要表达排行时，优先使用系统已提供的“前X%”字段，不要自己输出“排名A/B”。',
-            '- 如果 room_lrfm / platform_lrfm / abc_current_room / clv_current_room_30d 已给出，就必须直接沿用这些系统结果，不要自行换口径。',
-            '- 如果本房价值和平台价值不一致，要明确写出“平台有价值，但本房承接偏弱”或同类结论。',
-            '- recommendedActions 必须写成可执行动作，尽量包含“谁来做、何时做、做什么”。',
-            '- outreachScript 要偏主播或场控可直接说的话，语气自然，不要像报告，也不要承诺输入里没有的福利、价格或权益。',
+            '- 不要输出“建议继续观察”这类空泛废话，要给出动作对象和场景。',
+            '- 话术要像直播间里真的会说的话，口语自然，不要像报告，也不要承诺输入里没有的福利、价格或权益。',
             '- forbiddenActions 必须写“不要做什么”，不能写成空泛提醒。',
-            '- evidence 每条都尽量带上输入里的原始事实关键词或数值，但必须翻译成中文业务表达。若涉及排行，优先写成“本房近30天送礼排名前10%”“平台近30天送礼排名前1%”，不要写“排名13/1511”。',
+            '- modelEvidence / contributionEvidence / riskEvidence / interactionEvidence 要各司其职，不要同一句重复出现在多个数组。',
             '- keySignals 要写“模型/信号 + 含义”，不要只抄字段名或英文键名。',
             '- 不要输出空洞套话，例如“加强互动”“继续观察”“做好维护”这类没有动作对象和场景的话。',
             '',
@@ -341,6 +355,19 @@ async function resetPromptTemplate(key) {
     return savePromptTemplate(key, definition.defaultContent);
 }
 
+function shouldRepairCustomerAnalysisReviewTemplate(content = '') {
+    const normalized = String(content || '');
+    if (!normalized) return false;
+    const requiredMarkers = [
+        'modelEvidence',
+        'contributionEvidence',
+        'riskEvidence',
+        'interactionEvidence',
+        '页面分区目标'
+    ];
+    return requiredMarkers.some(marker => !normalized.includes(marker));
+}
+
 function shouldRepairSessionRecapReviewTemplate(content = '') {
     const normalized = String(content || '');
     if (!normalized) return false;
@@ -355,19 +382,32 @@ function shouldRepairSessionRecapReviewTemplate(content = '') {
 }
 
 async function repairCriticalPromptTemplates() {
-    const sessionRecapDefinition = getPromptTemplateDefinition('session_recap_review');
-    if (!sessionRecapDefinition) return { repairedKeys: [] };
-
-    const current = await db.pool.query(
-        'SELECT value FROM settings WHERE key = $1 LIMIT 1',
-        [getPromptTemplateSettingKey('session_recap_review')]
-    );
-    const currentValue = current.rows[0]?.value || '';
     const repairedKeys = [];
 
-    if (currentValue && shouldRepairSessionRecapReviewTemplate(currentValue)) {
-        await savePromptTemplate('session_recap_review', sessionRecapDefinition.defaultContent);
-        repairedKeys.push('session_recap_review');
+    const sessionRecapDefinition = getPromptTemplateDefinition('session_recap_review');
+    if (sessionRecapDefinition) {
+        const current = await db.pool.query(
+            'SELECT value FROM settings WHERE key = $1 LIMIT 1',
+            [getPromptTemplateSettingKey('session_recap_review')]
+        );
+        const currentValue = current.rows[0]?.value || '';
+        if (currentValue && shouldRepairSessionRecapReviewTemplate(currentValue)) {
+            await savePromptTemplate('session_recap_review', sessionRecapDefinition.defaultContent);
+            repairedKeys.push('session_recap_review');
+        }
+    }
+
+    const customerAnalysisDefinition = getPromptTemplateDefinition('customer_analysis_review');
+    if (customerAnalysisDefinition) {
+        const current = await db.pool.query(
+            'SELECT value FROM settings WHERE key = $1 LIMIT 1',
+            [getPromptTemplateSettingKey('customer_analysis_review')]
+        );
+        const currentValue = current.rows[0]?.value || '';
+        if (currentValue && shouldRepairCustomerAnalysisReviewTemplate(currentValue)) {
+            await savePromptTemplate('customer_analysis_review', customerAnalysisDefinition.defaultContent);
+            repairedKeys.push('customer_analysis_review');
+        }
     }
 
     return { repairedKeys };

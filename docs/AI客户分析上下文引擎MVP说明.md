@@ -217,6 +217,34 @@
 - 性格分析、房间客户分析统一归入 `用户`
 - AI直播复盘归入 `房间`
 
+## 客户分析结果分区
+
+为提升房间详情里的 AI客户分析可读性，结果展示已从“单一证据列表”升级为“判断 + 依据 + 动作”分区结构：
+
+- 顶部：`summary`，一句话说明本房价值、主要风险与下一步动作
+- 中部：5 个核心判断字段
+  - `valueLevelCurrentRoom`
+  - `valueLevelGlobal`
+  - `loyaltyAssessment`
+  - `diversionRiskAssessment`
+  - `conversionStage`
+- 依据区：按用途拆分为 4 组数组
+  - `modelEvidence`：模型判断依据
+  - `contributionEvidence`：价值贡献依据
+  - `riskEvidence`：风险趋势依据
+  - `interactionEvidence`：互动语料观察
+- 动作区：
+  - `recommendedActions`
+  - `outreachScript`
+  - `forbiddenActions`
+- `evidence` 继续保留为兼容字段，仅承载未归类的补充事实
+
+这样可以保证：
+
+- AI 输出更适合页面分区展示
+- 数据证据不再堆成一长串，便于主播和运营快速阅读
+- 旧缓存结果也可以通过服务层标准化后映射到新分区
+
 ## 用户态返回面
 
 用户侧接口继续坚持白名单：

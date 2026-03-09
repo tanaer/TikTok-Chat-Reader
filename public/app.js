@@ -2135,49 +2135,195 @@ function normalizeRoomCustomerAnalysisStringArray(value, limit = 8) {
     return value.map(item => String(item || '').trim()).filter(Boolean).slice(0, limit);
 }
 
-function normalizeRoomCustomerAnalysisPayload(payload) {
-    if (!payload || typeof payload !== 'object') return null;
+function dedupeRoomCustomerAnalysisArray(items, limit = 6) {
+    const result = [];
+    const seen = new Set();
+    (Array.isArray(items) ? items : []).forEach(item => {
+        const normalized = String(item || '').trim();
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        result.push(normalized);
+    });
+    return result.slice(0, limit);
+}
+
+function localizeRoomCustomerAnalysisText(value) {
+    let output = String(value || '').trim();
+    if (!output) return '';
+
+    const replacements = [
+        ['platform_lrfm', '平台LRFM'],
+        ['room_lrfm', '本房LRFM'],
+        ['clv_current_room_30d', '近30天本房客户价值'],
+        ['abc_current_room', '本房ABC分层'],
+        ['currentRoomValueShare30d', '近30天本房贡献占比'],
+        ['otherRoomsValueShare30d', '近30天其他房间贡献占比'],
+        ['giftTrend7dVsPrev7d', '近7天礼物趋势（较前7天）'],
+        ['watchTrend7dVsPrev7d', '近7天观看趋势（较前7天）'],
+        ['danmuTrend7dVsPrev7d', '近7天弹幕趋势（较前7天）'],
+        ['platformGiftTopPercent30d', '平台近30天送礼排名'],
+        ['platformGiftTopPercentLabel30d', '平台近30天送礼排名'],
+        ['currentRoomGiftTopPercent30d', '本房近30天送礼排名'],
+        ['currentRoomGiftTopPercentLabel30d', '本房近30天送礼排名'],
+        ['otherRoomGrowthFlag', '其他房间增长信号'],
+        ['currentRoomInactiveDays', '本房未活跃天数'],
+        ['platformInactiveDays', '平台未活跃天数'],
+        ['onlyWatchNoGiftFlag', '只看未送信号'],
+        ['onlyGiftNoChatFlag', '只送不聊信号'],
+        ['gift_value', '送礼值'],
+        ['danmu_count', '弹幕条数']
+    ];
+
+    replacements.forEach(([source, target]) => {
+        output = output.split(source).join(target);
+    });
+
+    output = output
+        .replace(/=\s*true\b/gi, '=是')
+        .replace(/=\s*false\b/gi, '=否')
+        .replace(/:\s*true\b/gi, '：是')
+        .replace(/:\s*false\b/gi, '：否')
+        .replace(/\btrue\b/gi, '是')
+        .replace(/\bfalse\b/gi, '否')
+        .replace(/排名\s*([0-9][0-9,]*)\s*\/\s*([0-9][0-9,]*)/g, (_match, rankText, totalText) => {
+            const rank = Number(String(rankText || '').replace(/,/g, ''));
+            const total = Number(String(totalText || '').replace(/,/g, ''));
+            if (!rank || !total) return _match;
+            return `位于前${Math.max(1, Math.min(100, Math.ceil((rank / total) * 100)))}%`;
+        });
+
+    const replaceLabelNumber = (label, formatter) => {
+        const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        output = output.replace(new RegExp(`${escaped}\\s*[=:：]\\s*(-?[0-9][0-9,.]*)`, 'g'), (_match, rawValue) => {
+            const numeric = Number(String(rawValue || '').replace(/,/g, ''));
+            if (!Number.isFinite(numeric)) return _match;
+            return formatter(numeric);
+        });
+    };
+
+    const formatPercent = numeric => `${String((numeric * 100).toFixed(2)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')}%`;
+    const formatTopPercent = numeric => `前${String(numeric.toFixed(1)).replace(/\.0+$/, '').replace(/(\.\d*?)0+$/, '$1')}%`;
+
+    replaceLabelNumber('近30天本房贡献占比', numeric => `近30天本房贡献占比约${formatPercent(numeric)}`);
+    replaceLabelNumber('近30天其他房间贡献占比', numeric => `近30天其他房间贡献占比约${formatPercent(numeric)}`);
+    replaceLabelNumber('近7天礼物趋势（较前7天）', numeric => Math.abs(numeric) < 0.005 ? '近7天礼物趋势（较前7天）基本持平' : `近7天礼物趋势（较前7天）${numeric > 0 ? '增长约' : '下降约'}${formatPercent(Math.abs(numeric))}`);
+    replaceLabelNumber('近7天观看趋势（较前7天）', numeric => Math.abs(numeric) < 0.005 ? '近7天观看趋势（较前7天）基本持平' : `近7天观看趋势（较前7天）${numeric > 0 ? '增长约' : '下降约'}${formatPercent(Math.abs(numeric))}`);
+    replaceLabelNumber('近7天弹幕趋势（较前7天）', numeric => Math.abs(numeric) < 0.005 ? '近7天弹幕趋势（较前7天）基本持平' : `近7天弹幕趋势（较前7天）${numeric > 0 ? '增长约' : '下降约'}${formatPercent(Math.abs(numeric))}`);
+    replaceLabelNumber('平台近30天送礼排名', numeric => `平台近30天送礼排名位于${formatTopPercent(numeric)}`);
+    replaceLabelNumber('本房近30天送礼排名', numeric => `本房近30天送礼排名位于${formatTopPercent(numeric)}`);
+
+    return output.trim();
+}
+
+function classifyRoomCustomerAnalysisEvidence(items) {
+    const buckets = {
+        modelEvidence: [],
+        contributionEvidence: [],
+        riskEvidence: [],
+        interactionEvidence: [],
+        evidence: []
+    };
+    const rules = [
+        { key: 'modelEvidence', keywords: ['LRFM', 'ABC', '分层', '评分', '核心价值', '高价值', '潜力'] },
+        { key: 'contributionEvidence', keywords: ['贡献占比', '送礼排名', '送礼值', '平台近30天', '本房近30天', '前'] },
+        { key: 'riskEvidence', keywords: ['分流', '增长信号', '趋势', '未活跃', '流失', '其他房间', '召回'] },
+        { key: 'interactionEvidence', keywords: ['弹幕', '语料', '互动', '聊天', '观看', '只看未送', '只送不聊'] }
+    ];
+
+    normalizeRoomCustomerAnalysisStringArray(items, 8)
+        .map(localizeRoomCustomerAnalysisText)
+        .forEach(item => {
+            const matched = rules.find(rule => rule.keywords.some(keyword => item.includes(keyword)));
+            if (matched) buckets[matched.key].push(item);
+            else buckets.evidence.push(item);
+        });
+
     return {
-        summary: String(payload.summary || '').trim(),
-        valueLevelCurrentRoom: String(payload.valueLevelCurrentRoom || '').trim(),
-        valueLevelGlobal: String(payload.valueLevelGlobal || '').trim(),
-        loyaltyAssessment: String(payload.loyaltyAssessment || '').trim(),
-        diversionRiskAssessment: String(payload.diversionRiskAssessment || '').trim(),
-        conversionStage: String(payload.conversionStage || '').trim(),
-        keySignals: normalizeRoomCustomerAnalysisStringArray(payload.keySignals, 6),
-        recommendedActions: normalizeRoomCustomerAnalysisStringArray(payload.recommendedActions, 6),
-        outreachScript: normalizeRoomCustomerAnalysisStringArray(payload.outreachScript, 4),
-        forbiddenActions: normalizeRoomCustomerAnalysisStringArray(payload.forbiddenActions, 4),
-        tags: normalizeRoomCustomerAnalysisStringArray(payload.tags, 8),
-        evidence: normalizeRoomCustomerAnalysisStringArray(payload.evidence, 6)
+        modelEvidence: dedupeRoomCustomerAnalysisArray(buckets.modelEvidence, 4),
+        contributionEvidence: dedupeRoomCustomerAnalysisArray(buckets.contributionEvidence, 4),
+        riskEvidence: dedupeRoomCustomerAnalysisArray(buckets.riskEvidence, 4),
+        interactionEvidence: dedupeRoomCustomerAnalysisArray(buckets.interactionEvidence, 4),
+        evidence: dedupeRoomCustomerAnalysisArray(buckets.evidence, 4)
     };
 }
 
-function renderRoomCustomerAnalysisMetric(label, value) {
+function normalizeRoomCustomerAnalysisPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+
+    const fallbackBuckets = classifyRoomCustomerAnalysisEvidence(payload.evidence || []);
+    return {
+        summary: localizeRoomCustomerAnalysisText(payload.summary || ''),
+        valueLevelCurrentRoom: localizeRoomCustomerAnalysisText(payload.valueLevelCurrentRoom || ''),
+        valueLevelGlobal: localizeRoomCustomerAnalysisText(payload.valueLevelGlobal || ''),
+        loyaltyAssessment: localizeRoomCustomerAnalysisText(payload.loyaltyAssessment || ''),
+        diversionRiskAssessment: localizeRoomCustomerAnalysisText(payload.diversionRiskAssessment || ''),
+        conversionStage: localizeRoomCustomerAnalysisText(payload.conversionStage || ''),
+        keySignals: normalizeRoomCustomerAnalysisStringArray(payload.keySignals, 6).map(localizeRoomCustomerAnalysisText),
+        recommendedActions: normalizeRoomCustomerAnalysisStringArray(payload.recommendedActions, 6).map(localizeRoomCustomerAnalysisText),
+        outreachScript: normalizeRoomCustomerAnalysisStringArray(payload.outreachScript, 4).map(localizeRoomCustomerAnalysisText),
+        forbiddenActions: normalizeRoomCustomerAnalysisStringArray(payload.forbiddenActions, 4).map(localizeRoomCustomerAnalysisText),
+        tags: normalizeRoomCustomerAnalysisStringArray(payload.tags, 8).map(localizeRoomCustomerAnalysisText),
+        modelEvidence: dedupeRoomCustomerAnalysisArray([
+            ...normalizeRoomCustomerAnalysisStringArray(payload.modelEvidence, 4).map(localizeRoomCustomerAnalysisText),
+            ...fallbackBuckets.modelEvidence
+        ], 4),
+        contributionEvidence: dedupeRoomCustomerAnalysisArray([
+            ...normalizeRoomCustomerAnalysisStringArray(payload.contributionEvidence, 4).map(localizeRoomCustomerAnalysisText),
+            ...fallbackBuckets.contributionEvidence
+        ], 4),
+        riskEvidence: dedupeRoomCustomerAnalysisArray([
+            ...normalizeRoomCustomerAnalysisStringArray(payload.riskEvidence, 4).map(localizeRoomCustomerAnalysisText),
+            ...fallbackBuckets.riskEvidence
+        ], 4),
+        interactionEvidence: dedupeRoomCustomerAnalysisArray([
+            ...normalizeRoomCustomerAnalysisStringArray(payload.interactionEvidence, 4).map(localizeRoomCustomerAnalysisText),
+            ...fallbackBuckets.interactionEvidence
+        ], 4),
+        evidence: dedupeRoomCustomerAnalysisArray([
+            ...normalizeRoomCustomerAnalysisStringArray(payload.generalEvidence, 4).map(localizeRoomCustomerAnalysisText),
+            ...fallbackBuckets.evidence
+        ], 4)
+    };
+}
+
+function renderRoomCustomerAnalysisMetric(label, value, tone = 'base') {
     if (!value) return '';
+    const toneClassMap = {
+        base: 'border-base-300 bg-base-100/90',
+        primary: 'border-primary/20 bg-primary/6',
+        success: 'border-success/20 bg-success/6',
+        warning: 'border-warning/20 bg-warning/8',
+        error: 'border-error/20 bg-error/6'
+    };
+    const cardClass = toneClassMap[tone] || toneClassMap.base;
     return `
-        <div class="rounded-box border border-base-300 bg-base-100/90 px-3 py-2">
-            <div class="text-[10px] uppercase tracking-wide text-base-content/45">${escapeRecapHtml(label)}</div>
-            <div class="mt-1 text-xs font-semibold leading-5 text-base-content/85">${escapeRecapHtml(value)}</div>
+        <div class="rounded-box border ${cardClass} px-3 py-3">
+            <div class="text-[11px] font-medium tracking-wide text-base-content/50">${escapeRecapHtml(label)}</div>
+            <div class="mt-1 text-sm font-semibold leading-6 text-base-content/88">${escapeRecapHtml(value)}</div>
         </div>
     `;
 }
 
-function renderRoomCustomerAnalysisListCard(title, items, tone = 'base') {
+function renderRoomCustomerAnalysisListCard(title, items, tone = 'base', subtitle = '') {
     if (!items || !items.length) return '';
     const toneClassMap = {
         base: 'border-base-300 bg-base-100/90',
-        primary: 'border-primary/20 bg-primary/5',
-        success: 'border-success/20 bg-success/5',
-        warning: 'border-warning/20 bg-warning/5',
-        error: 'border-error/20 bg-error/5'
+        primary: 'border-primary/20 bg-primary/6',
+        success: 'border-success/20 bg-success/6',
+        warning: 'border-warning/20 bg-warning/8',
+        error: 'border-error/20 bg-error/6'
     };
     const cardClass = toneClassMap[tone] || toneClassMap.base;
     return `
-        <div class="rounded-box border ${cardClass} p-3">
-            <div class="text-[11px] font-semibold text-base-content/70 mb-2">${escapeRecapHtml(title)}</div>
+        <div class="rounded-box border ${cardClass} p-4">
+            <div class="flex items-start justify-between gap-3 mb-2">
+                <div>
+                    <div class="text-sm font-semibold text-base-content/78">${escapeRecapHtml(title)}</div>
+                    ${subtitle ? `<div class="text-[11px] leading-5 text-base-content/48 mt-1">${escapeRecapHtml(subtitle)}</div>` : ''}
+                </div>
+            </div>
             <div class="space-y-2">
-                ${items.map(item => `<div class="leading-6 text-base-content/80">- ${escapeRecapHtml(item)}</div>`).join('')}
+                ${items.map(item => `<div class="rounded-box bg-base-100/80 px-3 py-2 text-sm leading-6 text-base-content/82">${escapeRecapHtml(item)}</div>`).join('')}
             </div>
         </div>
     `;
@@ -2194,32 +2340,45 @@ function renderRoomCustomerAnalysisResult(resultText, analysisPayload = null) {
     }
 
     const overviewItems = [
-        renderRoomCustomerAnalysisMetric('本房价值', analysis.valueLevelCurrentRoom),
-        renderRoomCustomerAnalysisMetric('平台价值', analysis.valueLevelGlobal),
-        renderRoomCustomerAnalysisMetric('忠诚判断', analysis.loyaltyAssessment),
-        renderRoomCustomerAnalysisMetric('分流风险', analysis.diversionRiskAssessment),
-        renderRoomCustomerAnalysisMetric('转化阶段', analysis.conversionStage)
+        renderRoomCustomerAnalysisMetric('本房价值定位', analysis.valueLevelCurrentRoom, 'primary'),
+        renderRoomCustomerAnalysisMetric('平台价值定位', analysis.valueLevelGlobal, 'success'),
+        renderRoomCustomerAnalysisMetric('忠诚稳定性', analysis.loyaltyAssessment, 'base'),
+        renderRoomCustomerAnalysisMetric('跨房分流风险', analysis.diversionRiskAssessment, 'warning'),
+        renderRoomCustomerAnalysisMetric('转化阶段', analysis.conversionStage, 'error')
     ].filter(Boolean).join('');
 
     wrap.innerHTML = `
-        <div class="space-y-3">
+        <div class="space-y-4">
             ${analysis.summary ? `
-                <div class="rounded-box border border-primary/15 bg-base-100/95 p-3">
-                    <div class="text-[11px] font-semibold text-base-content/60 mb-2">客户总结</div>
-                    <div class="text-sm leading-6 text-base-content/85">${escapeRecapHtml(analysis.summary)}</div>
+                <div class="rounded-box border border-primary/20 bg-gradient-to-br from-primary/10 via-base-100 to-base-100 p-4">
+                    <div class="text-[11px] font-semibold tracking-wide text-base-content/55 mb-2">客户总结</div>
+                    <div class="text-sm leading-7 text-base-content/88">${escapeRecapHtml(analysis.summary)}</div>
                 </div>
             ` : ''}
-            ${overviewItems ? `<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">${overviewItems}</div>` : ''}
+            ${overviewItems ? `<div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-5 gap-2">${overviewItems}</div>` : ''}
             ${analysis.tags.length ? `
-                <div class="flex flex-wrap gap-2">
-                    ${analysis.tags.map(tag => `<span class="badge badge-outline badge-sm">${escapeRecapHtml(tag)}</span>`).join('')}
+                <div class="rounded-box border border-base-300 bg-base-100/90 px-4 py-3">
+                    <div class="text-[11px] font-semibold text-base-content/55 mb-2">运营标签</div>
+                    <div class="flex flex-wrap gap-2">
+                        ${analysis.tags.map(tag => `<span class="badge badge-outline badge-sm">${escapeRecapHtml(tag)}</span>`).join('')}
+                    </div>
                 </div>
             ` : ''}
-            ${renderRoomCustomerAnalysisListCard('关键信号', analysis.keySignals, 'primary')}
-            ${renderRoomCustomerAnalysisListCard('建议动作', analysis.recommendedActions, 'success')}
-            ${renderRoomCustomerAnalysisListCard('建议话术', analysis.outreachScript, 'warning')}
-            ${renderRoomCustomerAnalysisListCard('不建议动作', analysis.forbiddenActions, 'error')}
-            ${renderRoomCustomerAnalysisListCard('数据证据', analysis.evidence, 'base')}
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                ${renderRoomCustomerAnalysisListCard('关键信号', analysis.keySignals, 'primary', '聚焦当前最值得主播和运营关注的客户变化')}
+                ${renderRoomCustomerAnalysisListCard('建议动作', analysis.recommendedActions, 'success', '强调谁来做、何时做、具体怎么做')}
+            </div>
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                ${renderRoomCustomerAnalysisListCard('模型判断依据', analysis.modelEvidence, 'primary', '围绕 LRFM、ABC、价值分层给出解释')}
+                ${renderRoomCustomerAnalysisListCard('价值贡献依据', analysis.contributionEvidence, 'success', '围绕贡献占比、送礼强度、排名强弱给出说明')}
+                ${renderRoomCustomerAnalysisListCard('风险趋势依据', analysis.riskEvidence, 'warning', '围绕跨房流向、趋势变化、流失风险给出说明')}
+                ${renderRoomCustomerAnalysisListCard('互动语料观察', analysis.interactionEvidence, 'base', '围绕互动深度、聊天情绪、语料信号给出说明')}
+            </div>
+            <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                ${renderRoomCustomerAnalysisListCard('主播承接话术', analysis.outreachScript, 'warning', '主播或场控可直接使用的短句')}
+                ${renderRoomCustomerAnalysisListCard('执行禁忌', analysis.forbiddenActions, 'error', '避免误伤关系或过度施压')}
+            </div>
+            ${renderRoomCustomerAnalysisListCard('补充事实依据', analysis.evidence, 'base', '仅展示未归入以上四类的补充事实')}
         </div>
     `;
 }
