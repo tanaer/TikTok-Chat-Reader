@@ -1548,9 +1548,9 @@ function renderSessionMaintenanceConfigForm() {
             </div>
             <div class="space-y-4">
                 ${group.fields.map(field => {
-                    const value = config[field.key];
-                    if (field.type === 'toggle') {
-                        return `
+        const value = config[field.key];
+        if (field.type === 'toggle') {
+            return `
                             <label class="label cursor-pointer justify-start gap-4 rounded-2xl border border-base-300 bg-base-100 px-4 py-3 items-start">
                                 <input type="checkbox" class="toggle toggle-primary mt-1" data-session-maintenance-key="${field.key}" ${value ? 'checked' : ''}>
                                 <div class="flex-1 min-w-0">
@@ -1559,8 +1559,8 @@ function renderSessionMaintenanceConfigForm() {
                                 </div>
                             </label>
                         `;
-                    }
-                    return `
+        }
+        return `
                         <label class="form-control rounded-2xl border border-base-300 bg-base-100 px-4 py-3">
                             <span class="label-text">${renderAdminSettingLabel(field.label, field.tooltip || field.hint || '', 'label-text font-medium')}</span>
                             <input
@@ -1574,7 +1574,7 @@ function renderSessionMaintenanceConfigForm() {
                             ${renderAdminSettingDescription(field.hint || '', field.tooltip || field.hint || '')}
                         </label>
                     `;
-                }).join('')}
+    }).join('')}
             </div>
         </div>
     `).join('');
@@ -1691,8 +1691,8 @@ function renderSessionMaintenanceLogs(logs) {
             </thead>
             <tbody>
                 ${logs.map(item => {
-                    const summaryText = item.message || summarizeSessionMaintenanceObject(item.summary || item.result || item.payload || null) || (item.errorMessage ? `失败：${item.errorMessage}` : '暂无摘要');
-                    return `
+        const summaryText = item.message || summarizeSessionMaintenanceObject(item.summary || item.result || item.payload || null) || (item.errorMessage ? `失败：${item.errorMessage}` : '暂无摘要');
+        return `
                         <tr>
                             <td class="text-xs align-top whitespace-nowrap">
                                 <div>${escapeHtml(formatSessionMaintenanceDateTime(item.startedAt || item.createdAt))}</div>
@@ -1708,7 +1708,7 @@ function renderSessionMaintenanceLogs(logs) {
                             <td class="text-xs align-top min-w-[18rem] leading-6">${escapeHtml(summaryText)}</td>
                         </tr>
                     `;
-                }).join('')}
+    }).join('')}
             </tbody>
         </table>
     `;
@@ -2267,7 +2267,6 @@ async function loadAdminAiWorkJobs(page = 1) {
                     : (job.sessionId || '-');
                 return `
                 <tr>
-                    <td>${Number(job.id || 0)}</td>
                     <td>${formatAdminAiWorkStatusBadge(job.status)}</td>
                     <td>${escapeHtml(job.nickname || job.username || '-')}</td>
                     <td>
@@ -2487,7 +2486,7 @@ async function loadAdminGiftConfig() {
         // Bind save events
         document.querySelectorAll('.admin-gift-input').forEach(input => {
             input.addEventListener('blur', saveAdminGiftName);
-            input.addEventListener('keydown', function(e) {
+            input.addEventListener('keydown', function (e) {
                 if (e.key === 'Enter') { e.preventDefault(); saveAdminGiftName.call(this); }
             });
         });
@@ -2898,7 +2897,7 @@ async function loadAiModels() {
             const modelsHtml = (ch.models || []).map(m => {
                 const statusBadge = m.lastStatus === 'ok' ? '<span class="badge badge-success badge-xs">正常</span>'
                     : m.lastStatus === 'error' ? '<span class="badge badge-error badge-xs">异常</span>'
-                    : '<span class="badge badge-ghost badge-xs">未测试</span>';
+                        : '<span class="badge badge-ghost badge-xs">未测试</span>';
                 const successRate = m.callCount > 0 ? Math.round((m.successCount / m.callCount) * 100) : '-';
                 const coolingBadge = m.isCooling ? `<span class="badge badge-warning badge-xs">冷却中 ${formatAiCooldown(m.cooldownRemainingSeconds)}</span>` : '';
                 const failBadge = m.consecutiveFailures > 0 ? `<span class="badge badge-outline badge-xs">连败 ${m.consecutiveFailures}</span>` : '';
@@ -2912,15 +2911,15 @@ async function loadAiModels() {
                             ${failBadge}
                             ${!m.isActive ? '<span class="badge badge-error badge-xs">禁用</span>' : ''}
                         </div>
-                        <div class="text-xs text-base-content/50 mt-0.5">ID: ${m.modelId} | 调用: ${m.callCount||0} | 成功率: ${successRate}% | 延迟: ${m.avgLatencyMs||'-'}ms</div>
-                        ${m.lastError ? `<div class="text-xs text-error truncate">${m.lastError.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</div>` : ''}
+                        <div class="text-xs text-base-content/50 mt-0.5">ID: ${m.modelId} | 调用: ${m.callCount || 0} | 成功率: ${successRate}% | 延迟: ${m.avgLatencyMs || '-'}ms</div>
+                        ${m.lastError ? `<div class="text-xs text-error truncate">${m.lastError.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>` : ''}
                     </div>
                     <div class="flex gap-1 flex-shrink-0 ml-2">
                         ${m.isDefault
-                            ? '<button class="btn btn-xs btn-disabled">当前默认</button>'
-                            : `<button class="btn btn-xs btn-outline btn-primary" onclick="setDefaultAiModel(${m.id})">设默认</button>`}
+                        ? '<button class="btn btn-xs btn-disabled">当前默认</button>'
+                        : `<button class="btn btn-xs btn-outline btn-primary" onclick="setDefaultAiModel(${m.id})">设默认</button>`}
                         <button class="btn btn-xs btn-outline btn-info" onclick="testAiModel(${m.id})">测试</button>
-                        <button class="btn btn-xs btn-ghost" onclick="editAiModelInline(${m.id}, '${(m.name||'').replace(/'/g,"\\'")}', '${(m.modelId||'').replace(/'/g,"\\'")}')">编辑</button>
+                        <button class="btn btn-xs btn-ghost" onclick="editAiModelInline(${m.id}, '${(m.name || '').replace(/'/g, "\\'")}', '${(m.modelId || '').replace(/'/g, "\\'")}')">编辑</button>
                         <button class="btn btn-xs btn-error btn-outline" onclick="deleteAiModel(${m.id})">删</button>
                     </div>
                 </div>`;
@@ -2935,8 +2934,8 @@ async function loadAiModels() {
                             <p class="text-xs text-base-content/50">API: ${ch.apiUrl} | Key: ${maskedKey}</p>
                         </div>
                         <div class="flex gap-1">
-                            <button class="btn btn-xs btn-primary btn-outline" onclick="showAddModelToChannel(${ch.id}, '${ch.name.replace(/'/g,"\\'")}')">添加模型</button>
-                            <button class="btn btn-xs btn-ghost" onclick="editChannel(${ch.id}, '${(ch.name||'').replace(/'/g,"\\'")}', '${(ch.apiUrl||'').replace(/'/g,"\\'")}')">编辑</button>
+                            <button class="btn btn-xs btn-primary btn-outline" onclick="showAddModelToChannel(${ch.id}, '${ch.name.replace(/'/g, "\\'")}')">添加模型</button>
+                            <button class="btn btn-xs btn-ghost" onclick="editChannel(${ch.id}, '${(ch.name || '').replace(/'/g, "\\'")}', '${(ch.apiUrl || '').replace(/'/g, "\\'")}')">编辑</button>
                             <button class="btn btn-xs btn-error btn-outline" onclick="deleteChannel(${ch.id})">删除</button>
                         </div>
                     </div>
@@ -3066,7 +3065,7 @@ async function loadAiCreditPackages() {
                             <p class="text-sm">${p.credits} 点 | ¥${Number(p.priceYuan || 0).toFixed(2)} ${normalizedDescription ? '| ' + normalizedDescription : ''}</p>
                         </div>
                         <div class="flex gap-1">
-                            <button class="btn btn-xs btn-ghost" onclick='editAiCreditPkg(${JSON.stringify(p).replace(/'/g,"&#39;")})'>编辑</button>
+                            <button class="btn btn-xs btn-ghost" onclick='editAiCreditPkg(${JSON.stringify(p).replace(/'/g, "&#39;")})'>编辑</button>
                             <button class="btn btn-xs btn-error btn-outline" onclick="deleteAiCreditPkg(${p.id})">下架</button>
                         </div>
                     </div>
@@ -4096,9 +4095,9 @@ function renderAdminAdminsTable() {
             </thead>
             <tbody>
                 ${adminAdminsCache.map((admin) => {
-                    const isSelf = Number(admin.id) === Number(adminAccessProfile?.userId);
-                    const roleBadgeClass = admin.source === 'legacy_fallback' ? 'badge-warning badge-outline' : 'badge-primary badge-outline';
-                    return `
+        const isSelf = Number(admin.id) === Number(adminAccessProfile?.userId);
+        const roleBadgeClass = admin.source === 'legacy_fallback' ? 'badge-warning badge-outline' : 'badge-primary badge-outline';
+        return `
                         <tr>
                             <td>
                                 <div class="font-semibold">${escapeHtml(admin.nickname || admin.username || '-')}</div>
@@ -4127,7 +4126,7 @@ function renderAdminAdminsTable() {
                             </td>
                         </tr>
                     `;
-                }).join('')}
+    }).join('')}
             </tbody>
         </table>
     `;
@@ -4154,9 +4153,9 @@ function renderAdminCandidates() {
             </thead>
             <tbody>
                 ${adminCandidatesCache.map((user) => {
-                    const isSelf = Number(user.id) === Number(adminAccessProfile?.userId);
-                    const alreadyAdmin = user.role === 'admin';
-                    return `
+        const isSelf = Number(user.id) === Number(adminAccessProfile?.userId);
+        const alreadyAdmin = user.role === 'admin';
+        return `
                         <tr>
                             <td>
                                 <div class="font-semibold">${escapeHtml(user.nickname || user.username || '-')}</div>
@@ -4179,7 +4178,7 @@ function renderAdminCandidates() {
                             </td>
                         </tr>
                     `;
-                }).join('')}
+    }).join('')}
             </tbody>
         </table>
     `;

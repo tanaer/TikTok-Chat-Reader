@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-theme="dark">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -9,53 +10,90 @@
     <link rel="stylesheet" href="/shared-shell.css">
     <script src="/js/auth.js?v=20260309a"></script>
     <style>
-        .doc-markdown h1, .doc-markdown h2, .doc-markdown h3, .doc-markdown h4 {
+        .doc-markdown h1,
+        .doc-markdown h2,
+        .doc-markdown h3,
+        .doc-markdown h4 {
             font-weight: 700;
             margin-top: 1.25rem;
             margin-bottom: 0.75rem;
             line-height: 1.35;
         }
-        .doc-markdown h1 { font-size: 1.8rem; }
-        .doc-markdown h2 { font-size: 1.45rem; }
-        .doc-markdown h3 { font-size: 1.2rem; }
-        .doc-markdown h4 { font-size: 1.05rem; }
-        .doc-markdown p, .doc-markdown ul, .doc-markdown ol, .doc-markdown blockquote, .doc-markdown pre {
+
+        .doc-markdown h1 {
+            font-size: 1.8rem;
+        }
+
+        .doc-markdown h2 {
+            font-size: 1.45rem;
+        }
+
+        .doc-markdown h3 {
+            font-size: 1.2rem;
+        }
+
+        .doc-markdown h4 {
+            font-size: 1.05rem;
+        }
+
+        .doc-markdown p,
+        .doc-markdown ul,
+        .doc-markdown ol,
+        .doc-markdown blockquote,
+        .doc-markdown pre {
             margin: 0.9rem 0;
             line-height: 1.8;
         }
-        .doc-markdown ul, .doc-markdown ol {
+
+        .doc-markdown ul,
+        .doc-markdown ol {
             padding-left: 1.4rem;
         }
-        .doc-markdown ul { list-style: disc; }
-        .doc-markdown ol { list-style: decimal; }
-        .doc-markdown li + li { margin-top: 0.35rem; }
+
+        .doc-markdown ul {
+            list-style: disc;
+        }
+
+        .doc-markdown ol {
+            list-style: decimal;
+        }
+
+        .doc-markdown li+li {
+            margin-top: 0.35rem;
+        }
+
         .doc-markdown code {
-            background: rgba(255,255,255,0.08);
+            background: rgba(255, 255, 255, 0.08);
             border-radius: 0.375rem;
             padding: 0.12rem 0.38rem;
             font-size: 0.92em;
         }
+
         .doc-markdown pre {
-            background: rgba(255,255,255,0.04);
-            border: 1px solid rgba(255,255,255,0.08);
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(255, 255, 255, 0.08);
             border-radius: 0.75rem;
             padding: 1rem;
             overflow-x: auto;
         }
+
         .doc-markdown pre code {
             background: transparent;
             padding: 0;
         }
+
         .doc-markdown blockquote {
             border-left: 3px solid hsl(var(--p));
             padding-left: 1rem;
             color: hsl(var(--bc) / 0.75);
         }
+
         .doc-markdown a {
             color: hsl(var(--p));
             text-decoration: underline;
             text-underline-offset: 0.18rem;
         }
+
         .doc-markdown hr {
             border: 0;
             border-top: 1px solid hsl(var(--bc) / 0.12);
@@ -72,16 +110,21 @@
             <p class="text-xs text-base-content/60 mt-1">管理后台</p>
         </div>
         <ul class="menu p-4 gap-1" id="sidebar-menu">
-            <li><a href="#" class="active" data-admin-section="overview" onclick="return showSection('overview', event)">系统概览</a></li>
+            <li><a href="#" class="active" data-admin-section="overview"
+                    onclick="return showSection('overview', event)">系统概览</a></li>
 
             <li data-admin-group-wrapper>
                 <details data-admin-group="business" open>
                     <summary>经营管理</summary>
                     <ul>
-                        <li><a href="#" data-admin-section="users" onclick="return showSection('users', event)">用户管理</a></li>
-                        <li><a href="#" data-admin-section="orders" onclick="return showSection('orders', event)">订单管理</a></li>
-                        <li><a href="#" data-admin-section="plans" onclick="return showSection('plans', event)">套餐设置</a></li>
-                        <li><a href="#" data-admin-section="gifts" onclick="return showSection('gifts', event)">礼物配置</a></li>
+                        <li><a href="#" data-admin-section="users" onclick="return showSection('users', event)">用户管理</a>
+                        </li>
+                        <li><a href="#" data-admin-section="orders"
+                                onclick="return showSection('orders', event)">订单管理</a></li>
+                        <li><a href="#" data-admin-section="plans" onclick="return showSection('plans', event)">套餐设置</a>
+                        </li>
+                        <li><a href="#" data-admin-section="gifts" onclick="return showSection('gifts', event)">礼物配置</a>
+                        </li>
                     </ul>
                 </details>
             </li>
@@ -90,8 +133,10 @@
                 <details data-admin-group="payments" open>
                     <summary>支付与通知</summary>
                     <ul>
-                        <li><a href="#" data-admin-section="payment" onclick="return showSection('payment', event)">支付管理</a></li>
-                        <li><a href="#" data-admin-section="notifications" onclick="return showSection('notifications', event)">通知系统</a></li>
+                        <li><a href="#" data-admin-section="payment"
+                                onclick="return showSection('payment', event)">支付管理</a></li>
+                        <li><a href="#" data-admin-section="notifications"
+                                onclick="return showSection('notifications', event)">通知系统</a></li>
                     </ul>
                 </details>
             </li>
@@ -100,10 +145,14 @@
                 <details data-admin-group="ai" open>
                     <summary>AI 与通道</summary>
                     <ul>
-                        <li><a href="#" data-admin-section="aiWork" onclick="return showSection('aiWork', event)">AI工作中心</a></li>
-                        <li><a href="#" data-admin-section="prompts" onclick="return showSection('prompts', event)">提示词管理</a></li>
-                        <li><a href="#" data-admin-section="aiModels" onclick="return showSection('aiModels', event)">AI 通道配置</a></li>
-                        <li><a href="#" data-admin-section="eulerKeys" onclick="return showSection('eulerKeys', event)">Euler API Keys</a></li>
+                        <li><a href="#" data-admin-section="aiWork"
+                                onclick="return showSection('aiWork', event)">AI工作中心</a></li>
+                        <li><a href="#" data-admin-section="prompts"
+                                onclick="return showSection('prompts', event)">提示词管理</a></li>
+                        <li><a href="#" data-admin-section="aiModels" onclick="return showSection('aiModels', event)">AI
+                                通道配置</a></li>
+                        <li><a href="#" data-admin-section="eulerKeys"
+                                onclick="return showSection('eulerKeys', event)">Euler API Keys</a></li>
                     </ul>
                 </details>
             </li>
@@ -112,12 +161,18 @@
                 <details data-admin-group="system" open>
                     <summary>系统与运维</summary>
                     <ul>
-                        <li><a href="#" data-admin-section="sessionMaintenance" onclick="return showSection('sessionMaintenance', event)">场次运维</a></li>
-                        <li><a href="#" data-admin-section="settings" onclick="return showSection('settings', event)">系统设置</a></li>
-                        <li><a href="#" data-admin-section="schemeASettings" onclick="return showSection('schemeASettings', event)">性能优化</a></li>
-                        <li><a href="#" data-admin-section="smtpServices" onclick="return showSection('smtpServices', event)">邮箱服务</a></li>
-                        <li><a href="#" data-admin-section="adminAccess" onclick="return showSection('adminAccess', event)">管理员管理</a></li>
-                        <li><a href="#" data-admin-section="docs" onclick="return showSection('docs', event)">系统文档</a></li>
+                        <li><a href="#" data-admin-section="sessionMaintenance"
+                                onclick="return showSection('sessionMaintenance', event)">场次运维</a></li>
+                        <li><a href="#" data-admin-section="settings"
+                                onclick="return showSection('settings', event)">系统设置</a></li>
+                        <li><a href="#" data-admin-section="schemeASettings"
+                                onclick="return showSection('schemeASettings', event)">性能优化</a></li>
+                        <li><a href="#" data-admin-section="smtpServices"
+                                onclick="return showSection('smtpServices', event)">邮箱服务</a></li>
+                        <li><a href="#" data-admin-section="adminAccess"
+                                onclick="return showSection('adminAccess', event)">管理员管理</a></li>
+                        <li><a href="#" data-admin-section="docs" onclick="return showSection('docs', event)">系统文档</a>
+                        </li>
                     </ul>
                 </details>
             </li>
@@ -135,18 +190,22 @@
                 <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1"></ul>
             </div>
             <div class="w-full md:w-auto">
-                <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap justify-start md:justify-end gap-2 px-0"></ul>
+                <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap justify-start md:justify-end gap-2 px-0">
+                </ul>
             </div>
         </div>
 
         <main class="flex-1 p-6 overflow-y-auto relative">
-            <div id="admin-content-loading-overlay" class="hidden absolute inset-0 z-20 bg-base-300/55 backdrop-blur-[1px]">
+            <div id="admin-content-loading-overlay"
+                class="hidden absolute inset-0 z-20 bg-base-300/55 backdrop-blur-[1px]">
                 <div class="sticky top-6 px-6">
-                    <div class="mx-auto max-w-md rounded-[1.5rem] border border-primary/20 bg-base-100/95 shadow-xl px-5 py-4 flex items-center gap-3">
+                    <div
+                        class="mx-auto max-w-md rounded-[1.5rem] border border-primary/20 bg-base-100/95 shadow-xl px-5 py-4 flex items-center gap-3">
                         <span class="loading loading-spinner loading-md text-primary"></span>
                         <div class="min-w-0">
                             <div class="font-semibold">后台数据加载中</div>
-                            <div id="admin-content-loading-text" class="text-sm text-base-content/65 mt-1">正在同步当前页面数据，请稍候...</div>
+                            <div id="admin-content-loading-text" class="text-sm text-base-content/65 mt-1">
+                                正在同步当前页面数据，请稍候...</div>
                         </div>
                     </div>
                 </div>
@@ -154,25 +213,45 @@
             <!-- Overview Section -->
             <section id="sec-overview">
                 <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-                    <div class="stat bg-base-100 rounded-box shadow"><div class="stat-title">总用户</div><div class="stat-value text-primary" id="s-users">-</div><div class="stat-desc" id="s-users-today"></div></div>
-                    <div class="stat bg-base-100 rounded-box shadow"><div class="stat-title">活跃订阅</div><div class="stat-value text-secondary" id="s-subs">-</div></div>
-                    <div class="stat bg-base-100 rounded-box shadow"><div class="stat-title">本月收入</div><div class="stat-value text-accent" id="s-revenue">-</div><div class="stat-desc" id="s-orders-total"></div></div>
-                    <div class="stat bg-base-100 rounded-box shadow"><div class="stat-title">用户余额池</div><div class="stat-value" id="s-balance">-</div></div>
+                    <div class="stat bg-base-100 rounded-box shadow">
+                        <div class="stat-title">总用户</div>
+                        <div class="stat-value text-primary" id="s-users">-</div>
+                        <div class="stat-desc" id="s-users-today"></div>
+                    </div>
+                    <div class="stat bg-base-100 rounded-box shadow">
+                        <div class="stat-title">活跃订阅</div>
+                        <div class="stat-value text-secondary" id="s-subs">-</div>
+                    </div>
+                    <div class="stat bg-base-100 rounded-box shadow">
+                        <div class="stat-title">本月收入</div>
+                        <div class="stat-value text-accent" id="s-revenue">-</div>
+                        <div class="stat-desc" id="s-orders-total"></div>
+                    </div>
+                    <div class="stat bg-base-100 rounded-box shadow">
+                        <div class="stat-title">用户余额池</div>
+                        <div class="stat-value" id="s-balance">-</div>
+                    </div>
                 </div>
                 <div class="stat bg-base-100 rounded-box shadow inline-block">
-                    <div class="stat-title">活跃监控房间</div><div class="stat-value text-info" id="s-rooms">-</div>
+                    <div class="stat-title">活跃监控房间</div>
+                    <div class="stat-value text-info" id="s-rooms">-</div>
                 </div>
             </section>
 
             <!-- Users Section -->
             <section id="sec-users" class="hidden">
                 <div class="flex gap-4 mb-4 flex-wrap">
-                    <input type="text" id="user-search" class="input input-bordered input-sm w-64" placeholder="搜索用户名/邮箱/昵称" onkeyup="if(event.key==='Enter')loadUsers(1)">
+                    <input type="text" id="user-search" class="input input-bordered input-sm w-64"
+                        placeholder="搜索用户名/邮箱/昵称" onkeyup="if(event.key==='Enter')loadUsers(1)">
                     <select id="user-role-filter" class="select select-bordered select-sm" onchange="loadUsers(1)">
-                        <option value="">全部角色</option><option value="user">普通用户</option><option value="admin">管理员</option>
+                        <option value="">全部角色</option>
+                        <option value="user">普通用户</option>
+                        <option value="admin">管理员</option>
                     </select>
                     <select id="user-status-filter" class="select select-bordered select-sm" onchange="loadUsers(1)">
-                        <option value="">全部状态</option><option value="active">正常</option><option value="disabled">已禁用</option>
+                        <option value="">全部状态</option>
+                        <option value="active">正常</option>
+                        <option value="disabled">已禁用</option>
                     </select>
                     <button class="btn btn-primary btn-sm" onclick="loadUsers(1)">搜索</button>
                 </div>
@@ -180,7 +259,19 @@
                     <div class="card-body p-4">
                         <div class="overflow-x-auto">
                             <table class="table table-zebra table-sm">
-                                <thead><tr><th>ID</th><th>用户名</th><th>昵称</th><th>余额</th><th>套餐</th><th>房间数</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
+                                <thead>
+                                    <tr>
+                                        <th>ID</th>
+                                        <th>用户名</th>
+                                        <th>昵称</th>
+                                        <th>余额</th>
+                                        <th>套餐</th>
+                                        <th>房间数</th>
+                                        <th>状态</th>
+                                        <th>注册时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
                                 <tbody id="users-tbody"></tbody>
                             </table>
                         </div>
@@ -192,9 +283,14 @@
             <!-- Orders Section -->
             <section id="sec-orders" class="hidden">
                 <div class="flex gap-4 mb-4 flex-wrap">
-                    <input type="text" id="order-search" class="input input-bordered input-sm w-64" placeholder="搜索订单号/用户名" onkeyup="if(event.key==='Enter')loadAdminOrders(1)">
-                    <select id="order-type-filter" class="select select-bordered select-sm" onchange="loadAdminOrders(1)">
-                        <option value="">全部类型</option><option value="plan">套餐</option><option value="addon">扩容包</option><option value="recharge">充值</option>
+                    <input type="text" id="order-search" class="input input-bordered input-sm w-64"
+                        placeholder="搜索订单号/用户名" onkeyup="if(event.key==='Enter')loadAdminOrders(1)">
+                    <select id="order-type-filter" class="select select-bordered select-sm"
+                        onchange="loadAdminOrders(1)">
+                        <option value="">全部类型</option>
+                        <option value="plan">套餐</option>
+                        <option value="addon">扩容包</option>
+                        <option value="recharge">充值</option>
                     </select>
                     <button class="btn btn-primary btn-sm" onclick="loadAdminOrders(1)">搜索</button>
                 </div>
@@ -202,7 +298,18 @@
                     <div class="card-body p-4">
                         <div class="overflow-x-auto">
                             <table class="table table-zebra table-sm">
-                                <thead><tr><th>订单号</th><th>用户</th><th>类型</th><th>内容</th><th>金额</th><th>状态</th><th>时间</th><th>操作</th></tr></thead>
+                                <thead>
+                                    <tr>
+                                        <th>订单号</th>
+                                        <th>用户</th>
+                                        <th>类型</th>
+                                        <th>内容</th>
+                                        <th>金额</th>
+                                        <th>状态</th>
+                                        <th>时间</th>
+                                        <th>操作</th>
+                                    </tr>
+                                </thead>
                                 <tbody id="admin-orders-tbody"></tbody>
                             </table>
                         </div>
@@ -220,17 +327,22 @@
                             <div class="flex justify-between items-start gap-4 flex-wrap">
                                 <div>
                                     <h3 class="card-title">支付管理</h3>
-                                    <p class="text-sm text-base-content/60">配置固定码、三方支付和虚拟币支付。前台只显示通道类型，不显示后台备注名。固定码的移动确认通知已迁移到“通知系统”菜单单独配置。</p>
+                                    <p class="text-sm text-base-content/60">
+                                        配置固定码、三方支付和虚拟币支付。前台只显示通道类型，不显示后台备注名。固定码的移动确认通知已迁移到“通知系统”菜单单独配置。</p>
                                 </div>
                                 <div class="form-control w-full sm:w-80">
                                     <label class="label"><span class="label-text">默认最低充值金额</span></label>
-                                    <input type="number" id="pay-min-recharge" class="input input-bordered" min="1" step="1" value="1">
-                                    <label class="label"><span class="label-text-alt text-base-content/50">未单独设置通道范围时，按此金额兜底；最高金额留空表示不限。</span></label>
+                                    <input type="number" id="pay-min-recharge" class="input input-bordered" min="1"
+                                        step="1" value="1">
+                                    <label class="label"><span
+                                            class="label-text-alt text-base-content/50">未单独设置通道范围时，按此金额兜底；最高金额留空表示不限。</span></label>
                                 </div>
                                 <div class="form-control w-full sm:flex-1 sm:min-w-[320px]">
                                     <label class="label"><span class="label-text">快捷支付金额</span></label>
-                                    <input type="text" id="pay-quick-amounts" class="input input-bordered" placeholder="50,100,200,500,1000">
-                                    <label class="label"><span class="label-text-alt text-base-content/50">用户中心充值弹层快捷金额，多个金额用英文逗号分隔，留空则使用默认值。</span></label>
+                                    <input type="text" id="pay-quick-amounts" class="input input-bordered"
+                                        placeholder="50,100,200,500,1000">
+                                    <label class="label"><span
+                                            class="label-text-alt text-base-content/50">用户中心充值弹层快捷金额，多个金额用英文逗号分隔，留空则使用默认值。</span></label>
                                 </div>
                             </div>
                             <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mt-4">
@@ -242,37 +354,101 @@
                                         </div>
                                         <div class="space-y-4 mt-2">
                                             <div class="rounded-box border border-base-300 p-3">
-                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-fixed-wechat-enabled" class="checkbox checkbox-sm"><span class="label-text">启用微信固定码</span></label>
+                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input
+                                                        type="checkbox" id="pay-fixed-wechat-enabled"
+                                                        class="checkbox checkbox-sm"><span
+                                                        class="label-text">启用微信固定码</span></label>
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
-                                                    <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-fixed-wechat-min" class="input input-bordered input-sm" min="1" step="1"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-fixed-wechat-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-fixed-wechat-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-fixed-wechat-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
-                                                    <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-fixed-wechat-recommended" class="checkbox checkbox-sm"><span class="label-text">推荐</span></label>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">最低金额</span></label><input
+                                                            type="number" id="pay-fixed-wechat-min"
+                                                            class="input input-bordered input-sm" min="1" step="1">
+                                                    </div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">最高金额</span></label><input
+                                                            type="number" id="pay-fixed-wechat-max"
+                                                            class="input input-bordered input-sm" min="1" step="1"
+                                                            placeholder="留空不限"></div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">手续费模式</span></label><select
+                                                            id="pay-fixed-wechat-fee-mode"
+                                                            class="select select-bordered select-sm">
+                                                            <option value="fixed">固定金额</option>
+                                                            <option value="percent">百分比</option>
+                                                        </select></div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">手续费值</span></label><input
+                                                            type="number" id="pay-fixed-wechat-fee"
+                                                            class="input input-bordered input-sm" min="0" step="0.01"
+                                                            placeholder="0"></div>
+                                                    <label
+                                                        class="label cursor-pointer justify-start gap-3 self-end pb-2"><input
+                                                            type="checkbox" id="pay-fixed-wechat-recommended"
+                                                            class="checkbox checkbox-sm"><span
+                                                            class="label-text">推荐</span></label>
                                                 </div>
                                                 <input type="hidden" id="pay-fixed-wechat-data">
-                                                <input type="file" id="pay-fixed-wechat-file" class="file-input file-input-bordered file-input-sm w-full" accept="image/*" onchange="handlePaymentImageUpload(this, 'pay-fixed-wechat-data', 'pay-fixed-wechat-preview', 'pay-fixed-wechat-empty')">
+                                                <input type="file" id="pay-fixed-wechat-file"
+                                                    class="file-input file-input-bordered file-input-sm w-full"
+                                                    accept="image/*"
+                                                    onchange="handlePaymentImageUpload(this, 'pay-fixed-wechat-data', 'pay-fixed-wechat-preview', 'pay-fixed-wechat-empty')">
                                                 <div class="mt-2 flex items-center gap-3">
-                                                    <img id="pay-fixed-wechat-preview" class="w-24 h-24 object-contain rounded border border-base-300 hidden" alt="微信固定码预览">
-                                                    <span id="pay-fixed-wechat-empty" class="text-xs text-base-content/50">未上传图片</span>
-                                                    <button class="btn btn-ghost btn-xs" type="button" onclick="clearPaymentImage('pay-fixed-wechat-file', 'pay-fixed-wechat-data', 'pay-fixed-wechat-preview', 'pay-fixed-wechat-empty')">清空</button>
+                                                    <img id="pay-fixed-wechat-preview"
+                                                        class="w-24 h-24 object-contain rounded border border-base-300 hidden"
+                                                        alt="微信固定码预览">
+                                                    <span id="pay-fixed-wechat-empty"
+                                                        class="text-xs text-base-content/50">未上传图片</span>
+                                                    <button class="btn btn-ghost btn-xs" type="button"
+                                                        onclick="clearPaymentImage('pay-fixed-wechat-file', 'pay-fixed-wechat-data', 'pay-fixed-wechat-preview', 'pay-fixed-wechat-empty')">清空</button>
                                                 </div>
                                             </div>
                                             <div class="rounded-box border border-base-300 p-3">
-                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-fixed-alipay-enabled" class="checkbox checkbox-sm"><span class="label-text">启用支付宝固定码</span></label>
+                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input
+                                                        type="checkbox" id="pay-fixed-alipay-enabled"
+                                                        class="checkbox checkbox-sm"><span
+                                                        class="label-text">启用支付宝固定码</span></label>
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 mb-3">
-                                                    <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-fixed-alipay-min" class="input input-bordered input-sm" min="1" step="1"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-fixed-alipay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-fixed-alipay-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-fixed-alipay-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
-                                                    <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-fixed-alipay-recommended" class="checkbox checkbox-sm"><span class="label-text">推荐</span></label>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">最低金额</span></label><input
+                                                            type="number" id="pay-fixed-alipay-min"
+                                                            class="input input-bordered input-sm" min="1" step="1">
+                                                    </div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">最高金额</span></label><input
+                                                            type="number" id="pay-fixed-alipay-max"
+                                                            class="input input-bordered input-sm" min="1" step="1"
+                                                            placeholder="留空不限"></div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">手续费模式</span></label><select
+                                                            id="pay-fixed-alipay-fee-mode"
+                                                            class="select select-bordered select-sm">
+                                                            <option value="fixed">固定金额</option>
+                                                            <option value="percent">百分比</option>
+                                                        </select></div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">手续费值</span></label><input
+                                                            type="number" id="pay-fixed-alipay-fee"
+                                                            class="input input-bordered input-sm" min="0" step="0.01"
+                                                            placeholder="0"></div>
+                                                    <label
+                                                        class="label cursor-pointer justify-start gap-3 self-end pb-2"><input
+                                                            type="checkbox" id="pay-fixed-alipay-recommended"
+                                                            class="checkbox checkbox-sm"><span
+                                                            class="label-text">推荐</span></label>
                                                 </div>
                                                 <input type="hidden" id="pay-fixed-alipay-data">
-                                                <input type="file" id="pay-fixed-alipay-file" class="file-input file-input-bordered file-input-sm w-full" accept="image/*" onchange="handlePaymentImageUpload(this, 'pay-fixed-alipay-data', 'pay-fixed-alipay-preview', 'pay-fixed-alipay-empty')">
+                                                <input type="file" id="pay-fixed-alipay-file"
+                                                    class="file-input file-input-bordered file-input-sm w-full"
+                                                    accept="image/*"
+                                                    onchange="handlePaymentImageUpload(this, 'pay-fixed-alipay-data', 'pay-fixed-alipay-preview', 'pay-fixed-alipay-empty')">
                                                 <div class="mt-2 flex items-center gap-3">
-                                                    <img id="pay-fixed-alipay-preview" class="w-24 h-24 object-contain rounded border border-base-300 hidden" alt="支付宝固定码预览">
-                                                    <span id="pay-fixed-alipay-empty" class="text-xs text-base-content/50">未上传图片</span>
-                                                    <button class="btn btn-ghost btn-xs" type="button" onclick="clearPaymentImage('pay-fixed-alipay-file', 'pay-fixed-alipay-data', 'pay-fixed-alipay-preview', 'pay-fixed-alipay-empty')">清空</button>
+                                                    <img id="pay-fixed-alipay-preview"
+                                                        class="w-24 h-24 object-contain rounded border border-base-300 hidden"
+                                                        alt="支付宝固定码预览">
+                                                    <span id="pay-fixed-alipay-empty"
+                                                        class="text-xs text-base-content/50">未上传图片</span>
+                                                    <button class="btn btn-ghost btn-xs" type="button"
+                                                        onclick="clearPaymentImage('pay-fixed-alipay-file', 'pay-fixed-alipay-data', 'pay-fixed-alipay-preview', 'pay-fixed-alipay-empty')">清空</button>
                                                 </div>
                                             </div>
                                         </div>
@@ -282,37 +458,104 @@
                                     <div class="card-body p-4">
                                         <div class="flex items-center justify-between">
                                             <h4 class="font-bold">三方支付</h4>
-                                            <label class="label cursor-pointer gap-3"><span class="label-text">启用</span><input type="checkbox" id="pay-futong-enabled" class="toggle toggle-primary toggle-sm"></label>
+                                            <label class="label cursor-pointer gap-3"><span
+                                                    class="label-text">启用</span><input type="checkbox"
+                                                    id="pay-futong-enabled"
+                                                    class="toggle toggle-primary toggle-sm"></label>
                                         </div>
                                         <div class="space-y-3 mt-2">
-                                            <div class="form-control"><label class="label"><span class="label-text">API 地址</span></label><input type="text" id="pay-futong-api-url" class="input input-bordered input-sm" placeholder="https://xxx.com"></div>
-                                            <div class="form-control"><label class="label"><span class="label-text">商户号 PID</span></label><input type="text" id="pay-futong-pid" class="input input-bordered input-sm"></div>
-                                            <div class="form-control"><label class="label"><span class="label-text">签名密钥</span></label><input type="text" id="pay-futong-secret" class="input input-bordered input-sm"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">API
+                                                        地址</span></label><input type="text" id="pay-futong-api-url"
+                                                    class="input input-bordered input-sm" placeholder="https://xxx.com">
+                                            </div>
+                                            <div class="form-control"><label class="label"><span class="label-text">商户号
+                                                        PID</span></label><input type="text" id="pay-futong-pid"
+                                                    class="input input-bordered input-sm"></div>
+                                            <div class="form-control"><label class="label"><span
+                                                        class="label-text">签名密钥</span></label><input type="text"
+                                                    id="pay-futong-secret" class="input input-bordered input-sm"></div>
                                             <div class="rounded-box border border-base-300 p-3">
-                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-futong-alipay-enabled" class="checkbox checkbox-sm"><span class="label-text">支付宝</span></label>
+                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input
+                                                        type="checkbox" id="pay-futong-alipay-enabled"
+                                                        class="checkbox checkbox-sm"><span
+                                                        class="label-text">支付宝</span></label>
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                                    <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-futong-alipay-min" class="input input-bordered input-sm" min="1" step="1"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-futong-alipay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-futong-alipay-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-futong-alipay-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
-                                                    <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-futong-alipay-recommended" class="checkbox checkbox-sm"><span class="label-text">推荐</span></label>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">最低金额</span></label><input
+                                                            type="number" id="pay-futong-alipay-min"
+                                                            class="input input-bordered input-sm" min="1" step="1">
+                                                    </div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">最高金额</span></label><input
+                                                            type="number" id="pay-futong-alipay-max"
+                                                            class="input input-bordered input-sm" min="1" step="1"
+                                                            placeholder="留空不限"></div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">手续费模式</span></label><select
+                                                            id="pay-futong-alipay-fee-mode"
+                                                            class="select select-bordered select-sm">
+                                                            <option value="fixed">固定金额</option>
+                                                            <option value="percent">百分比</option>
+                                                        </select></div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">手续费值</span></label><input
+                                                            type="number" id="pay-futong-alipay-fee"
+                                                            class="input input-bordered input-sm" min="0" step="0.01"
+                                                            placeholder="0"></div>
+                                                    <label
+                                                        class="label cursor-pointer justify-start gap-3 self-end pb-2"><input
+                                                            type="checkbox" id="pay-futong-alipay-recommended"
+                                                            class="checkbox checkbox-sm"><span
+                                                            class="label-text">推荐</span></label>
                                                 </div>
                                             </div>
                                             <div class="rounded-box border border-base-300 p-3">
-                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input type="checkbox" id="pay-futong-wxpay-enabled" class="checkbox checkbox-sm"><span class="label-text">微信</span></label>
+                                                <label class="label cursor-pointer justify-start gap-3 pt-0"><input
+                                                        type="checkbox" id="pay-futong-wxpay-enabled"
+                                                        class="checkbox checkbox-sm"><span
+                                                        class="label-text">微信</span></label>
                                                 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                                    <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-futong-wxpay-min" class="input input-bordered input-sm" min="1" step="1"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-futong-wxpay-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-futong-wxpay-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
-                                                    <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-futong-wxpay-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
-                                                    <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-futong-wxpay-recommended" class="checkbox checkbox-sm"><span class="label-text">推荐</span></label>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">最低金额</span></label><input
+                                                            type="number" id="pay-futong-wxpay-min"
+                                                            class="input input-bordered input-sm" min="1" step="1">
+                                                    </div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">最高金额</span></label><input
+                                                            type="number" id="pay-futong-wxpay-max"
+                                                            class="input input-bordered input-sm" min="1" step="1"
+                                                            placeholder="留空不限"></div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">手续费模式</span></label><select
+                                                            id="pay-futong-wxpay-fee-mode"
+                                                            class="select select-bordered select-sm">
+                                                            <option value="fixed">固定金额</option>
+                                                            <option value="percent">百分比</option>
+                                                        </select></div>
+                                                    <div class="form-control"><label class="label"><span
+                                                                class="label-text">手续费值</span></label><input
+                                                            type="number" id="pay-futong-wxpay-fee"
+                                                            class="input input-bordered input-sm" min="0" step="0.01"
+                                                            placeholder="0"></div>
+                                                    <label
+                                                        class="label cursor-pointer justify-start gap-3 self-end pb-2"><input
+                                                            type="checkbox" id="pay-futong-wxpay-recommended"
+                                                            class="checkbox checkbox-sm"><span
+                                                            class="label-text">推荐</span></label>
                                                 </div>
                                             </div>
-                                            <div class="form-control"><label class="label"><span class="label-text">回调地址</span></label><input type="text" id="pay-futong-notify-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前站点域名"></div>
-                                            <div class="form-control"><label class="label"><span class="label-text">返回地址</span></label><input type="text" id="pay-futong-return-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前访问域名；白名单不一致时建议手动填写正式域名"></div>
+                                            <div class="form-control"><label class="label"><span
+                                                        class="label-text">回调地址</span></label><input type="text"
+                                                    id="pay-futong-notify-url" class="input input-bordered input-sm"
+                                                    placeholder="留空则自动使用当前站点域名"></div>
+                                            <div class="form-control"><label class="label"><span
+                                                        class="label-text">返回地址</span></label><input type="text"
+                                                    id="pay-futong-return-url" class="input input-bordered input-sm"
+                                                    placeholder="留空则自动使用当前访问域名；白名单不一致时建议手动填写正式域名"></div>
                                             <div class="form-control">
                                                 <label class="label"><span class="label-text">支付链接打开方式</span></label>
-                                                <select id="pay-futong-open-mode" class="select select-bordered select-sm">
+                                                <select id="pay-futong-open-mode"
+                                                    class="select select-bordered select-sm">
                                                     <option value="qrcode">二维码</option>
                                                     <option value="redirect">跳转支付</option>
                                                 </select>
@@ -324,32 +567,68 @@
                                     <div class="card-body p-4">
                                         <div class="flex items-center justify-between">
                                             <h4 class="font-bold">虚拟币支付</h4>
-                                            <label class="label cursor-pointer gap-3"><span class="label-text">启用</span><input type="checkbox" id="pay-bepusdt-enabled" class="toggle toggle-primary toggle-sm"></label>
+                                            <label class="label cursor-pointer gap-3"><span
+                                                    class="label-text">启用</span><input type="checkbox"
+                                                    id="pay-bepusdt-enabled"
+                                                    class="toggle toggle-primary toggle-sm"></label>
                                         </div>
                                         <div class="space-y-3 mt-2">
-                                            <div class="form-control"><label class="label"><span class="label-text">API 地址</span></label><input type="text" id="pay-bepusdt-api-url" class="input input-bordered input-sm" placeholder="https://xxx.com"></div>
-                                            <div class="form-control"><label class="label"><span class="label-text">Auth Token</span></label><input type="text" id="pay-bepusdt-token" class="input input-bordered input-sm"></div>
-                                            <div class="form-control"><label class="label"><span class="label-text">签名密钥（可空）</span></label><input type="text" id="pay-bepusdt-secret" class="input input-bordered input-sm" placeholder="留空则使用 Auth Token"></div>
+                                            <div class="form-control"><label class="label"><span class="label-text">API
+                                                        地址</span></label><input type="text" id="pay-bepusdt-api-url"
+                                                    class="input input-bordered input-sm" placeholder="https://xxx.com">
+                                            </div>
+                                            <div class="form-control"><label class="label"><span class="label-text">Auth
+                                                        Token</span></label><input type="text" id="pay-bepusdt-token"
+                                                    class="input input-bordered input-sm"></div>
+                                            <div class="form-control"><label class="label"><span
+                                                        class="label-text">签名密钥（可空）</span></label><input type="text"
+                                                    id="pay-bepusdt-secret" class="input input-bordered input-sm"
+                                                    placeholder="留空则使用 Auth Token"></div>
                                             <div class="form-control">
                                                 <label class="label"><span class="label-text">结算网络</span></label>
-                                                <select id="pay-bepusdt-trade-type" class="select select-bordered select-sm">
+                                                <select id="pay-bepusdt-trade-type"
+                                                    class="select select-bordered select-sm">
                                                     <option value="usdt.trc20">USDT - TRC20</option>
                                                     <option value="usdt.bep20">USDT - BEP20</option>
                                                     <option value="usdt.solana">USDT - Solana</option>
                                                 </select>
-                                                <label class="label"><span class="label-text-alt">这里只能选一个交易类型；旧的逗号分隔配置会自动取第一个有效值。</span></label>
+                                                <label class="label"><span
+                                                        class="label-text-alt">这里只能选一个交易类型；旧的逗号分隔配置会自动取第一个有效值。</span></label>
                                             </div>
                                             <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                                                <div class="form-control"><label class="label"><span class="label-text">最低金额</span></label><input type="number" id="pay-bepusdt-min" class="input input-bordered input-sm" min="1" step="1"></div>
-                                                <div class="form-control"><label class="label"><span class="label-text">最高金额</span></label><input type="number" id="pay-bepusdt-max" class="input input-bordered input-sm" min="1" step="1" placeholder="留空不限"></div>
-                                                <div class="form-control"><label class="label"><span class="label-text">手续费模式</span></label><select id="pay-bepusdt-fee-mode" class="select select-bordered select-sm"><option value="fixed">固定金额</option><option value="percent">百分比</option></select></div>
-                                                <div class="form-control"><label class="label"><span class="label-text">手续费值</span></label><input type="number" id="pay-bepusdt-fee" class="input input-bordered input-sm" min="0" step="0.01" placeholder="0"></div>
-                                                <label class="label cursor-pointer justify-start gap-3 self-end pb-2"><input type="checkbox" id="pay-bepusdt-recommended" class="checkbox checkbox-sm"><span class="label-text">推荐</span></label>
+                                                <div class="form-control"><label class="label"><span
+                                                            class="label-text">最低金额</span></label><input type="number"
+                                                        id="pay-bepusdt-min" class="input input-bordered input-sm"
+                                                        min="1" step="1"></div>
+                                                <div class="form-control"><label class="label"><span
+                                                            class="label-text">最高金额</span></label><input type="number"
+                                                        id="pay-bepusdt-max" class="input input-bordered input-sm"
+                                                        min="1" step="1" placeholder="留空不限"></div>
+                                                <div class="form-control"><label class="label"><span
+                                                            class="label-text">手续费模式</span></label><select
+                                                        id="pay-bepusdt-fee-mode"
+                                                        class="select select-bordered select-sm">
+                                                        <option value="fixed">固定金额</option>
+                                                        <option value="percent">百分比</option>
+                                                    </select></div>
+                                                <div class="form-control"><label class="label"><span
+                                                            class="label-text">手续费值</span></label><input type="number"
+                                                        id="pay-bepusdt-fee" class="input input-bordered input-sm"
+                                                        min="0" step="0.01" placeholder="0"></div>
+                                                <label
+                                                    class="label cursor-pointer justify-start gap-3 self-end pb-2"><input
+                                                        type="checkbox" id="pay-bepusdt-recommended"
+                                                        class="checkbox checkbox-sm"><span
+                                                        class="label-text">推荐</span></label>
                                             </div>
-                                            <div class="form-control"><label class="label"><span class="label-text">回调地址</span></label><input type="text" id="pay-bepusdt-notify-url" class="input input-bordered input-sm" placeholder="留空则自动使用当前站点域名"></div>
+                                            <div class="form-control"><label class="label"><span
+                                                        class="label-text">回调地址</span></label><input type="text"
+                                                    id="pay-bepusdt-notify-url" class="input input-bordered input-sm"
+                                                    placeholder="留空则自动使用当前站点域名"></div>
                                             <div class="form-control">
                                                 <label class="label"><span class="label-text">支付链接打开方式</span></label>
-                                                <select id="pay-bepusdt-open-mode" class="select select-bordered select-sm">
+                                                <select id="pay-bepusdt-open-mode"
+                                                    class="select select-bordered select-sm">
                                                     <option value="qrcode">二维码</option>
                                                     <option value="redirect">跳转支付</option>
                                                 </select>
@@ -373,19 +652,35 @@
                         <div class="card-body">
                             <div class="mb-4">
                                 <h3 class="card-title">通知系统</h3>
-                                <p class="text-sm text-base-content/60">这里统一管理固定码订单的移动确认通知。当前支持 PushPlus，在用户点击“完成支付”后推送确认链接。</p>
+                                <p class="text-sm text-base-content/60">这里统一管理固定码订单的移动确认通知。当前支持
+                                    PushPlus，在用户点击“完成支付”后推送确认链接。</p>
                             </div>
                             <div class="card bg-base-200 border border-base-300">
                                 <div class="card-body p-4">
                                     <div class="flex items-center justify-between">
-                                        <div class="flex items-center gap-2"><h4 class="font-bold">固定码通知（PushPlus）</h4><span class="badge badge-ghost badge-sm">完成支付按钮</span></div>
-                                        <label class="label cursor-pointer gap-3"><span class="label-text">启用</span><input type="checkbox" id="notice-pushplus-enabled" class="toggle toggle-primary toggle-sm"></label>
+                                        <div class="flex items-center gap-2">
+                                            <h4 class="font-bold">固定码通知（PushPlus）</h4><span
+                                                class="badge badge-ghost badge-sm">完成支付按钮</span>
+                                        </div>
+                                        <label class="label cursor-pointer gap-3"><span
+                                                class="label-text">启用</span><input type="checkbox"
+                                                id="notice-pushplus-enabled"
+                                                class="toggle toggle-primary toggle-sm"></label>
                                     </div>
                                     <div class="space-y-3 mt-2">
-                                        <div class="form-control"><label class="label"><span class="label-text">API 地址</span></label><input type="text" id="notice-pushplus-api-url" class="input input-bordered input-sm" placeholder="https://www.pushplus.plus/batchSend"></div>
-                                        <div class="form-control"><label class="label"><span class="label-text">Token</span></label><input type="text" id="notice-pushplus-token" class="input input-bordered input-sm"></div>
-                                        <div class="form-control"><label class="label"><span class="label-text">Channel</span></label><input type="text" id="notice-pushplus-channel" class="input input-bordered input-sm" placeholder="app"></div>
-                                        <div class="text-xs text-base-content/50 leading-6">用户点击固定码的“完成支付”后，会把移动确认链接推送到这里；消息发出成功后，前台按钮会自动锁定。</div>
+                                        <div class="form-control"><label class="label"><span class="label-text">API
+                                                    地址</span></label><input type="text" id="notice-pushplus-api-url"
+                                                class="input input-bordered input-sm"
+                                                placeholder="https://www.pushplus.plus/batchSend"></div>
+                                        <div class="form-control"><label class="label"><span
+                                                    class="label-text">Token</span></label><input type="text"
+                                                id="notice-pushplus-token" class="input input-bordered input-sm"></div>
+                                        <div class="form-control"><label class="label"><span
+                                                    class="label-text">Channel</span></label><input type="text"
+                                                id="notice-pushplus-channel" class="input input-bordered input-sm"
+                                                placeholder="app"></div>
+                                        <div class="text-xs text-base-content/50 leading-6">
+                                            用户点击固定码的“完成支付”后，会把移动确认链接推送到这里；消息发出成功后，前台按钮会自动锁定。</div>
                                     </div>
                                 </div>
                             </div>
@@ -434,7 +729,8 @@
                 <div class="card bg-base-100 shadow max-w-5xl">
                     <div class="card-body">
                         <h3 class="card-title mb-2">系统设置</h3>
-                        <p class="text-sm text-base-content/60 mb-4">基础配置、站点默认值与登录安全设置集中管理。性能优化相关的 Redis、对象存储、Worker 与观测参数已拆到独立菜单。</p>
+                        <p class="text-sm text-base-content/60 mb-4">基础配置、站点默认值与登录安全设置集中管理。性能优化相关的 Redis、对象存储、Worker
+                            与观测参数已拆到独立菜单。</p>
                         <div id="settings-form" class="space-y-4"></div>
                         <div class="mt-6">
                             <button class="btn btn-primary" onclick="saveSettings('#settings-form')">保存设置</button>
@@ -445,7 +741,8 @@
 
             <section id="sec-schemeASettings" class="hidden">
                 <div class="space-y-6 max-w-6xl">
-                    <div class="rounded-[1.75rem] border border-primary/20 bg-gradient-to-br from-primary/12 via-base-100 to-info/12 shadow-lg overflow-hidden">
+                    <div
+                        class="rounded-[1.75rem] border border-primary/20 bg-gradient-to-br from-primary/12 via-base-100 to-info/12 shadow-lg overflow-hidden">
                         <div class="px-6 py-6 lg:px-8">
                             <div class="flex flex-wrap items-center gap-2 mb-3">
                                 <span class="badge badge-primary badge-outline">Redis</span>
@@ -454,14 +751,16 @@
                                 <span class="badge badge-accent badge-outline">观测</span>
                             </div>
                             <h3 class="text-2xl font-bold leading-tight">性能优化设置中心</h3>
-                            <p class="text-sm text-base-content/70 mt-3 leading-7">集中管理 Redis 缓存、对象存储、录播上传 Worker、录播访问令牌、结构化观测与后续预留开关。每个配置项都带有详细说明，便于你直接在后台完成性能优化相关部署与调优。</p>
+                            <p class="text-sm text-base-content/70 mt-3 leading-7">集中管理 Redis 缓存、对象存储、录播上传
+                                Worker、录播访问令牌、结构化观测与后续预留开关。每个配置项都带有详细说明，便于你直接在后台完成性能优化相关部署与调优。</p>
                         </div>
                     </div>
                     <div class="card bg-base-100 shadow">
                         <div class="card-body">
                             <div id="schemea-settings-form" class="space-y-4"></div>
                             <div class="mt-6">
-                                <button class="btn btn-primary" onclick="saveSettings('#schemea-settings-form')">保存性能优化设置</button>
+                                <button class="btn btn-primary"
+                                    onclick="saveSettings('#schemea-settings-form')">保存性能优化设置</button>
                             </div>
                         </div>
                     </div>
@@ -470,8 +769,10 @@
 
             <section id="sec-sessionMaintenance" class="hidden">
                 <div class="space-y-6">
-                    <div class="rounded-[1.75rem] border border-primary/20 bg-gradient-to-br from-primary/12 via-base-100 to-info/12 shadow-lg overflow-hidden">
-                        <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)] gap-6 px-6 py-6 lg:px-8">
+                    <div
+                        class="rounded-[1.75rem] border border-primary/20 bg-gradient-to-br from-primary/12 via-base-100 to-info/12 shadow-lg overflow-hidden">
+                        <div
+                            class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)] gap-6 px-6 py-6 lg:px-8">
                             <div>
                                 <div class="flex flex-wrap items-center gap-2 mb-3">
                                     <span class="badge badge-primary badge-outline">自动归档</span>
@@ -479,42 +780,58 @@
                                     <span class="badge badge-secondary badge-outline">可视化运维</span>
                                 </div>
                                 <h3 class="text-2xl font-bold leading-tight">场次运维控制台</h3>
-                                <p class="text-sm text-base-content/70 mt-3 leading-7">集中管理场次自动归档、断线续场、陈旧 LIVE 清理与碎片场次合并。参数统一配置、任务统一记录，保留手动执行入口，便于线上追踪与回溯。</p>
-                                <div id="session-maintenance-hero-meta" class="flex flex-wrap gap-3 mt-5 text-xs text-base-content/60">
+                                <p class="text-sm text-base-content/70 mt-3 leading-7">集中管理场次自动归档、断线续场、陈旧 LIVE
+                                    清理与碎片场次合并。参数统一配置、任务统一记录，保留手动执行入口，便于线上追踪与回溯。</p>
+                                <div id="session-maintenance-hero-meta"
+                                    class="flex flex-wrap gap-3 mt-5 text-xs text-base-content/60">
                                     <span class="badge badge-ghost badge-sm">正在读取当前策略...</span>
                                 </div>
                             </div>
-                            <div class="rounded-[1.5rem] border border-base-300/70 bg-base-100/90 backdrop-blur px-5 py-5">
+                            <div
+                                class="rounded-[1.5rem] border border-base-300/70 bg-base-100/90 backdrop-blur px-5 py-5">
                                 <div class="flex items-start justify-between gap-3">
                                     <div>
                                         <div class="text-sm font-semibold">运维动作</div>
-                                        <p class="text-xs text-base-content/60 mt-1 leading-6">配置改动保存后即时生效，日志区会记录自动/手动运行结果。</p>
+                                        <p class="text-xs text-base-content/60 mt-1 leading-6">
+                                            配置改动保存后即时生效，日志区会记录自动/手动运行结果。</p>
                                     </div>
-                                    <button class="btn btn-sm btn-primary" onclick="loadSessionMaintenanceSection()">刷新面板</button>
+                                    <button class="btn btn-sm btn-primary"
+                                        onclick="loadSessionMaintenanceSection()">刷新面板</button>
                                 </div>
-                                <div id="session-maintenance-action-result" class="mt-4 rounded-2xl border border-base-300 bg-base-200/80 px-4 py-4 text-sm text-base-content/70 leading-7">尚未执行新的运维动作。</div>
+                                <div id="session-maintenance-action-result"
+                                    class="mt-4 rounded-2xl border border-base-300 bg-base-200/80 px-4 py-4 text-sm text-base-content/70 leading-7">
+                                    尚未执行新的运维动作。</div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(23rem,0.75fr)] gap-6 items-start">
+                    <div
+                        class="grid grid-cols-1 xl:grid-cols-[minmax(0,1.25fr)_minmax(23rem,0.75fr)] gap-6 items-start">
                         <div class="space-y-6">
-                            <div id="session-maintenance-overview-stats" class="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-4">
-                                <div class="rounded-box border border-base-300 bg-base-100 px-5 py-5 text-sm text-base-content/60">正在加载概览...</div>
+                            <div id="session-maintenance-overview-stats"
+                                class="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-4">
+                                <div
+                                    class="rounded-box border border-base-300 bg-base-100 px-5 py-5 text-sm text-base-content/60">
+                                    正在加载概览...</div>
                             </div>
 
-                            <div class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.9fr)] gap-6 items-start">
+                            <div
+                                class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_minmax(18rem,0.9fr)] gap-6 items-start">
                                 <div class="card bg-base-100 shadow">
                                     <div class="card-body">
                                         <div class="flex items-start justify-between gap-3 mb-3">
                                             <div>
                                                 <h3 class="card-title">任务运行总览</h3>
-                                                <p class="text-sm text-base-content/60 mt-1">展示自动任务与最近一次执行状态，帮助快速判断链路是否健康。</p>
+                                                <p class="text-sm text-base-content/60 mt-1">
+                                                    展示自动任务与最近一次执行状态，帮助快速判断链路是否健康。</p>
                                             </div>
-                                            <button class="btn btn-ghost btn-sm" onclick="loadSessionMaintenanceOverview()">刷新</button>
+                                            <button class="btn btn-ghost btn-sm"
+                                                onclick="loadSessionMaintenanceOverview()">刷新</button>
                                         </div>
                                         <div id="session-maintenance-overview-panel" class="space-y-3">
-                                            <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">正在同步运行状态...</div>
+                                            <div
+                                                class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                正在同步运行状态...</div>
                                         </div>
                                     </div>
                                 </div>
@@ -524,11 +841,14 @@
                                         <div class="flex items-start justify-between gap-3 mb-3">
                                             <div>
                                                 <h3 class="card-title">计划任务节奏</h3>
-                                                <p class="text-sm text-base-content/60 mt-1">直观看到启动任务、定时清理、碎片扫描与断线保留窗口。</p>
+                                                <p class="text-sm text-base-content/60 mt-1">直观看到启动任务、定时清理、碎片扫描与断线保留窗口。
+                                                </p>
                                             </div>
                                         </div>
                                         <div id="session-maintenance-scheduler-panel" class="space-y-3">
-                                            <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">正在读取调度信息...</div>
+                                            <div
+                                                class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                正在读取调度信息...</div>
                                         </div>
                                     </div>
                                 </div>
@@ -539,10 +859,13 @@
                                     <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
                                         <div>
                                             <h3 class="card-title">最近运行日志</h3>
-                                            <p class="text-sm text-base-content/60 mt-1">记录自动与手动任务的执行轨迹，可用于复盘异常或确认修复结果。</p>
+                                            <p class="text-sm text-base-content/60 mt-1">记录自动与手动任务的执行轨迹，可用于复盘异常或确认修复结果。
+                                            </p>
                                         </div>
                                         <div class="flex flex-wrap gap-2">
-                                            <select id="session-maintenance-log-task" class="select select-bordered select-sm" onchange="loadSessionMaintenanceLogs()">
+                                            <select id="session-maintenance-log-task"
+                                                class="select select-bordered select-sm"
+                                                onchange="loadSessionMaintenanceLogs()">
                                                 <option value="">全部任务</option>
                                                 <option value="cleanup-stale-live">陈旧 LIVE 清理</option>
                                                 <option value="archive-room-stale">单房间归档</option>
@@ -555,7 +878,9 @@
                                                 <option value="disconnect-resume">断线续场</option>
                                                 <option value="archive-session">自动归档</option>
                                             </select>
-                                            <select id="session-maintenance-log-status" class="select select-bordered select-sm" onchange="loadSessionMaintenanceLogs()">
+                                            <select id="session-maintenance-log-status"
+                                                class="select select-bordered select-sm"
+                                                onchange="loadSessionMaintenanceLogs()">
                                                 <option value="">全部状态</option>
                                                 <option value="running">执行中</option>
                                                 <option value="success">成功</option>
@@ -563,7 +888,9 @@
                                                 <option value="scheduled">已计划</option>
                                                 <option value="skipped">跳过</option>
                                             </select>
-                                            <select id="session-maintenance-log-limit" class="select select-bordered select-sm" onchange="loadSessionMaintenanceLogs()">
+                                            <select id="session-maintenance-log-limit"
+                                                class="select select-bordered select-sm"
+                                                onchange="loadSessionMaintenanceLogs()">
                                                 <option value="15">最近 15 条</option>
                                                 <option value="30" selected>最近 30 条</option>
                                                 <option value="50">最近 50 条</option>
@@ -572,7 +899,8 @@
                                         </div>
                                     </div>
                                     <div id="session-maintenance-logs-wrap" class="overflow-x-auto">
-                                        <div class="rounded-box bg-base-200/80 px-4 py-5 text-sm text-base-content/60">正在加载日志...</div>
+                                        <div class="rounded-box bg-base-200/80 px-4 py-5 text-sm text-base-content/60">
+                                            正在加载日志...</div>
                                     </div>
                                 </div>
                             </div>
@@ -586,13 +914,16 @@
                                             <h3 class="card-title">运维参数配置</h3>
                                             <p class="text-sm text-base-content/60 mt-1">把断线保留、定时清理和碎片扫描窗口统一沉淀为可配置项。</p>
                                         </div>
-                                        <button class="btn btn-ghost btn-sm" onclick="loadSessionMaintenanceConfig()">重载</button>
+                                        <button class="btn btn-ghost btn-sm"
+                                            onclick="loadSessionMaintenanceConfig()">重载</button>
                                     </div>
                                     <div id="session-maintenance-config-form" class="space-y-4">
-                                        <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">正在读取配置...</div>
+                                        <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                            正在读取配置...</div>
                                     </div>
                                     <div class="mt-5 flex justify-end">
-                                        <button class="btn btn-primary" onclick="saveSessionMaintenanceConfig()">保存运维配置</button>
+                                        <button class="btn btn-primary"
+                                            onclick="saveSessionMaintenanceConfig()">保存运维配置</button>
                                     </div>
                                 </div>
                             </div>
@@ -605,22 +936,34 @@
                                     </div>
                                     <div class="space-y-4">
                                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            <button class="btn btn-outline btn-primary justify-start" onclick="runSessionMaintenanceAction('cleanup-stale-live')">执行陈旧 LIVE 清理</button>
-                                            <button class="btn btn-outline btn-primary justify-start" onclick="runSessionMaintenanceAction('consolidate-recent')">扫描最近碎片场次</button>
-                                            <button class="btn btn-outline btn-secondary justify-start" onclick="runSessionMaintenanceAction('merge-continuity')">执行同日连续场次合并</button>
-                                            <button class="btn btn-outline btn-secondary justify-start" onclick="runSessionMaintenanceAction('fix-orphaned')">修复孤儿事件</button>
-                                            <button class="btn btn-outline btn-warning justify-start" onclick="runSessionMaintenanceAction('delete-empty')">清理空场次</button>
-                                            <button class="btn btn-outline btn-warning justify-start" onclick="runSessionMaintenanceAction('rebuild-missing')">重建缺失场次</button>
+                                            <button class="btn btn-outline btn-primary justify-start"
+                                                onclick="runSessionMaintenanceAction('cleanup-stale-live')">执行陈旧 LIVE
+                                                清理</button>
+                                            <button class="btn btn-outline btn-primary justify-start"
+                                                onclick="runSessionMaintenanceAction('consolidate-recent')">扫描最近碎片场次</button>
+                                            <button class="btn btn-outline btn-secondary justify-start"
+                                                onclick="runSessionMaintenanceAction('merge-continuity')">执行同日连续场次合并</button>
+                                            <button class="btn btn-outline btn-secondary justify-start"
+                                                onclick="runSessionMaintenanceAction('fix-orphaned')">修复孤儿事件</button>
+                                            <button class="btn btn-outline btn-warning justify-start"
+                                                onclick="runSessionMaintenanceAction('delete-empty')">清理空场次</button>
+                                            <button class="btn btn-outline btn-warning justify-start"
+                                                onclick="runSessionMaintenanceAction('rebuild-missing')">重建缺失场次</button>
                                         </div>
                                         <div class="rounded-[1.25rem] border border-base-300 bg-base-200/70 p-4">
                                             <div class="flex flex-wrap items-end gap-3">
                                                 <label class="form-control flex-1 min-w-[12rem]">
                                                     <span class="label-text text-sm">单房间强制归档</span>
-                                                    <input id="session-maintenance-room-id" type="text" class="input input-bordered" placeholder="输入 room_id，例如 blooming_live">
+                                                    <input id="session-maintenance-room-id" type="text"
+                                                        class="input input-bordered"
+                                                        placeholder="输入 room_id，例如 blooming_live">
                                                 </label>
-                                                <button class="btn btn-accent" onclick="runSessionMaintenanceAction('archive-room-stale')">归档该房间陈旧 LIVE</button>
+                                                <button class="btn btn-accent"
+                                                    onclick="runSessionMaintenanceAction('archive-room-stale')">归档该房间陈旧
+                                                    LIVE</button>
                                             </div>
-                                            <div class="text-xs text-base-content/60 mt-3 leading-6">仅处理该房间当前未归档、已满足陈旧规则的事件，用于局部排障，不会影响其他房间。</div>
+                                            <div class="text-xs text-base-content/60 mt-3 leading-6">
+                                                仅处理该房间当前未归档、已满足陈旧规则的事件，用于局部排障，不会影响其他房间。</div>
                                         </div>
                                     </div>
                                 </div>
@@ -638,13 +981,16 @@
                                 <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
                                     <div>
                                         <h3 class="card-title">邮箱服务管理</h3>
-                                        <p class="text-sm text-base-content/60 mt-1">支持配置多个 SMTP 服务，默认优先，节点异常时自动切换到其他可用服务。</p>
+                                        <p class="text-sm text-base-content/60 mt-1">支持配置多个 SMTP
+                                            服务，默认优先，节点异常时自动切换到其他可用服务。</p>
                                     </div>
                                     <button class="btn btn-primary btn-sm" onclick="editSmtpService()">新增邮箱服务</button>
                                 </div>
-                                <div id="smtp-services-overview" class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5"></div>
+                                <div id="smtp-services-overview" class="grid grid-cols-1 md:grid-cols-3 gap-3 mb-5">
+                                </div>
                                 <div id="smtp-services-list" class="space-y-3">
-                                    <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载邮箱服务...</div>
+                                    <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">
+                                        正在加载邮箱服务...</div>
                                 </div>
                             </div>
                         </div>
@@ -657,7 +1003,8 @@
                                     <div id="smtp-policy-summary" class="mt-4 text-sm text-base-content/70"></div>
                                     <div id="smtp-email-settings-form" class="space-y-4 mt-4"></div>
                                     <div class="mt-5">
-                                        <button class="btn btn-primary btn-sm" onclick="saveSmtpEmailSettings()">保存邮件策略</button>
+                                        <button class="btn btn-primary btn-sm"
+                                            onclick="saveSmtpEmailSettings()">保存邮件策略</button>
                                     </div>
                                 </div>
                             </div>
@@ -669,12 +1016,15 @@
                                             <h3 id="smtp-editor-title" class="card-title">新增邮箱服务</h3>
                                             <p class="text-sm text-base-content/60 mt-1">修改后即时生效，可单独测试连接或发送测试邮件。</p>
                                         </div>
-                                        <button class="btn btn-ghost btn-sm" onclick="resetSmtpServiceEditor()">清空</button>
+                                        <button class="btn btn-ghost btn-sm"
+                                            onclick="resetSmtpServiceEditor()">清空</button>
                                     </div>
                                     <div id="smtp-service-editor" class="space-y-4"></div>
                                     <div class="flex flex-wrap gap-2 mt-5">
-                                        <button class="btn btn-primary btn-sm" onclick="submitSmtpServiceForm()">保存邮箱服务</button>
-                                        <button class="btn btn-outline btn-sm" onclick="resetSmtpServiceEditor()">取消编辑</button>
+                                        <button class="btn btn-primary btn-sm"
+                                            onclick="submitSmtpServiceForm()">保存邮箱服务</button>
+                                        <button class="btn btn-outline btn-sm"
+                                            onclick="resetSmtpServiceEditor()">取消编辑</button>
                                     </div>
                                     <div id="smtp-editor-result" class="mt-3 text-sm text-base-content/60"></div>
                                 </div>
@@ -686,7 +1036,8 @@
 
             <section id="sec-adminAccess" class="hidden">
                 <div class="space-y-6">
-                    <div class="rounded-[1.75rem] border border-primary/20 bg-gradient-to-br from-primary/12 via-base-100 to-secondary/12 shadow-lg overflow-hidden">
+                    <div
+                        class="rounded-[1.75rem] border border-primary/20 bg-gradient-to-br from-primary/12 via-base-100 to-secondary/12 shadow-lg overflow-hidden">
                         <div class="px-6 py-6 lg:px-8">
                             <div class="flex flex-wrap items-start justify-between gap-4">
                                 <div>
@@ -696,12 +1047,16 @@
                                         <span class="badge badge-info badge-outline">细粒度权限</span>
                                     </div>
                                     <h3 class="text-2xl font-bold leading-tight">管理员账号与角色权限</h3>
-                                    <p class="text-sm text-base-content/70 mt-3 leading-7">集中管理后台管理员账号、角色模板和权限边界。支持搜索候选用户、分配角色、查看当前权限画像，并为后续菜单可见性和接口拦截提供统一 RBAC 基础。</p>
+                                    <p class="text-sm text-base-content/70 mt-3 leading-7">
+                                        集中管理后台管理员账号、角色模板和权限边界。支持搜索候选用户、分配角色、查看当前权限画像，并为后续菜单可见性和接口拦截提供统一 RBAC 基础。</p>
                                 </div>
-                                <button class="btn btn-primary btn-sm" onclick="loadAdminAccessSection(true)">刷新权限数据</button>
+                                <button class="btn btn-primary btn-sm"
+                                    onclick="loadAdminAccessSection(true)">刷新权限数据</button>
                             </div>
                             <div id="admin-access-summary" class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-6">
-                                <div class="rounded-box border border-base-300 bg-base-100/80 px-5 py-5 text-sm text-base-content/60">正在加载管理员权限概览...</div>
+                                <div
+                                    class="rounded-box border border-base-300 bg-base-100/80 px-5 py-5 text-sm text-base-content/60">
+                                    正在加载管理员权限概览...</div>
                             </div>
                         </div>
                     </div>
@@ -715,10 +1070,12 @@
                                             <h3 class="card-title">管理员账号</h3>
                                             <p class="text-sm text-base-content/60 mt-1">查看当前管理员、绑定角色、权限摘要与最近登录情况。</p>
                                         </div>
-                                        <button class="btn btn-outline btn-sm" onclick="loadAdminAccessSection(true)">刷新列表</button>
+                                        <button class="btn btn-outline btn-sm"
+                                            onclick="loadAdminAccessSection(true)">刷新列表</button>
                                     </div>
                                     <div id="admin-admins-table-wrap" class="overflow-x-auto">
-                                        <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载管理员列表...</div>
+                                        <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">
+                                            正在加载管理员列表...</div>
                                     </div>
                                 </div>
                             </div>
@@ -730,14 +1087,19 @@
                                             <h3 class="card-title">搜索候选用户</h3>
                                             <p class="text-sm text-base-content/60 mt-1">输入用户名、昵称或邮箱，快速提拔管理员并分配角色。</p>
                                         </div>
-                                        <button class="btn btn-ghost btn-sm" onclick="clearAdminAccessCandidates()">清空结果</button>
+                                        <button class="btn btn-ghost btn-sm"
+                                            onclick="clearAdminAccessCandidates()">清空结果</button>
                                     </div>
                                     <div class="flex flex-col md:flex-row gap-3">
-                                        <input id="admin-candidate-keyword" type="text" class="input input-bordered flex-1" placeholder="搜索用户名 / 昵称 / 邮箱" onkeydown="if (event.key === 'Enter') { event.preventDefault(); searchAdminAccessCandidates(); }">
-                                        <button class="btn btn-primary" onclick="searchAdminAccessCandidates()">搜索候选</button>
+                                        <input id="admin-candidate-keyword" type="text"
+                                            class="input input-bordered flex-1" placeholder="搜索用户名 / 昵称 / 邮箱"
+                                            onkeydown="if (event.key === 'Enter') { event.preventDefault(); searchAdminAccessCandidates(); }">
+                                        <button class="btn btn-primary"
+                                            onclick="searchAdminAccessCandidates()">搜索候选</button>
                                     </div>
                                     <div id="admin-candidates-results" class="overflow-x-auto mt-5">
-                                        <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">输入关键词后可搜索待分配管理员的用户。</div>
+                                        <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">
+                                            输入关键词后可搜索待分配管理员的用户。</div>
                                     </div>
                                 </div>
                             </div>
@@ -751,10 +1113,12 @@
                                             <h3 class="card-title">角色模板</h3>
                                             <p class="text-sm text-base-content/60 mt-1">系统默认角色只读，自定义角色可新增、编辑与删除。</p>
                                         </div>
-                                        <button class="btn btn-primary btn-sm" onclick="openAdminRoleCreateForm()">新建角色</button>
+                                        <button class="btn btn-primary btn-sm"
+                                            onclick="openAdminRoleCreateForm()">新建角色</button>
                                     </div>
                                     <div id="admin-role-list" class="space-y-3">
-                                        <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载角色列表...</div>
+                                        <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">
+                                            正在加载角色列表...</div>
                                     </div>
                                 </div>
                             </div>
@@ -764,22 +1128,28 @@
                                     <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
                                         <div>
                                             <h3 id="admin-role-editor-title" class="card-title">新建自定义角色</h3>
-                                            <p id="admin-role-editor-desc" class="text-sm text-base-content/60 mt-1">角色编码创建后固定，建议使用英文下划线命名。</p>
+                                            <p id="admin-role-editor-desc" class="text-sm text-base-content/60 mt-1">
+                                                角色编码创建后固定，建议使用英文下划线命名。</p>
                                         </div>
-                                        <button class="btn btn-ghost btn-sm" onclick="resetAdminRoleEditor()">重置</button>
+                                        <button class="btn btn-ghost btn-sm"
+                                            onclick="resetAdminRoleEditor()">重置</button>
                                     </div>
                                     <div class="space-y-4">
                                         <div>
                                             <label class="label"><span class="label-text">角色编码</span></label>
-                                            <input id="admin-role-code" type="text" class="input input-bordered w-full" placeholder="例如：custom_ops_admin">
+                                            <input id="admin-role-code" type="text" class="input input-bordered w-full"
+                                                placeholder="例如：custom_ops_admin">
                                         </div>
                                         <div>
                                             <label class="label"><span class="label-text">角色名称</span></label>
-                                            <input id="admin-role-name" type="text" class="input input-bordered w-full" placeholder="例如：运营值班管理员">
+                                            <input id="admin-role-name" type="text" class="input input-bordered w-full"
+                                                placeholder="例如：运营值班管理员">
                                         </div>
                                         <div>
                                             <label class="label"><span class="label-text">角色说明</span></label>
-                                            <textarea id="admin-role-description" class="textarea textarea-bordered w-full min-h-[6rem]" placeholder="说明该角色负责的后台能力边界"></textarea>
+                                            <textarea id="admin-role-description"
+                                                class="textarea textarea-bordered w-full min-h-[6rem]"
+                                                placeholder="说明该角色负责的后台能力边界"></textarea>
                                         </div>
                                         <div>
                                             <div class="flex items-center justify-between gap-3 mb-2">
@@ -787,15 +1157,20 @@
                                                 <span class="text-xs text-base-content/50">至少勾选一个权限</span>
                                             </div>
                                             <div id="admin-role-permissions" class="space-y-4">
-                                                <div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">正在加载权限清单...</div>
+                                                <div
+                                                    class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60">
+                                                    正在加载权限清单...</div>
                                             </div>
                                         </div>
                                     </div>
                                     <div class="flex flex-wrap gap-2 mt-6">
-                                        <button id="admin-role-save-btn" class="btn btn-primary btn-sm" onclick="saveAdminRole()">保存角色</button>
-                                        <button id="admin-role-delete-btn" class="btn btn-outline btn-error btn-sm" onclick="deleteAdminRole()">删除角色</button>
+                                        <button id="admin-role-save-btn" class="btn btn-primary btn-sm"
+                                            onclick="saveAdminRole()">保存角色</button>
+                                        <button id="admin-role-delete-btn" class="btn btn-outline btn-error btn-sm"
+                                            onclick="deleteAdminRole()">删除角色</button>
                                     </div>
-                                    <div id="admin-role-editor-result" class="mt-3 text-sm text-base-content/60">可选择左侧现有角色查看，或创建新的自定义角色。</div>
+                                    <div id="admin-role-editor-result" class="mt-3 text-sm text-base-content/60">
+                                        可选择左侧现有角色查看，或创建新的自定义角色。</div>
                                 </div>
                             </div>
                         </div>
@@ -809,8 +1184,8 @@
                         <div class="card-body">
                             <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
                                 <div>
-                                    <h3 class="card-title">AI 工作任务</h3>
-                                    <p class="text-sm text-base-content/60 mt-1">查看 AI客户分析 与 AI直播复盘 等后台任务的排队、执行、失败与完成状态，便于监听调试与优化。</p>
+                                    <p class="text-sm text-base-content/60 mt-1">查看 AI客户分析 与 AI直播复盘
+                                        等后台任务的排队、执行、失败与完成状态，便于监听调试与优化。</p>
                                 </div>
                                 <button class="btn btn-sm btn-primary" onclick="loadAdminAiWorkJobs(1)">刷新</button>
                             </div>
@@ -827,7 +1202,9 @@
                                     <option value="customer_analysis">用户</option>
                                     <option value="session_recap">房间</option>
                                 </select>
-                                <input id="admin-ai-work-search" class="input input-bordered input-sm flex-1 min-w-[16rem]" placeholder="搜索目标用户 / 房间 / 场次 / 标题">
+                                <input id="admin-ai-work-search"
+                                    class="input input-bordered input-sm flex-1 min-w-[16rem]"
+                                    placeholder="搜索目标用户 / 房间 / 场次 / 标题">
                                 <button class="btn btn-outline btn-sm" onclick="loadAdminAiWorkJobs(1)">查询</button>
                             </div>
                             <div class="overflow-x-auto">
@@ -845,7 +1222,10 @@
                                         </tr>
                                     </thead>
                                     <tbody id="admin-ai-work-tbody">
-                                        <tr><td colspan="8" class="text-center text-base-content/60">正在加载 AI 工作任务...</td></tr>
+                                        <tr>
+                                            <td colspan="8" class="text-center text-base-content/60">正在加载 AI 工作任务...
+                                            </td>
+                                        </tr>
                                     </tbody>
                                 </table>
                             </div>
@@ -898,21 +1278,25 @@
                                 <button class="btn btn-sm btn-primary" onclick="loadAdminDocs(true)">刷新</button>
                             </div>
                             <div id="admin-docs-list" class="space-y-2">
-                                <div class="rounded-box bg-base-200 px-4 py-6 text-sm text-base-content/60">正在加载文档列表...</div>
+                                <div class="rounded-box bg-base-200 px-4 py-6 text-sm text-base-content/60">正在加载文档列表...
+                                </div>
                             </div>
                         </div>
                     </div>
                     <div class="card bg-base-100 shadow min-h-[32rem]">
                         <div class="card-body">
-                            <div class="flex flex-wrap items-start justify-between gap-3 border-b border-base-300 pb-4 mb-4">
+                            <div
+                                class="flex flex-wrap items-start justify-between gap-3 border-b border-base-300 pb-4 mb-4">
                                 <div>
                                     <h3 id="admin-doc-title" class="text-xl font-bold">请选择左侧文档</h3>
-                                    <p id="admin-doc-meta" class="text-sm text-base-content/60 mt-1">系统会使用文档第一个 `# 标题` 作为显示名称。</p>
+                                    <p id="admin-doc-meta" class="text-sm text-base-content/60 mt-1">系统会使用文档第一个 `# 标题`
+                                        作为显示名称。</p>
                                 </div>
                                 <span id="admin-doc-path" class="badge badge-outline">docs/</span>
                             </div>
                             <div id="admin-doc-content" class="doc-markdown text-base-content/90 text-sm leading-7">
-                                <div class="rounded-box bg-base-200 px-5 py-8 text-base-content/60">选择一篇文档后，这里会显示 Markdown 内容。</div>
+                                <div class="rounded-box bg-base-200 px-5 py-8 text-base-content/60">选择一篇文档后，这里会显示
+                                    Markdown 内容。</div>
                             </div>
                         </div>
                     </div>
@@ -925,7 +1309,8 @@
                     <div class="flex justify-between items-center mb-4">
                         <div>
                             <h3 class="text-lg font-bold">Euler API Keys 管理</h3>
-                            <p class="text-sm text-base-content/60">管理用于连接 TikTok 直播的 EulerStream API Keys，支持多 Key 轮换</p>
+                            <p class="text-sm text-base-content/60">管理用于连接 TikTok 直播的 EulerStream API Keys，支持多 Key 轮换
+                            </p>
                         </div>
                         <button class="btn btn-primary btn-sm" onclick="showAddEulerKey()">添加 Key</button>
                     </div>
@@ -940,7 +1325,8 @@
                     <div class="flex justify-between items-center mb-4">
                         <div>
                             <h3 class="text-lg font-bold">AI 通道配置</h3>
-                            <p class="text-sm text-base-content/60">配置 AI 通道（API提供商）及其下属模型。系统会优先使用默认模型；默认模型最近失败时，会短时冷却并自动降级到其它启用模型。</p>
+                            <p class="text-sm text-base-content/60">配置 AI
+                                通道（API提供商）及其下属模型。系统会优先使用默认模型；默认模型最近失败时，会短时冷却并自动降级到其它启用模型。</p>
                         </div>
                         <button class="btn btn-primary btn-sm" onclick="showAddAiModel()">添加模型</button>
                     </div>
@@ -968,7 +1354,9 @@
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    <tr><td colspan="4" class="text-center opacity-50">加载中...</td></tr>
+                                    <tr>
+                                        <td colspan="4" class="text-center opacity-50">加载中...</td>
+                                    </tr>
                                 </tbody>
                             </table>
                         </div>
@@ -983,7 +1371,8 @@
         <div class="modal-box max-w-5xl">
             <h3 class="font-bold text-lg mb-4">用户详情</h3>
             <div id="user-detail-content"></div>
-            <div class="modal-action"><button class="btn" onclick="document.getElementById('userDetailModal').close()">关闭</button></div>
+            <div class="modal-action"><button class="btn"
+                    onclick="document.getElementById('userDetailModal').close()">关闭</button></div>
         </div>
     </dialog>
 
@@ -1001,14 +1390,17 @@
                 </div>
                 <div>
                     <div class="text-sm font-semibold mb-2">请求参数</div>
-                    <pre id="order-detail-request" class="rounded-box bg-base-200 p-3 text-xs leading-6 whitespace-pre-wrap break-all overflow-x-auto">暂无</pre>
+                    <pre id="order-detail-request"
+                        class="rounded-box bg-base-200 p-3 text-xs leading-6 whitespace-pre-wrap break-all overflow-x-auto">暂无</pre>
                 </div>
                 <div>
                     <div class="text-sm font-semibold mb-2">上游接口回复</div>
-                    <pre id="order-detail-response" class="rounded-box bg-base-200 p-3 text-xs leading-6 whitespace-pre-wrap break-all overflow-x-auto">暂无</pre>
+                    <pre id="order-detail-response"
+                        class="rounded-box bg-base-200 p-3 text-xs leading-6 whitespace-pre-wrap break-all overflow-x-auto">暂无</pre>
                 </div>
             </div>
-            <div class="modal-action"><button class="btn" onclick="document.getElementById('orderRequestModal').close()">关闭</button></div>
+            <div class="modal-action"><button class="btn"
+                    onclick="document.getElementById('orderRequestModal').close()">关闭</button></div>
         </div>
     </dialog>
 
@@ -1038,26 +1430,43 @@
         <div class="modal-box">
             <h3 class="font-bold text-lg" id="plan-form-title">新增套餐</h3>
             <input type="hidden" id="pf-id">
-            <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input type="text" id="pf-name" class="input input-bordered"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">代码 (英文)</span></label><input type="text" id="pf-code" class="input input-bordered"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">房间上限 (-1=无限)</span></label><input type="number" id="pf-room" class="input input-bordered" min="-1"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">每日新建房间上限 (-1=无限)</span></label><input type="number" id="pf-daily" class="input input-bordered" min="-1" value="-1"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">每月 AI 点数</span></label><input type="number" id="pf-ai" class="input input-bordered" min="0" value="0"></div>
+            <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input
+                    type="text" id="pf-name" class="input input-bordered"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">代码 (英文)</span></label><input
+                    type="text" id="pf-code" class="input input-bordered"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">房间上限
+                        (-1=无限)</span></label><input type="number" id="pf-room" class="input input-bordered" min="-1">
+            </div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">每日新建房间上限
+                        (-1=无限)</span></label><input type="number" id="pf-daily" class="input input-bordered" min="-1"
+                    value="-1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">每月 AI 点数</span></label><input
+                    type="number" id="pf-ai" class="input input-bordered" min="0" value="0"></div>
             <div class="mt-3 rounded-box border border-base-300 bg-base-200/40 p-3">
                 <div class="text-sm font-semibold">套餐权益开关</div>
                 <div class="text-xs text-base-content/60 mt-1">控制会员计划可用的增值能力；AI直播复盘需要同时满足套餐权益与 AI 点数余额。</div>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-                    <label class="label cursor-pointer justify-start gap-3"><input type="checkbox" id="pf-feature-export" class="checkbox checkbox-primary checkbox-sm"><span class="label-text">数据导出</span></label>
-                    <label class="label cursor-pointer justify-start gap-3"><input type="checkbox" id="pf-feature-ai-live-recap" class="checkbox checkbox-primary checkbox-sm"><span class="label-text">AI直播复盘（单场）</span></label>
-                    <label class="label cursor-pointer justify-start gap-3"><input type="checkbox" id="pf-feature-priority-support" class="checkbox checkbox-primary checkbox-sm"><span class="label-text">优先支持</span></label>
+                    <label class="label cursor-pointer justify-start gap-3"><input type="checkbox"
+                            id="pf-feature-export" class="checkbox checkbox-primary checkbox-sm"><span
+                            class="label-text">数据导出</span></label>
+                    <label class="label cursor-pointer justify-start gap-3"><input type="checkbox"
+                            id="pf-feature-ai-live-recap" class="checkbox checkbox-primary checkbox-sm"><span
+                            class="label-text">AI直播复盘（单场）</span></label>
+                    <label class="label cursor-pointer justify-start gap-3"><input type="checkbox"
+                            id="pf-feature-priority-support" class="checkbox checkbox-primary checkbox-sm"><span
+                            class="label-text">优先支持</span></label>
                 </div>
             </div>
             <div class="grid grid-cols-3 gap-2 mt-2">
-                <div class="form-control"><label class="label"><span class="label-text">月价</span></label><input type="number" id="pf-pm" class="input input-bordered input-sm" step="0.01"></div>
-                <div class="form-control"><label class="label"><span class="label-text">季价</span></label><input type="number" id="pf-pq" class="input input-bordered input-sm" step="0.01"></div>
-                <div class="form-control"><label class="label"><span class="label-text">年价</span></label><input type="number" id="pf-py" class="input input-bordered input-sm" step="0.01"></div>
+                <div class="form-control"><label class="label"><span class="label-text">月价</span></label><input
+                        type="number" id="pf-pm" class="input input-bordered input-sm" step="0.01"></div>
+                <div class="form-control"><label class="label"><span class="label-text">季价</span></label><input
+                        type="number" id="pf-pq" class="input input-bordered input-sm" step="0.01"></div>
+                <div class="form-control"><label class="label"><span class="label-text">年价</span></label><input
+                        type="number" id="pf-py" class="input input-bordered input-sm" step="0.01"></div>
             </div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">排序</span></label><input type="number" id="pf-sort" class="input input-bordered" value="0"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">排序</span></label><input
+                    type="number" id="pf-sort" class="input input-bordered" value="0"></div>
             <div class="modal-action">
                 <button class="btn" onclick="document.getElementById('planFormModal').close()">取消</button>
                 <button class="btn btn-primary" onclick="submitPlanForm()">保存</button>
@@ -1070,10 +1479,14 @@
         <div class="modal-box">
             <h3 class="font-bold text-lg" id="addon-form-title">新增扩容包</h3>
             <input type="hidden" id="af-id">
-            <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input type="text" id="af-name" class="input input-bordered"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">房间数</span></label><input type="number" id="af-count" class="input input-bordered" min="1"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">价格</span></label><input type="number" id="af-price" class="input input-bordered" step="0.01"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input type="text" id="af-desc" class="input input-bordered"></div>
+            <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input
+                    type="text" id="af-name" class="input input-bordered"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">房间数</span></label><input
+                    type="number" id="af-count" class="input input-bordered" min="1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">价格</span></label><input
+                    type="number" id="af-price" class="input input-bordered" step="0.01"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input
+                    type="text" id="af-desc" class="input input-bordered"></div>
             <div class="modal-action">
                 <button class="btn" onclick="document.getElementById('addonFormModal').close()">取消</button>
                 <button class="btn btn-primary" onclick="submitAddonForm()">保存</button>
@@ -1086,10 +1499,16 @@
         <div class="modal-box">
             <h3 class="font-bold text-lg" id="aic-form-title">新增 AI 点数包</h3>
             <input type="hidden" id="aic-id">
-            <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input type="text" id="aic-name" class="input input-bordered" placeholder="例：基础包"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">AI 点数</span></label><input type="number" id="aic-credits" class="input input-bordered" min="1"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">价格（元）</span></label><input type="number" id="aic-price" class="input input-bordered" min="0" step="1"><p class="text-xs text-base-content/50 mt-1">例：10 = ¥10</p></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input type="text" id="aic-desc" class="input input-bordered" placeholder="可选"></div>
+            <div class="form-control mt-3"><label class="label"><span class="label-text">名称</span></label><input
+                    type="text" id="aic-name" class="input input-bordered" placeholder="例：基础包"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">AI 点数</span></label><input
+                    type="number" id="aic-credits" class="input input-bordered" min="1"></div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">价格（元）</span></label><input
+                    type="number" id="aic-price" class="input input-bordered" min="0" step="1">
+                <p class="text-xs text-base-content/50 mt-1">例：10 = ¥10</p>
+            </div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input
+                    type="text" id="aic-desc" class="input input-bordered" placeholder="可选"></div>
             <div class="modal-action">
                 <button class="btn" onclick="document.getElementById('aiCreditModal').close()">取消</button>
                 <button class="btn btn-primary" onclick="submitAiCreditForm()">保存</button>
@@ -1118,7 +1537,8 @@
                     <option value="unset">暂不设置</option>
                 </select>
                 <label class="label pt-1">
-                    <span class="label-text-alt text-base-content/60">系统不会再自动探测。只有手工设为 Premium 的 Key，才允许使用 Euler `/webcast/room_id`。</span>
+                    <span class="label-text-alt text-base-content/60">系统不会再自动探测。只有手工设为 Premium 的 Key，才允许使用 Euler
+                        `/webcast/room_id`。</span>
                 </label>
             </div>
             <div class="form-control mt-2">
@@ -1145,7 +1565,8 @@
             </div>
             <div class="form-control mt-2">
                 <label class="label"><span class="label-text">API 地址 *</span></label>
-                <input type="text" id="aim-url" class="input input-bordered font-mono" placeholder="例：https://api.openai.com/v1/">
+                <input type="text" id="aim-url" class="input input-bordered font-mono"
+                    placeholder="例：https://api.openai.com/v1/">
             </div>
             <div class="form-control mt-2">
                 <label class="label"><span class="label-text">API Key *</span></label>
@@ -1161,4 +1582,5 @@
 
     <script src="/js/admin.js?v=20260308k"></script>
 </body>
+
 </html>
