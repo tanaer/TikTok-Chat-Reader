@@ -1930,9 +1930,6 @@ function renderRecapCustomerSegment(containerId, items = [], emptyText = '暂无
     }
     wrap.innerHTML = items.map(item => {
         const metaBadges = [];
-        if (segmentType === 'risk') {
-            metaBadges.push(`<span class="badge badge-ghost badge-sm">${escapeRecapHtml(formatRecapTimeText(item.enterTime || item.firstEnterAt))} → ${escapeRecapHtml(formatRecapTimeText(item.leaveTime || item.lastActiveAt))}</span>`);
-        }
         return `
         <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
             <div class="flex items-start justify-between gap-3">
