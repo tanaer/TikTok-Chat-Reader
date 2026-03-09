@@ -26,6 +26,7 @@ const {
 } = require('./services/aiPromptService');
 const {
     AI_WORK_JOB_TYPE_SESSION_RECAP,
+    AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS,
     createAiWorkJob,
     appendAiWorkJobLog,
     updateAiWorkJob,
@@ -33,11 +34,14 @@ const {
     markAiWorkJobCompleted,
     markAiWorkJobFailed,
     findReusableAiWorkJob,
+    findReusableCustomerAnalysisAiWorkJob,
+    getLatestCustomerAnalysisAiWorkJobForUser,
     getLatestSessionAiWorkJobForUser,
     claimNextAiWorkJobs,
+    buildAiWorkTitle,
+    buildAiWorkActionUrl,
 } = require('./services/aiWorkService');
 const {
-    runSessionMaintenanceTask,
     isSessionMaintenanceSettingKey,
 } = require('./services/sessionMaintenanceService');
 const notificationService = require('./services/notificationService');
@@ -52,10 +56,30 @@ const {
     isSensitiveRuntimeSettingKey,
 } = require('./services/featureFlagService');
 const { WorkerProcessManager } = require('./services/workerProcessManager');
+const cacheService = require('./services/cacheService');
+const { disconnectRedisClient } = require('./services/redisClient');
+const liveStateService = require('./services/liveStateService');
+const {
+    prepareCustomerAnalysis,
+    runCustomerAnalysis,
+} = require('./services/customerAiAnalysisService');
+const {
+    runRoomStatsRefreshJob,
+    runUserStatsRefreshJob,
+    runGlobalStatsRefreshJob,
+} = require('./services/statsRefreshService');
+const { runExpiredRoomCleanupJob } = require('./services/maintenanceJobService');
+const {
+    enqueueSessionMaintenanceJob,
+    enqueueStatsRefreshJob,
+    enqueueEventMigrationJob,
+} = require('./services/adminAsyncJobService');
 
 let schemeAConfig = getSchemeAConfig();
 let recordingStorageService = new RecordingStorageService({ schemeAConfig });
 let recordingUploadWorkerProcess = null;
+let statsWorkerProcess = null;
+let maintenanceWorkerProcess = null;
 const processFallbackRecordingAccessTokenSecret = crypto.randomBytes(32).toString('hex');
 let hasWarnedMissingRecordingAccessSecret = false;
 
@@ -87,10 +111,12 @@ async function refreshSchemeARuntimeConfig(reason = 'manual') {
         recordingUploadDaemonEnabled: schemeAConfig.worker.enableRecordingUploadDaemon,
     });
 
-    if (recordingUploadWorkerProcess?.isRunning()) {
+    if (recordingUploadWorkerProcess?.isRunning() || statsWorkerProcess?.isRunning() || maintenanceWorkerProcess?.isRunning()) {
         await stopManagedWorkers('SIGTERM');
     }
     ensureRecordingUploadWorkerDaemon();
+    ensureStatsWorkerDaemon();
+    ensureMaintenanceWorkerDaemon();
     return nextConfig;
 }
 
@@ -135,9 +161,61 @@ function ensureRecordingUploadWorkerDaemon() {
     return recordingUploadWorkerProcess;
 }
 
+function ensureStatsWorkerDaemon() {
+    if (!schemeAConfig.worker.enableStats) {
+        return null;
+    }
+
+    if (!statsWorkerProcess) {
+        statsWorkerProcess = new WorkerProcessManager({
+            name: 'stats',
+            enabled: true,
+            scriptPath: path.join(__dirname, 'bin/start_stats_worker.js'),
+            cwd: __dirname,
+            env: {
+                WORKER_ROLE: 'stats',
+            },
+            restartDelayMs: 5000,
+            maxRestarts: 0,
+        });
+    }
+
+    statsWorkerProcess.start();
+    return statsWorkerProcess;
+}
+
+function ensureMaintenanceWorkerDaemon() {
+    if (!schemeAConfig.worker.enableMaintenance) {
+        return null;
+    }
+
+    if (!maintenanceWorkerProcess) {
+        maintenanceWorkerProcess = new WorkerProcessManager({
+            name: 'maintenance',
+            enabled: true,
+            scriptPath: path.join(__dirname, 'bin/start_maintenance_worker.js'),
+            cwd: __dirname,
+            env: {
+                WORKER_ROLE: 'maintenance',
+            },
+            restartDelayMs: 5000,
+            maxRestarts: 0,
+        });
+    }
+
+    maintenanceWorkerProcess.start();
+    return maintenanceWorkerProcess;
+}
+
 async function stopManagedWorkers(signal = 'SIGTERM') {
     if (recordingUploadWorkerProcess) {
         await recordingUploadWorkerProcess.stop(signal);
+    }
+    if (statsWorkerProcess) {
+        await statsWorkerProcess.stop(signal);
+    }
+    if (maintenanceWorkerProcess) {
+        await maintenanceWorkerProcess.stop(signal);
     }
 }
 
@@ -304,6 +382,8 @@ const REQUEST_BODY_LIMIT = '20mb';
 const ROOM_LIST_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ROOM_LIST_CACHE_TTL_MS || '10000', 10) || 10000);
 const ROOM_LIST_CACHE_MAX_ENTRIES = 200;
 const roomListResponseCache = new Map();
+const ROOM_LIST_CACHE_NAMESPACE = 'room_list';
+const ROOM_LIST_CACHE_VERSION_KEY = cacheService.buildCacheKey(ROOM_LIST_CACHE_NAMESPACE, 'version');
 let roomListCacheVersion = 0;
 
 function getRoomListActorCacheKey(req) {
@@ -311,10 +391,10 @@ function getRoomListActorCacheKey(req) {
     return `${req.user.role}:${req.user.id || 0}`;
 }
 
-function buildRoomListCacheKey(endpoint, req, params = {}) {
+function buildRoomListCacheKey(endpoint, req, params = {}, cacheVersion = roomListCacheVersion) {
     return JSON.stringify([
         endpoint,
-        roomListCacheVersion,
+        cacheVersion,
         getRoomListActorCacheKey(req),
         Number(params.page || 1),
         Number(params.limit || 50),
@@ -323,7 +403,11 @@ function buildRoomListCacheKey(endpoint, req, params = {}) {
     ]);
 }
 
-function readRoomListCache(cacheKey) {
+function buildRoomListRedisKey(cacheKey) {
+    return cacheService.buildCacheKey(ROOM_LIST_CACHE_NAMESPACE, cacheKey);
+}
+
+function readLocalRoomListCache(cacheKey) {
     if (ROOM_LIST_CACHE_TTL_MS <= 0) return null;
     const cached = roomListResponseCache.get(cacheKey);
     if (!cached) return null;
@@ -334,7 +418,7 @@ function readRoomListCache(cacheKey) {
     return cached.payload;
 }
 
-function writeRoomListCache(cacheKey, payload) {
+function writeLocalRoomListCache(cacheKey, payload) {
     if (ROOM_LIST_CACHE_TTL_MS <= 0) return payload;
     if (roomListResponseCache.size >= ROOM_LIST_CACHE_MAX_ENTRIES) {
         const oldestKey = roomListResponseCache.keys().next().value;
@@ -347,16 +431,119 @@ function writeRoomListCache(cacheKey, payload) {
     return payload;
 }
 
-function invalidateRoomListCaches(reason = 'manual') {
+async function getRoomListCacheVersion() {
+    if (!cacheService.isRoomCacheEnabled()) {
+        return roomListCacheVersion;
+    }
+
+    const remoteVersion = await cacheService.getNumber(ROOM_LIST_CACHE_VERSION_KEY);
+    if (Number.isFinite(remoteVersion)) {
+        roomListCacheVersion = remoteVersion;
+    }
+    return roomListCacheVersion;
+}
+
+async function readRoomListCache(endpoint, req, params = {}) {
+    const cacheVersion = await getRoomListCacheVersion();
+    const cacheKey = buildRoomListCacheKey(endpoint, req, params, cacheVersion);
+
+    if (cacheService.isRoomCacheEnabled()) {
+        const redisPayload = await cacheService.getJson(buildRoomListRedisKey(cacheKey));
+        if (redisPayload) {
+            writeLocalRoomListCache(cacheKey, redisPayload);
+            return { payload: redisPayload, cacheKey, cacheLayer: 'redis' };
+        }
+    }
+
+    const localPayload = readLocalRoomListCache(cacheKey);
+    if (localPayload) {
+        return { payload: localPayload, cacheKey, cacheLayer: 'memory' };
+    }
+
+    return { payload: null, cacheKey, cacheLayer: null };
+}
+
+async function writeRoomListCache(cacheKey, payload) {
+    const cachedPayload = writeLocalRoomListCache(cacheKey, payload);
+    if (cacheService.isRoomCacheEnabled()) {
+        await cacheService.setJson(buildRoomListRedisKey(cacheKey), cachedPayload, { ttlMs: ROOM_LIST_CACHE_TTL_MS });
+    }
+    return cachedPayload;
+}
+
+async function invalidateRoomListCaches(reason = 'manual') {
     const clearedCount = roomListResponseCache.size;
     roomListCacheVersion += 1;
     roomListResponseCache.clear();
+
+    if (cacheService.isRoomCacheEnabled()) {
+        const remoteVersion = await cacheService.increment(ROOM_LIST_CACHE_VERSION_KEY, 1);
+        if (Number.isFinite(remoteVersion)) {
+            roomListCacheVersion = remoteVersion;
+        }
+    }
+
     console.log(`[CACHE] Room list cache invalidated: ${reason}`);
     metricsService.emitLog('info', 'api.room_list.cache.invalidate', {
         reason,
         cacheVersion: roomListCacheVersion,
+        cacheBackend: cacheService.isRoomCacheEnabled() ? 'redis' : 'memory',
         clearedCount,
     });
+}
+
+async function getEffectiveLiveRoomIds() {
+    const liveRoomIdSet = new Set(autoRecorder.getLiveRoomIds());
+
+    if (liveStateService.isLiveStateEnabled()) {
+        const redisLiveRoomIds = await liveStateService.listLiveRoomIds();
+        for (const roomId of redisLiveRoomIds) {
+            if (roomId) liveRoomIdSet.add(roomId);
+        }
+    }
+
+    return Array.from(liveRoomIdSet);
+}
+
+function applyLiveStateToRoomPayload(payload, liveRoomIds = [], options = {}) {
+    if (!payload || !Array.isArray(payload.data)) {
+        return payload;
+    }
+
+    const liveRoomIdSet = new Set((liveRoomIds || []).map(roomId => String(roomId || '').trim()).filter(Boolean));
+    const nextPayload = {
+        ...payload,
+        data: payload.data.map((room) => ({
+            ...room,
+            isLive: liveRoomIdSet.has(String(room.roomId || '').trim()),
+        })),
+    };
+
+    if (options.sortLiveFirst) {
+        nextPayload.data.sort((a, b) => {
+            if (a.isLive && !b.isLive) return -1;
+            if (!a.isLive && b.isLive) return 1;
+            return 0;
+        });
+    }
+
+    return nextPayload;
+}
+
+async function getEffectiveRoomLiveFlag(roomId) {
+    const normalizedRoomId = String(roomId || '').trim();
+    if (!normalizedRoomId) return false;
+
+    if (autoRecorder.getLiveRoomIds().includes(normalizedRoomId)) {
+        return true;
+    }
+
+    if (!liveStateService.isLiveStateEnabled()) {
+        return false;
+    }
+
+    const liveState = await liveStateService.getLiveState(normalizedRoomId);
+    return liveStateService.isRoomLive(liveState);
 }
 
 function buildRoomListMetricContext(endpoint, req, params = {}) {
@@ -699,13 +886,19 @@ io.on('connection', (socket) => {
         subscribedRoomId = null;
     });
 
-    socket.on('requestDisconnect', () => {
+    socket.on('requestDisconnect', async () => {
         // User manually requested stop - this DOES stop the AutoRecorder recording
         console.log('Client requested disconnect');
-        if (subscribedRoomId && autoRecorder.isConnected(subscribedRoomId)) {
-            autoRecorder.disconnectRoom(subscribedRoomId);
+        try {
+            if (subscribedRoomId && autoRecorder.isConnected(subscribedRoomId)) {
+                await autoRecorder.disconnectRoom(subscribedRoomId);
+                await invalidateRoomListCaches('socket request disconnect');
+            }
+            socket.emit('tiktokDisconnected', '用户手动断开');
+        } catch (error) {
+            console.error('[Socket] requestDisconnect failed:', error);
+            socket.emit('error', '断开直播失败');
         }
-        socket.emit('tiktokDisconnected', '用户手动断开');
     });
 
     socket.on('disconnect', () => {
@@ -881,11 +1074,15 @@ app.get('/api/rooms/:id/sessions', optionalAuth, async (req, res) => {
 app.post('/api/rooms/:id/archive_stale', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         console.log(`[API] Archiving stale events for room ${req.params.id}`);
-        const task = await runSessionMaintenanceTask('archive_stale_live_events_room', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('archive_stale_live_events_room', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
             roomId: req.params.id,
         });
-        res.json(task.result);
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'archive_stale_live_events_room',
+            message: buildAcceptedAdminJobMessage('单房间陈旧 LIVE 归档任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         console.error('Error archiving stale events:', err);
         res.status(500).json({ error: err.message });
@@ -896,10 +1093,14 @@ app.post('/api/rooms/:id/archive_stale', authenticate, requireAdmin, requireAdmi
 app.post('/api/maintenance/rebuild_sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         console.log('[API] Rebuilding missing sessions...');
-        const task = await runSessionMaintenanceTask('rebuild_missing_sessions', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('rebuild_missing_sessions', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
         });
-        res.json(task.result);
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'rebuild_missing_sessions',
+            message: buildAcceptedAdminJobMessage('缺失场次重建任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         console.error('Error rebuilding sessions:', err);
         res.status(500).json({ error: err.message });
@@ -910,11 +1111,15 @@ app.post('/api/maintenance/rebuild_sessions', authenticate, requireAdmin, requir
 app.post('/api/maintenance/merge_sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
         console.log('[API] Merging short sessions...');
-        const task = await runSessionMaintenanceTask('merge_continuity_sessions', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('merge_continuity_sessions', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
             gapMinutes: req.body?.gapMinutes,
         });
-        res.json(task.result);
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'merge_continuity_sessions',
+            message: buildAcceptedAdminJobMessage('同日连续场次合并任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         console.error('Error merging sessions:', err);
         res.status(500).json({ error: err.message });
@@ -992,15 +1197,18 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
     const sort = req.query.sort || 'default';
 
     try {
-        const liveRoomIds = autoRecorder.getLiveRoomIds();
-        const cacheKey = buildRoomListCacheKey('stats', req, { page, limit, search, sort });
-        const cached = readRoomListCache(cacheKey);
-        if (cached) {
-            logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, cached, true);
-            return res.json(cached);
+        const roomStatsCache = await readRoomListCache('stats', req, { page, limit, search, sort });
+        if (roomStatsCache.payload) {
+            const liveRoomIds = await getEffectiveLiveRoomIds();
+            const cachedPayload = applyLiveStateToRoomPayload(roomStatsCache.payload, liveRoomIds, {
+                sortLiveFirst: sort === 'default' || sort === 'updated_at',
+            });
+            logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, cachedPayload, true);
+            return res.json(cachedPayload);
         }
 
         const { roomFilter, userRoomData } = await getUserRoomAccessContext(req);
+        const liveRoomIds = await getEffectiveLiveRoomIds();
 
         console.log(`[API] /api/rooms/stats - user: ${req.user?.username || 'anonymous'}, role: ${req.user?.role || 'none'}, roomFilter: ${roomFilter === null ? 'null(admin)' : roomFilter?.length + ' rooms'}`);
 
@@ -1018,7 +1226,7 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
             });
         }
 
-        const payload = writeRoomListCache(cacheKey, result);
+        const payload = await writeRoomListCache(roomStatsCache.cacheKey, result);
         logRoomListRequestResult('/api/rooms/stats', req, { page, limit, search, sort }, startTime, payload, false);
         res.json(payload);
     } catch (err) {
@@ -1047,18 +1255,18 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
     const search = req.query.search || '';
 
     try {
-        const cacheKey = buildRoomListCacheKey('rooms', req, { page, limit, search });
-        const cached = readRoomListCache(cacheKey);
-        if (cached) {
-            logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, cached, true);
-            return res.json(cached);
+        const roomsCache = await readRoomListCache('rooms', req, { page, limit, search });
+        if (roomsCache.payload) {
+            const liveRoomIds = await getEffectiveLiveRoomIds();
+            const cachedPayload = applyLiveStateToRoomPayload(roomsCache.payload, liveRoomIds);
+            logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, cachedPayload, true);
+            return res.json(cachedPayload);
         }
 
         const { roomFilter, userRoomData } = await getUserRoomAccessContext(req);
         const result = await manager.getRooms({ page, limit, search, roomFilter });
 
-        // Merge isLive status from autoRecorder activeConnections
-        const liveRoomIds = autoRecorder.getLiveRoomIds();
+        const liveRoomIds = await getEffectiveLiveRoomIds();
         result.data = result.data.map(room => {
             const copy = userRoomData ? userRoomData[room.roomId] : null;
             return {
@@ -1069,7 +1277,7 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
             };
         });
 
-        const payload = writeRoomListCache(cacheKey, result);
+        const payload = await writeRoomListCache(roomsCache.cacheKey, result);
         logRoomListRequestResult('/api/rooms', req, { page, limit, search }, startTime, payload, false);
         res.json(payload);
     } catch (err) {
@@ -1089,7 +1297,7 @@ app.delete('/api/rooms/:id', authenticate, async (req, res) => {
         if (isAdmin) {
             // Admin: hard delete system room + all data
             await manager.deleteRoom(roomId);
-            invalidateRoomListCaches('admin room delete');
+            await invalidateRoomListCaches('admin room delete');
             return res.json({ success: true });
         }
 
@@ -1113,7 +1321,7 @@ app.delete('/api/rooms/:id', authenticate, async (req, res) => {
             await autoRecorder.disconnectRoom(roomId);
         }
 
-        invalidateRoomListCaches('member room delete');
+        await invalidateRoomListCaches('member room delete');
         res.json({ success: true });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1132,8 +1340,7 @@ app.get('/api/rooms/:id/stats_detail', optionalAuth, async (req, res) => {
         const data = await manager.getRoomDetailStats(roomId, sessionId);
 
         // Get isLive status
-        const liveRoomIds = autoRecorder.getLiveRoomIds();
-        const isLive = liveRoomIds.includes(roomId);
+        const isLive = await getEffectiveRoomLiveFlag(roomId);
 
         // Get last session for fallback
         const sessions = await manager.getSessions(roomId);
@@ -1451,6 +1658,12 @@ app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
         if (req.user.role !== 'admin') {
             const memberAnalysis = await getLatestMemberAnalysis(req.user.id, req.params.userId);
             response.aiAnalysis = memberAnalysis?.result || null;
+            response.aiAnalysisJson = safeParseJsonObject(memberAnalysis?.resultJson);
+        }
+
+        const latestAiJob = await getLatestCustomerAnalysisAiWorkJobForUser(req.user.id, req.params.userId);
+        if (latestAiJob && ['queued', 'processing'].includes(String(latestAiJob.status || '').toLowerCase())) {
+            response.aiJob = serializeSessionAiWorkJobForClient(latestAiJob);
         }
 
         res.json(response);
@@ -1555,15 +1768,26 @@ function serializeUserAnalysisDetail(data = {}) {
         masteredLanguages: data.masteredLanguages || '',
         region: data.region || '',
         aiAnalysis: data.aiAnalysis || null,
+        aiAnalysisJson: safeParseJsonObject(data.aiAnalysisJson),
+        aiJob: data.aiJob ? serializeSessionAiWorkJobForClient(data.aiJob) : null,
         moderatorRooms: Array.isArray(data.moderatorRooms) ? data.moderatorRooms : []
     };
+}
+
+function safeParseJsonObject(value) {
+    if (!value || typeof value !== 'string') return null;
+    try {
+        return JSON.parse(value);
+    } catch (err) {
+        return null;
+    }
 }
 
 async function getLatestMemberAnalysis(memberId, targetUserId) {
     if (!memberId || !targetUserId) return null;
 
     return await db.get(
-        `SELECT result, chat_count, created_at, model_name, latency_ms, source
+        `SELECT result, result_json, chat_count, created_at, model_name, model_version, prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
          FROM user_ai_analysis
          WHERE member_id = ? AND target_user_id = ?
          ORDER BY created_at DESC
@@ -1579,7 +1803,7 @@ async function getLatestMemberAnalysisMap(memberId, targetUserIds = []) {
 
     const placeholders = targetUserIds.map(() => '?').join(',');
     const rows = await db.query(
-        `SELECT DISTINCT ON (target_user_id) target_user_id, result, chat_count, created_at, model_name, latency_ms, source
+        `SELECT DISTINCT ON (target_user_id) target_user_id, result, result_json, chat_count, created_at, model_name, model_version, prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
          FROM user_ai_analysis
          WHERE member_id = ? AND target_user_id IN (${placeholders})
          ORDER BY target_user_id, created_at DESC`,
@@ -1589,7 +1813,113 @@ async function getLatestMemberAnalysisMap(memberId, targetUserIds = []) {
     return new Map(rows.map(row => [row.targetUserId, row]));
 }
 
+function normalizeCacheTimestamp(value) {
+    if (!value) return null;
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.getTime();
+}
+
+function sameInstant(leftValue, rightValue) {
+    const left = normalizeCacheTimestamp(leftValue);
+    const right = normalizeCacheTimestamp(rightValue);
+    if (left === null && right === null) return true;
+    return left === right;
+}
+
+function isCustomerAnalysisCacheReusable(cacheRecord, cacheSignature) {
+    if (!cacheRecord || !cacheSignature) return false;
+
+    if (String(cacheRecord.promptKey || '') !== String(cacheSignature.promptKey || '')) return false;
+    if (!sameInstant(cacheRecord.promptUpdatedAt, cacheSignature.promptUpdatedAt)) return false;
+    if (String(cacheRecord.contextVersion || '') !== String(cacheSignature.contextVersion || '')) return false;
+    if (String(cacheRecord.currentRoomId || '') !== String(cacheSignature.currentRoomId || '')) return false;
+
+    const latestActivityAt = normalizeCacheTimestamp(cacheSignature.latestActivityAt);
+    const cacheCreatedAt = normalizeCacheTimestamp(cacheRecord.updatedAt || cacheRecord.createdAt);
+    if (latestActivityAt !== null && cacheCreatedAt !== null && cacheCreatedAt < latestActivityAt) return false;
+
+    const ninetyDaysAgo = Date.now() - (90 * 24 * 60 * 60 * 1000);
+    if (cacheCreatedAt !== null && cacheCreatedAt < ninetyDaysAgo) return false;
+
+    return true;
+}
+
 const SESSION_RECAP_AI_POINTS = 20;
+const CUSTOMER_ANALYSIS_AI_POINTS = 3;
+
+async function consumeCustomerAnalysisCredits(memberId, targetUserId, points = CUSTOMER_ANALYSIS_AI_POINTS) {
+    const safePoints = Math.max(0, Number(points || 0));
+    if (safePoints <= 0) {
+        return { success: true, chargedPoints: 0 };
+    }
+
+    const updated = await db.pool.query(
+        `UPDATE users
+         SET ai_credits_remaining = ai_credits_remaining - $2,
+             ai_credits_used = ai_credits_used + $2
+         WHERE id = $1 AND ai_credits_remaining >= $2
+         RETURNING id`,
+        [memberId, safePoints]
+    );
+
+    if (!updated.rows.length) {
+        return { success: false, chargedPoints: 0 };
+    }
+
+    await db.run(
+        'INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, ?, ?)',
+        [memberId, 'analysis', safePoints, targetUserId]
+    );
+
+    return { success: true, chargedPoints: safePoints };
+}
+
+async function saveMemberCustomerAnalysisRecord({
+    memberId,
+    targetUserId,
+    result,
+    resultJson = null,
+    chatCount = 0,
+    modelName = '',
+    modelVersion = '',
+    promptKey = null,
+    promptUpdatedAt = null,
+    contextVersion = null,
+    currentRoomId = null,
+    latencyMs = 0,
+    source = 'api'
+} = {}) {
+    await db.run(
+        `INSERT INTO user_ai_analysis (
+            member_id, target_user_id, result, result_json, chat_count, model_name, model_version,
+            prompt_key, prompt_updated_at, context_version, current_room_id, latency_ms, source
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+            memberId,
+            targetUserId,
+            result,
+            resultJson || null,
+            Number(chatCount || 0),
+            modelName || '',
+            modelVersion || '',
+            promptKey,
+            promptUpdatedAt,
+            contextVersion,
+            currentRoomId,
+            Number(latencyMs || 0),
+            source || 'api'
+        ]
+    );
+}
+
+function buildCustomerAnalysisJobTitle(targetUserId, preparedAnalysis = {}) {
+    const identity = preparedAnalysis?.customerContext?.identity || {};
+    return buildAiWorkTitle(AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS, {
+        roomId: preparedAnalysis?.currentRoomId || '',
+        targetUserId: String(targetUserId || '').trim(),
+        targetNickname: String(identity?.nickname || identity?.uniqueId || '').trim()
+    });
+}
 
 function clampNumber(value, min, max, fallback = 0) {
     const numeric = Number(value);
@@ -2177,6 +2507,8 @@ async function requestAiChatCompletion({ messages, requestLabel, trace = null })
     throw new Error(`AI API Error: ${errors.join(' | ')}`);
 }
 
+const SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD = 15;
+
 function isLowValueCommentSignal(text) {
     const normalized = String(text || '').trim().toLowerCase();
     if (!normalized) return true;
@@ -2211,24 +2543,47 @@ function buildHeuristicValuableComments(commentCandidates = []) {
 }
 
 async function filterSessionRecapCommentSignals(roomId, sessionId, commentCandidates = [], { trace = null } = {}) {
-    const topCandidates = Array.isArray(commentCandidates)
+    const normalizedCandidates = Array.isArray(commentCandidates)
         ? commentCandidates
             .map(item => ({
                 text: safeTrimString(item.text || item.comment || '', 80),
                 count: clampNumber(item.count, 0, 999999, 0)
             }))
             .filter(item => item.text && item.count > 0)
-            .slice(0, 50)
         : [];
 
-    if (!topCandidates.length) return [];
+    const originalCandidateCount = normalizedCandidates.length;
+    const repeatFilteredCount = normalizedCandidates.filter(item => item.count > SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD).length;
+    const topCandidates = normalizedCandidates
+        .filter(item => item.count <= SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD)
+        .slice(0, 50);
+
+    if (!topCandidates.length) {
+        await emitAiTrace(trace, {
+            phase: 'comment_filter',
+            level: 'info',
+            message: '高频弹幕已被重复阈值过滤',
+            payload: {
+                originalCandidateCount,
+                filteredByRepeatThreshold: repeatFilteredCount,
+                repeatThreshold: SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD
+            }
+        });
+        return [];
+    }
 
     const fallback = buildHeuristicValuableComments(topCandidates);
     await emitAiTrace(trace, {
         phase: 'comment_filter',
         level: 'info',
         message: '开始筛选高价值弹幕',
-        payload: { candidateCount: topCandidates.length, fallbackCount: fallback.length }
+        payload: {
+            originalCandidateCount,
+            candidateCount: topCandidates.length,
+            filteredByRepeatThreshold: repeatFilteredCount,
+            repeatThreshold: SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD,
+            fallbackCount: fallback.length
+        }
     });
 
     try {
@@ -2433,15 +2788,26 @@ async function appendAiWorkTrace(jobId, { phase = '', level = 'info', message = 
     }
 }
 
-async function sendAiWorkJobNotification(job, { success = true, summary = '', errorMessage = '' } = {}) {
+async function sendAiWorkJobNotification(job, { success = true, errorMessage = '' } = {}) {
     if (!job || !job.userId || job.notificationSent) return;
 
     try {
-        const title = success ? 'AI直播复盘已完成' : 'AI直播复盘处理失败';
+        const isCustomerAnalysisJob = String(job.jobType || '') === AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS;
+        const title = success
+            ? (isCustomerAnalysisJob ? 'AI客户分析已完成' : 'AI直播复盘已完成')
+            : (isCustomerAnalysisJob ? 'AI客户分析处理失败' : 'AI直播复盘处理失败');
         const content = success
-            ? `${job.title || 'AI直播复盘'} 已处理完成，点击可直达该房间的 AI复盘。${summary ? ` 摘要：${String(summary).slice(0, 80)}` : ''}`
-            : `${job.title || 'AI直播复盘'} 处理失败${errorMessage ? `：${String(errorMessage).slice(0, 120)}` : ''}，点击可回到该房间的 AI复盘。`;
-        const actionUrl = `/monitor.html?roomId=${encodeURIComponent(job.roomId || '')}&sessionId=${encodeURIComponent(job.sessionId || '')}&detailTab=timeStats`;
+            ? (isCustomerAnalysisJob
+                ? `${job.title || 'AI客户分析'} 已处理完成，点击查看结果。`
+                : `${job.title || 'AI直播复盘'} 已处理完成，点击可直达该房间的 AI复盘。`)
+            : (isCustomerAnalysisJob
+                ? `${job.title || 'AI客户分析'} 处理失败，请点击查看。`
+                : `${job.title || 'AI直播复盘'} 处理失败，请点击回到该房间查看。`);
+        const actionUrl = buildAiWorkActionUrl(job.jobType, {
+            roomId: job.roomId || '',
+            sessionId: job.sessionId || '',
+            requestPayload: job.requestPayload || null
+        });
 
         await notificationService.createUserNotification({
             userId: job.userId,
@@ -2452,6 +2818,7 @@ async function sendAiWorkJobNotification(job, { success = true, summary = '', er
             actionTab: 'notifications',
             actionUrl
         });
+
         await updateAiWorkJob(job.id, { notificationSent: true });
     } catch (err) {
         console.error('[AI_WORK] send notification error:', err.message);
@@ -2561,10 +2928,267 @@ async function processSessionRecapAiWorkJob(job) {
         });
 
         await trace({ phase: 'job', level: 'info', message: '任务处理完成', payload: { jobId: job.id, chargedPoints } });
-        await sendAiWorkJobNotification(completedJob || { ...job, chargedPoints }, { success: true, summary: review?.bossSummary || review?.summary || '' });
+        await sendAiWorkJobNotification(completedJob || { ...job, chargedPoints }, { success: true });
     } catch (err) {
         const errorMessage = err?.message || '处理失败';
         await trace({ phase: 'job', level: 'error', message: '任务执行失败', payload: { error: errorMessage } });
+        const failedJob = await markAiWorkJobFailed(job.id, {
+            errorMessage,
+            currentStep: '处理失败',
+            modelName: String(job.modelName || '')
+        });
+        await sendAiWorkJobNotification(failedJob || job, { success: false, errorMessage });
+    }
+}
+
+async function processCustomerAnalysisAiWorkJob(job) {
+    const isAdmin = Boolean(job.isAdmin);
+    const requestPayload = job.requestPayload || {};
+    const targetUserId = String(requestPayload.targetUserId || '').trim();
+    const requestedRoomId = String(requestPayload.requestedRoomId || job.roomId || '').trim();
+    const trace = async ({ phase = '', level = 'info', message = '', payload = null } = {}) => {
+        await appendAiWorkTrace(job.id, { phase, level, message, payload });
+    };
+
+    if (!targetUserId) {
+        throw new Error('缺少客户分析目标用户ID');
+    }
+
+    try {
+        await markAiWorkJobStarted(job.id, '正在准备客户上下文');
+        await trace({
+            phase: 'job',
+            level: 'info',
+            message: '客户分析任务开始执行',
+            payload: { targetUserId, roomId: requestedRoomId || '', attemptCount: job.attemptCount }
+        });
+
+        const roomFilter = await getRoomFilterForUserScope(job.userId, isAdmin);
+        const preparedAnalysis = await prepareCustomerAnalysis({
+            userId: targetUserId,
+            roomId: requestedRoomId || null,
+            roomFilter
+        });
+        const chatCount = Number(preparedAnalysis.chatCount || 0);
+        const currentRoomId = preparedAnalysis.currentRoomId || '';
+        const targetNickname = String(requestPayload.targetNickname || preparedAnalysis?.customerContext?.identity?.nickname || '').trim();
+        const targetUniqueId = String(requestPayload.targetUniqueId || preparedAnalysis?.customerContext?.identity?.uniqueId || '').trim();
+
+        await updateAiWorkJob(job.id, {
+            roomId: currentRoomId,
+            currentStep: '正在构建结构化客户上下文',
+            progressPercent: 18,
+            requestPayload: {
+                ...requestPayload,
+                trigger: 'async_worker',
+                targetUserId,
+                targetNickname,
+                targetUniqueId,
+                requestedRoomId,
+                currentRoomId,
+                chatCount,
+                promptKey: preparedAnalysis.promptKey,
+                promptUpdatedAt: preparedAnalysis.promptUpdatedAt,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion
+            }
+        });
+        await trace({
+            phase: 'context',
+            level: 'info',
+            message: '客户上下文构建完成',
+            payload: {
+                targetUserId,
+                currentRoomId,
+                chatCount,
+                promptKey: preparedAnalysis.promptKey,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion
+            }
+        });
+
+        if (chatCount < 10) {
+            throw new Error('待分析语料不足（需至少10条弹幕记录）');
+        }
+
+        const forceRegenerate = Boolean(requestPayload.force);
+        const reusableSystemAnalysis = !forceRegenerate
+            ? await db.get(
+                `SELECT ai_analysis, ai_analysis_json, ai_analysis_prompt_key, ai_analysis_prompt_updated_at,
+                        ai_analysis_context_version, ai_analysis_model_version, ai_analysis_current_room_id, updated_at
+                 FROM "user"
+                 WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
+                [targetUserId]
+            )
+            : null;
+        const canReuseSystemCache = Boolean(reusableSystemAnalysis) && isCustomerAnalysisCacheReusable({
+            ...reusableSystemAnalysis,
+            promptKey: reusableSystemAnalysis?.aiAnalysisPromptKey,
+            promptUpdatedAt: reusableSystemAnalysis?.aiAnalysisPromptUpdatedAt,
+            contextVersion: reusableSystemAnalysis?.aiAnalysisContextVersion,
+            currentRoomId: reusableSystemAnalysis?.aiAnalysisCurrentRoomId
+        }, preparedAnalysis.cacheSignature);
+
+        if (canReuseSystemCache) {
+            await trace({
+                phase: 'cache',
+                level: 'info',
+                message: '命中系统缓存，转为后台结果发放',
+                payload: {
+                    targetUserId,
+                    currentRoomId,
+                    promptKey: reusableSystemAnalysis?.aiAnalysisPromptKey || preparedAnalysis.promptKey,
+                    contextVersion: reusableSystemAnalysis?.aiAnalysisContextVersion || preparedAnalysis.cacheSignature.contextVersion
+                }
+            });
+
+            let chargedPoints = 0;
+            if (!isAdmin) {
+                const consumeResult = await consumeCustomerAnalysisCredits(job.userId, targetUserId, Number(job.pointCost || CUSTOMER_ANALYSIS_AI_POINTS));
+                if (!consumeResult.success) {
+                    throw new Error('AI 点数不足，任务执行时扣点失败');
+                }
+                chargedPoints = Number(consumeResult.chargedPoints || 0);
+                await saveMemberCustomerAnalysisRecord({
+                    memberId: job.userId,
+                    targetUserId,
+                    result: reusableSystemAnalysis.aiAnalysis,
+                    resultJson: reusableSystemAnalysis.aiAnalysisJson || null,
+                    chatCount,
+                    modelName: 'system_cache',
+                    modelVersion: reusableSystemAnalysis.aiAnalysisModelVersion || 'system_cache',
+                    promptKey: reusableSystemAnalysis.aiAnalysisPromptKey || preparedAnalysis.promptKey,
+                    promptUpdatedAt: reusableSystemAnalysis.aiAnalysisPromptUpdatedAt || preparedAnalysis.promptUpdatedAt,
+                    contextVersion: reusableSystemAnalysis.aiAnalysisContextVersion || preparedAnalysis.cacheSignature.contextVersion,
+                    currentRoomId: reusableSystemAnalysis.aiAnalysisCurrentRoomId || preparedAnalysis.currentRoomId,
+                    latencyMs: 0,
+                    source: 'system_cache'
+                });
+            }
+
+            const completedJob = await markAiWorkJobCompleted(job.id, {
+                chargedPoints,
+                modelName: reusableSystemAnalysis.aiAnalysisModelVersion || 'system_cache',
+                currentStep: '处理完成',
+                resultPayload: {
+                    targetUserId,
+                    targetNickname,
+                    targetUniqueId,
+                    analysis: safeParseJsonObject(reusableSystemAnalysis.aiAnalysisJson),
+                    result: reusableSystemAnalysis.aiAnalysis,
+                    resultJsonText: reusableSystemAnalysis.aiAnalysisJson || '',
+                    chatCount,
+                    source: 'system_cache',
+                    latencyMs: 0,
+                    modelName: reusableSystemAnalysis.aiAnalysisModelVersion || 'system_cache',
+                    chargedPoints
+                }
+            });
+
+            await trace({ phase: 'job', level: 'info', message: '客户分析任务通过系统缓存完成', payload: { jobId: job.id, targetUserId, chargedPoints } });
+            await sendAiWorkJobNotification(completedJob || { ...job, chargedPoints }, { success: true });
+            return;
+        }
+
+        await updateAiWorkJob(job.id, {
+            currentStep: '正在调用 AI 生成客户分析',
+            progressPercent: 52
+        });
+
+        const generated = await runCustomerAnalysis({
+            preparedInput: preparedAnalysis,
+            requestAiChatCompletion,
+            trace
+        });
+        await trace({
+            phase: 'analysis',
+            level: 'info',
+            message: 'AI 客户分析生成完成',
+            payload: {
+                targetUserId,
+                summary: generated.analysis?.summary || '',
+                modelName: generated.modelName || '',
+                latencyMs: Number(generated.latencyMs || 0)
+            }
+        });
+
+        await updateAiWorkJob(job.id, {
+            currentStep: '正在保存客户分析结果',
+            progressPercent: 78,
+            modelName: generated.modelName || ''
+        });
+
+        const systemAnalysis = await db.get(
+            `SELECT ai_analysis, ai_analysis_json, ai_analysis_prompt_key, ai_analysis_prompt_updated_at,
+                    ai_analysis_context_version, ai_analysis_model_version, ai_analysis_current_room_id, updated_at
+             FROM "user"
+             WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
+            [targetUserId]
+        );
+        const shouldPersistSystemAnalysis = isAdmin || !isCustomerAnalysisCacheReusable({
+            ...systemAnalysis,
+            promptKey: systemAnalysis?.aiAnalysisPromptKey,
+            promptUpdatedAt: systemAnalysis?.aiAnalysisPromptUpdatedAt,
+            contextVersion: systemAnalysis?.aiAnalysisContextVersion,
+            currentRoomId: systemAnalysis?.aiAnalysisCurrentRoomId
+        }, preparedAnalysis.cacheSignature);
+        if (shouldPersistSystemAnalysis) {
+            await manager.updateAIAnalysis(targetUserId, generated.result, {
+                resultJson: generated.resultJsonText,
+                promptKey: preparedAnalysis.promptKey,
+                promptUpdatedAt: preparedAnalysis.promptUpdatedAt,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion,
+                modelVersion: generated.modelVersion,
+                currentRoomId: preparedAnalysis.currentRoomId
+            });
+        }
+
+        let chargedPoints = 0;
+        if (!isAdmin) {
+            const consumeResult = await consumeCustomerAnalysisCredits(job.userId, targetUserId, Number(job.pointCost || CUSTOMER_ANALYSIS_AI_POINTS));
+            if (!consumeResult.success) {
+                throw new Error('AI 点数不足，任务执行时扣点失败');
+            }
+            chargedPoints = Number(consumeResult.chargedPoints || 0);
+            await saveMemberCustomerAnalysisRecord({
+                memberId: job.userId,
+                targetUserId,
+                result: generated.result,
+                resultJson: generated.resultJsonText,
+                chatCount,
+                modelName: generated.modelName,
+                modelVersion: generated.modelVersion,
+                promptKey: preparedAnalysis.promptKey,
+                promptUpdatedAt: preparedAnalysis.promptUpdatedAt,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion,
+                currentRoomId: preparedAnalysis.currentRoomId,
+                latencyMs: generated.latencyMs,
+                source: 'api'
+            });
+        }
+
+        const completedJob = await markAiWorkJobCompleted(job.id, {
+            chargedPoints,
+            modelName: generated.modelName || '',
+            currentStep: '处理完成',
+            resultPayload: {
+                targetUserId,
+                targetNickname,
+                targetUniqueId,
+                analysis: generated.analysis,
+                result: generated.result,
+                resultJsonText: generated.resultJsonText,
+                chatCount,
+                source: 'api',
+                latencyMs: Number(generated.latencyMs || 0),
+                modelName: generated.modelName || '',
+                chargedPoints
+            }
+        });
+
+        await trace({ phase: 'job', level: 'info', message: '客户分析任务处理完成', payload: { jobId: job.id, targetUserId, chargedPoints } });
+        await sendAiWorkJobNotification(completedJob || { ...job, chargedPoints }, { success: true });
+    } catch (err) {
+        const errorMessage = err?.message || '处理失败';
+        await trace({ phase: 'job', level: 'error', message: '客户分析任务执行失败', payload: { targetUserId, error: errorMessage } });
         const failedJob = await markAiWorkJobFailed(job.id, {
             errorMessage,
             currentStep: '处理失败',
@@ -2578,6 +3202,10 @@ async function processAiWorkJob(job) {
     if (!job) return;
     if (job.jobType === AI_WORK_JOB_TYPE_SESSION_RECAP) {
         await processSessionRecapAiWorkJob(job);
+        return;
+    }
+    if (job.jobType === AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS) {
+        await processCustomerAnalysisAiWorkJob(job);
         return;
     }
     throw new Error(`暂不支持的 AI 工作类型: ${job.jobType}`);
@@ -2663,118 +3291,115 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
     try {
         if (!req.user) return res.status(401).json({ error: '请先登录' });
 
-        const { userId, force = false } = req.body;
+        const { userId, force = false, roomId = null } = req.body;
         const memberId = req.user.id;
         const isAdmin = req.user?.role === 'admin';
         const roomFilter = await getUserRoomFilter(req);
+        if (!userId) {
+            return res.status(400).json({ error: 'userId 不能为空' });
+        }
+        if (!isAdmin && roomId && Array.isArray(roomFilter) && !roomFilter.includes(roomId)) {
+            return res.status(403).json({ error: '无权访问该房间的客户数据' });
+        }
 
-        // 1. Get chat history and check minimum corpus (10 messages)
-        const history = await manager.getUserChatHistory(userId, 200, roomFilter);
-        const chatCount = history ? history.length : 0;
+        const preparedAnalysis = await prepareCustomerAnalysis({ userId, roomId, roomFilter });
+        const chatCount = Number(preparedAnalysis.chatCount || 0);
         if (chatCount < 10) {
             return res.json({ result: '待分析语料不足（需至少10条弹幕记录）', chatCount, skipped: true });
         }
 
-        // 2. For non-admin members: check if already in their personal analysis table
         if (!force && !isAdmin) {
             const memberCache = await getLatestMemberAnalysis(memberId, userId);
-            if (memberCache) {
-                return res.json({ result: memberCache.result, cached: true, chatCount: memberCache.chatCount, analyzedAt: memberCache.createdAt, source: 'member_cache' });
+            if (isCustomerAnalysisCacheReusable(memberCache, preparedAnalysis.cacheSignature)) {
+                return res.json({
+                    result: memberCache.result,
+                    analysis: safeParseJsonObject(memberCache.resultJson),
+                    cached: true,
+                    chatCount: memberCache.chatCount || chatCount,
+                    analyzedAt: memberCache.createdAt,
+                    source: 'member_cache'
+                });
             }
         }
 
-        // 3. Check system-level cache ("user".ai_analysis) - within 3 months
-        let systemAnalysis = null;
-        if (!force) {
-            systemAnalysis = await db.get(
-                `SELECT ai_analysis, updated_at FROM "user" WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
-                [userId]
-            );
-            if (systemAnalysis && systemAnalysis.aiAnalysis) {
-                const updatedAt = new Date(systemAnalysis.updatedAt);
-                const threeMonthsAgo = new Date();
-                threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
 
-                if (updatedAt > threeMonthsAgo) {
-                    // System cache is fresh — use it, write to member table, and charge
-                    if (!isAdmin) {
-                        // Check credits before charging
-                        const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
-                        const remaining = Number(credits?.aiCreditsRemaining || 0);
-                        if (remaining <= 0) {
-                            return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
-                        }
-
-                        const simulatedLatency = getSimulatedAiDelayMs();
-                        await sleep(simulatedLatency);
-
-                        // Write to member table
-                        await db.run(
-                            `INSERT INTO user_ai_analysis (member_id, target_user_id, result, chat_count, model_name, latency_ms, source)
-                             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-                            [memberId, userId, systemAnalysis.aiAnalysis, chatCount, 'system_cache', simulatedLatency, 'system_cache']
-                        );
-                        // Deduct credit
-                        await db.run('UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - 1, 0), ai_credits_used = ai_credits_used + 1 WHERE id = ?', [memberId]);
-                        await db.run('INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, 1, ?)', [memberId, 'analysis', userId]);
-
-                        console.log(`[AI] Reused system cache for member ${memberId}, target ${userId}, simulated ${simulatedLatency}ms`);
-                        return res.json({ result: systemAnalysis.aiAnalysis, cached: false, chatCount, latency: simulatedLatency, source: 'api' });
-                    }
-                    console.log(`[AI] Using system cache for ${userId} (updated ${updatedAt.toISOString()})`);
-                    return res.json({ result: systemAnalysis.aiAnalysis, cached: true, chatCount, analyzedAt: systemAnalysis.updatedAt, source: 'system_cache' });
-                }
-            }
+        const resolvedRoomId = String(preparedAnalysis.currentRoomId || roomId || '').trim();
+        const existingJob = await findReusableCustomerAnalysisAiWorkJob({
+            userId: memberId,
+            targetUserId: userId,
+            roomId: resolvedRoomId
+        });
+        if (existingJob) {
+            return res.status(202).json({
+                accepted: true,
+                queued: existingJob.status === 'queued',
+                processing: existingJob.status === 'processing',
+                reused: true,
+                cached: false,
+                pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+                chatCount,
+                job: serializeSessionAiWorkJobForClient(existingJob),
+                message: 'AI 已启动，正在后台分析客户，完成后会主动通知。'
+            });
         }
 
-        // 4. Need fresh AI analysis — check credits for non-admin
         if (!isAdmin) {
             const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
             const remaining = Number(credits?.aiCreditsRemaining || 0);
-            if (remaining <= 0) {
+            if (remaining < CUSTOMER_ANALYSIS_AI_POINTS) {
                 return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
             }
         }
 
-        // 5. Get AI model config
-        // 5. Call AI API with automatic failover
-        const chatText = history.map(h => h.comment).join('\n');
-        const { completion, modelName, latencyMs: aiLatency } = await requestAiChatCompletion({
-            requestLabel: `user analysis ${userId}`,
-            messages: [
-                { role: 'system', content: '你是一个数十年经验的专业娱乐主播运营总监，并且你的情商非常高。请根据用户的弹幕历史，简要分析该用户的：1、常用语种 2、掌握语种 3、感兴趣的话题 4、 聊天风格。请用简洁的中文回答。5、建议破冰方式。请用简洁的中文回答。' },
-                { role: 'user', content: `用户弹幕记录：\n${chatText}` }
-            ]
-        });
-        const result = completion.choices?.[0]?.message?.content?.trim() || '无法获取分析结果';
-
-        // 8. Save to system-level user table when missing, or always refresh for admin
-        let shouldPersistSystemAnalysis = isAdmin;
-        if (!isAdmin) {
-            if (!systemAnalysis) {
-                systemAnalysis = await db.get(
-                    `SELECT ai_analysis FROM "user" WHERE user_id = ? AND ai_analysis IS NOT NULL AND ai_analysis != ''`,
-                    [userId]
-                );
+        const targetIdentity = preparedAnalysis?.customerContext?.identity || {};
+        const job = await createAiWorkJob({
+            userId: memberId,
+            jobType: AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS,
+            roomId: resolvedRoomId,
+            sessionId: '',
+            title: buildCustomerAnalysisJobTitle(userId, preparedAnalysis),
+            pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+            forceRegenerate: force,
+            isAdmin,
+            requestPayload: {
+                trigger: 'user_submit',
+                targetUserId: String(userId || '').trim(),
+                targetNickname: String(targetIdentity.nickname || '').trim(),
+                targetUniqueId: String(targetIdentity.uniqueId || '').trim(),
+                requestedRoomId: String(roomId || '').trim(),
+                currentRoomId: resolvedRoomId,
+                force,
+                chatCount,
+                pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+                promptKey: preparedAnalysis.promptKey,
+                promptUpdatedAt: preparedAnalysis.promptUpdatedAt,
+                contextVersion: preparedAnalysis.cacheSignature.contextVersion
             }
-            shouldPersistSystemAnalysis = !systemAnalysis?.aiAnalysis;
-        }
-        if (shouldPersistSystemAnalysis) {
-            await manager.updateAIAnalysis(userId, result);
-        }
+        });
 
-        // 9. Save to member's personal table & deduct credits
-        if (!isAdmin) {
-            await db.run(
-                `INSERT INTO user_ai_analysis (member_id, target_user_id, result, chat_count, model_name, latency_ms, source)
-                 VALUES (?, ?, ?, ?, ?, ?, 'api')`,
-                [memberId, userId, result, chatCount, modelName, aiLatency]
-            );
-            await db.run('UPDATE users SET ai_credits_remaining = GREATEST(ai_credits_remaining - 1, 0), ai_credits_used = ai_credits_used + 1 WHERE id = ?', [memberId]);
-            await db.run('INSERT INTO ai_usage_log (user_id, usage_type, credits_used, target_id) VALUES (?, ?, 1, ?)', [memberId, 'analysis', userId]);
-        }
+        await appendAiWorkJobLog(job.id, {
+            phase: 'queued',
+            level: 'info',
+            message: '客户分析任务已入队，等待后台调度',
+            payload: {
+                targetUserId: String(userId || '').trim(),
+                currentRoomId: resolvedRoomId,
+                requestedRoomId: String(roomId || '').trim(),
+                force,
+                chatCount,
+                pointCost: CUSTOMER_ANALYSIS_AI_POINTS
+            }
+        });
 
-        res.json({ result, cached: false, chatCount, latency: aiLatency, model: modelName, source: 'api' });
+        res.status(202).json({
+            accepted: true,
+            queued: true,
+            cached: false,
+            pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+            chatCount,
+            job: serializeSessionAiWorkJobForClient(job),
+            message: 'AI 已启动，正在后台分析客户，完成后会主动通知。'
+        });
 
     } catch (err) {
         console.error('[AI] Analysis error:', err);
@@ -2809,7 +3434,7 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
                 await autoRecorder.disconnectRoom(roomId);
             }
 
-            invalidateRoomListCaches('admin room update');
+            await invalidateRoomListCaches('admin room update');
             return res.json({ success: true, room });
         }
 
@@ -2905,7 +3530,7 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
             console.log(`[API] User ${req.user.id} added new room copy: ${roomId}`);
         }
 
-        invalidateRoomListCaches('member room upsert');
+        await invalidateRoomListCaches('member room upsert');
         res.json({ success: true, room: { room_id: roomId, name: alias || roomId } });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2926,7 +3551,7 @@ app.post('/api/rooms/:id/rename', optionalAuth, async (req, res) => {
         }
 
         await manager.migrateRoomId(roomId, newRoomId);
-        invalidateRoomListCaches('room rename');
+        await invalidateRoomListCaches('room rename');
         res.json({ success: true, oldRoomId: roomId, newRoomId });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -2942,7 +3567,7 @@ app.post('/api/rooms/:id/stop', authenticate, requireAdmin, requireAdminPermissi
         if (recordingManager.isRecording(roomId)) {
             await recordingManager.stopRecording(roomId);
         }
-        invalidateRoomListCaches('room stop');
+        await invalidateRoomListCaches('room stop');
         res.json({ success: true, stopped: result });
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -3492,14 +4117,20 @@ app.delete('/api/debug/connections/:id', authenticate, requireAdmin, requireAdmi
     const roomId = req.params.id;
     console.log(`[Debug] Force clearing connection for ${roomId}`);
     const result = await autoRecorder.disconnectRoom(roomId);
+    await invalidateRoomListCaches('debug connection clear');
     res.json({ cleared: true, roomId, result });
 });
 
 // Migrate events from numeric room_id to username room_id
 app.post('/api/migrate-events', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        await manager.migrateEventRoomIds();
-        res.json({ success: true, message: 'Events migrated successfully' });
+        const queuedJob = await enqueueEventMigrationJob({
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
+        });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            message: buildAcceptedAdminJobMessage('事件房间标识迁移任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3508,10 +4139,14 @@ app.post('/api/migrate-events', authenticate, requireAdmin, requireAdminPermissi
 // Fix orphaned events - create sessions for events without session_id
 app.post('/api/fix-orphaned-events', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const task = await runSessionMaintenanceTask('fix_orphaned_events', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('fix_orphaned_events', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
         });
-        res.json({ success: true, ...task.result });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'fix_orphaned_events',
+            message: buildAcceptedAdminJobMessage('孤儿事件修复任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3520,10 +4155,14 @@ app.post('/api/fix-orphaned-events', authenticate, requireAdmin, requireAdminPer
 // Delete empty sessions (sessions with 0 events)
 app.post('/api/delete-empty-sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const task = await runSessionMaintenanceTask('delete_empty_sessions', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('delete_empty_sessions', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
         });
-        res.json({ success: true, ...task.result });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'delete_empty_sessions',
+            message: buildAcceptedAdminJobMessage('空场次清理任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3532,10 +4171,14 @@ app.post('/api/delete-empty-sessions', authenticate, requireAdmin, requireAdminP
 // Rebuild missing session records (for events with session_id but no session record)
 app.post('/api/rebuild-missing-sessions', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const task = await runSessionMaintenanceTask('rebuild_missing_sessions', {
-            triggerSource: 'legacy-api',
+        const queuedJob = await enqueueSessionMaintenanceJob('rebuild_missing_sessions', {
+            source: 'legacy-api',
+            createdByUserId: req.user?.id,
         });
-        res.json({ success: true, ...task.result });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            taskKey: 'rebuild_missing_sessions',
+            message: buildAcceptedAdminJobMessage('缺失场次重建任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3543,93 +4186,39 @@ app.post('/api/rebuild-missing-sessions', authenticate, requireAdmin, requireAdm
 
 const ENABLE_PERIODIC_STATS_REFRESH = String(process.env.ENABLE_PERIODIC_STATS_REFRESH || 'false').toLowerCase() === 'true';
 const ENABLE_STARTUP_STATS_WARMUP = String(process.env.ENABLE_STARTUP_STATS_WARMUP || 'false').toLowerCase() === 'true';
-let isRoomStatsRefreshRunning = false;
-let isUserStatsRefreshRunning = false;
-let isGlobalStatsRefreshRunning = false;
 
-async function runRoomStatsRefreshJob(trigger = 'manual') {
-    if (isRoomStatsRefreshRunning) {
-        console.log(`[CRON] Skip room stats refresh (${trigger}) because a previous run is still active`);
-        metricsService.emitLog('warn', 'stats.room_refresh', {
-            trigger,
-            status: 'skipped',
-            reason: 'already_running',
-        });
-        return { skipped: true, trigger };
-    }
-    isRoomStatsRefreshRunning = true;
-    try {
-        console.log(`[CRON] Running room stats refresh (${trigger})...`);
-        return await manager.refreshRoomStats();
-    } catch (err) {
-        metricsService.emitLog('error', 'stats.room_refresh', {
-            trigger,
-            status: 'error',
-            error: metricsService.safeErrorMessage(err),
-        });
-        throw err;
-    } finally {
-        isRoomStatsRefreshRunning = false;
-    }
+function shouldRunStatsJobsInWebProcess() {
+    return !schemeAConfig.worker.enableStats;
 }
 
-async function runUserStatsRefreshJob(trigger = 'manual') {
-    if (isUserStatsRefreshRunning) {
-        console.log(`[CRON] Skip user stats refresh (${trigger}) because a previous run is still active`);
-        metricsService.emitLog('warn', 'stats.user_refresh', {
-            trigger,
-            status: 'skipped',
-            reason: 'already_running',
-        });
-        return { skipped: true, trigger };
-    }
-    isUserStatsRefreshRunning = true;
-    try {
-        console.log(`[CRON] Running user stats refresh (${trigger})...`);
-        return await manager.refreshUserStats();
-    } catch (err) {
-        metricsService.emitLog('error', 'stats.user_refresh', {
-            trigger,
-            status: 'error',
-            error: metricsService.safeErrorMessage(err),
-        });
-        throw err;
-    } finally {
-        isUserStatsRefreshRunning = false;
-    }
+function buildAcceptedAdminJobMessage(defaultMessage, queuedJob) {
+    return queuedJob?.reused
+        ? `已有同类后台任务正在执行：${defaultMessage}`
+        : defaultMessage;
 }
 
-async function runGlobalStatsRefreshJob(trigger = 'manual') {
-    if (isGlobalStatsRefreshRunning) {
-        console.log(`[CRON] Skip global stats refresh (${trigger}) because a previous run is still active`);
-        metricsService.emitLog('warn', 'stats.global_refresh', {
-            trigger,
-            status: 'skipped',
-            reason: 'already_running',
-        });
-        return { skipped: true, trigger };
-    }
-    isGlobalStatsRefreshRunning = true;
-    try {
-        console.log(`[CRON] Running global stats refresh (${trigger})...`);
-        return await manager.refreshGlobalStats();
-    } catch (err) {
-        metricsService.emitLog('error', 'stats.global_refresh', {
-            trigger,
-            status: 'error',
-            error: metricsService.safeErrorMessage(err),
-        });
-        throw err;
-    } finally {
-        isGlobalStatsRefreshRunning = false;
-    }
+function sendAcceptedAdminJobResponse(res, queuedJob, payload = {}) {
+    return res.status(202).json({
+        success: true,
+        accepted: true,
+        queued: Boolean(queuedJob?.queued),
+        processing: Boolean(queuedJob?.processing),
+        reused: Boolean(queuedJob?.reused),
+        job: queuedJob?.job || null,
+        ...payload,
+    });
 }
 
 // Manually refresh room_stats cache (for immediate update after changes)
 app.post('/api/maintenance/refresh_room_stats', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const result = await runRoomStatsRefreshJob('manual-api');
-        res.json({ success: true, ...result });
+        const queuedJob = await enqueueStatsRefreshJob('room', {
+            source: 'manual-api',
+            createdByUserId: req.user?.id,
+        });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            message: buildAcceptedAdminJobMessage('房间统计刷新任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3638,8 +4227,13 @@ app.post('/api/maintenance/refresh_room_stats', authenticate, requireAdmin, requ
 // Manually refresh user_stats cache (for immediate update after changes)
 app.post('/api/maintenance/refresh_user_stats', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const result = await runUserStatsRefreshJob('manual-api');
-        res.json({ success: true, ...result });
+        const queuedJob = await enqueueStatsRefreshJob('user', {
+            source: 'manual-api',
+            createdByUserId: req.user?.id,
+        });
+        return sendAcceptedAdminJobResponse(res, queuedJob, {
+            message: buildAcceptedAdminJobMessage('用户统计刷新任务已加入后台队列。', queuedJob),
+        });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -3667,6 +4261,12 @@ httpServer.listen(PORT, async () => {
             daemonRestartDelayMs: schemeAConfig.worker.recordingUploadDaemonRestartDelayMs,
             daemonMaxRestarts: schemeAConfig.worker.recordingUploadDaemonMaxRestarts,
         },
+        statsWorker: {
+            enabled: schemeAConfig.worker.enableStats,
+        },
+        maintenanceWorker: {
+            enabled: schemeAConfig.worker.enableMaintenance,
+        },
     });
 
     // Cleanup orphaned recording tasks from previous session (crashed or force-closed)
@@ -3675,6 +4275,8 @@ httpServer.listen(PORT, async () => {
     // Start user management periodic tasks (subscription expiry, token cleanup)
     startPeriodicTasks();
     startAiWorkQueueProcessor();
+    ensureStatsWorkerDaemon();
+    ensureMaintenanceWorkerDaemon();
 
     // Scheduled jobs
     // Run user language analysis every hour
@@ -3690,6 +4292,7 @@ httpServer.listen(PORT, async () => {
     if (ENABLE_PERIODIC_STATS_REFRESH) {
         // Refresh room_stats cache every 30 minutes (for fast API responses)
         setInterval(async () => {
+            if (!shouldRunStatsJobsInWebProcess()) return;
             try {
                 await runRoomStatsRefreshJob('interval');
             } catch (err) {
@@ -3699,6 +4302,7 @@ httpServer.listen(PORT, async () => {
 
         // Refresh user_stats cache every 30 minutes (for fast user analysis API)
         setInterval(async () => {
+            if (!shouldRunStatsJobsInWebProcess()) return;
             try {
                 await runUserStatsRefreshJob('interval');
             } catch (err) {
@@ -3722,6 +4326,7 @@ httpServer.listen(PORT, async () => {
     if (ENABLE_STARTUP_STATS_WARMUP) {
         // Refresh room stats on startup (for API performance)
         setTimeout(async () => {
+            if (!shouldRunStatsJobsInWebProcess()) return;
             try {
                 await runRoomStatsRefreshJob('startup');
             } catch (err) {
@@ -3731,6 +4336,7 @@ httpServer.listen(PORT, async () => {
 
         // Refresh user stats on startup (for API performance)
         setTimeout(async () => {
+            if (!shouldRunStatsJobsInWebProcess()) return;
             try {
                 await runUserStatsRefreshJob('startup');
             } catch (err) {
@@ -3743,6 +4349,7 @@ httpServer.listen(PORT, async () => {
 
     // Refresh global stats on startup (for /api/analysis/stats performance)
     setTimeout(async () => {
+        if (!shouldRunStatsJobsInWebProcess()) return;
         try {
             console.log('[CRON] Initial global stats refresh...');
             await runGlobalStatsRefreshJob('startup');
@@ -3753,6 +4360,7 @@ httpServer.listen(PORT, async () => {
 
     // Refresh global_stats cache every 30 minutes (for fast /api/analysis/stats responses)
     setInterval(async () => {
+        if (!shouldRunStatsJobsInWebProcess()) return;
         try {
             console.log('[CRON] Refreshing global stats cache...');
             await runGlobalStatsRefreshJob('interval');
@@ -3763,9 +4371,10 @@ httpServer.listen(PORT, async () => {
 
     // 7-day data retention cleanup - runs every 6 hours
     setInterval(async () => {
+        if (schemeAConfig.worker.enableMaintenance) return;
         try {
             console.log('[CRON] Running expired room data cleanup (7-day retention)...');
-            await manager.cleanupExpiredRoomData();
+            await runExpiredRoomCleanupJob('web-interval');
         } catch (err) {
             console.error('[CRON] Room data cleanup error:', err.message);
         }
@@ -3773,9 +4382,10 @@ httpServer.listen(PORT, async () => {
 
     // Run initial cleanup 60 seconds after startup
     setTimeout(async () => {
+        if (schemeAConfig.worker.enableMaintenance) return;
         try {
             console.log('[CRON] Initial expired room data cleanup...');
-            await manager.cleanupExpiredRoomData();
+            await runExpiredRoomCleanupJob('web-startup');
         } catch (err) {
             console.error('[CRON] Initial room data cleanup error:', err.message);
         }
@@ -3791,6 +4401,9 @@ async function gracefulShutdown(signal) {
 
         // Stop all active recordings and save their state
         await recordingManager.stopAllRecordings();
+
+        liveStateService.shutdownLiveStateService();
+        await disconnectRedisClient();
 
         // Close HTTP server
         httpServer.close(() => {

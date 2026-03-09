@@ -755,7 +755,7 @@
                 <div class="flex justify-between items-center mb-6">
                     <h3 class="text-xl font-bold">用户详情</h3>
                     <button class="btn btn-square btn-sm btn-ghost"
-                        onclick="$('#userDetailPanel').addClass('translate-x-full')">✕</button>
+                        onclick="closeUserDetailPanel()">✕</button>
                 </div>
                 <div id="userDetailContent">加载中...</div>
             </div>
@@ -1411,17 +1411,17 @@
     <!-- Batch AI Analysis Modal -->
     <dialog id="batchAIModal" class="modal">
         <div class="modal-box w-11/12 max-w-md">
-            <h3 class="font-bold text-lg mb-4">🤖 批量AI性格分析</h3>
+            <h3 class="font-bold text-lg mb-4">🤖 批量AI客户分析</h3>
 
             <div id="batchAIOptions">
                 <p class="text-sm opacity-70 mb-4">选择分析模式：</p>
                 <div class="grid grid-cols-1 gap-3">
                     <button class="btn btn-primary" onclick="startBatchAI(false)">
-                        📊 普通分析
+                        📨 普通提交
                         <span class="badge badge-sm">前100个未分析的</span>
                     </button>
                     <button class="btn btn-warning" onclick="startBatchAI(true)">
-                        🔄 强制分析
+                        🔄 强制重提
                         <span class="badge badge-sm">重新分析全部</span>
                     </button>
                 </div>
@@ -1429,7 +1429,7 @@
 
             <div id="batchAIProgress" style="display:none;">
                 <div class="flex justify-between items-center mb-2">
-                    <span class="text-sm">分析进度</span>
+                    <span class="text-sm">提交进度</span>
                     <span id="batchAICount" class="text-sm font-mono">0/0</span>
                 </div>
                 <progress id="batchAIBar" class="progress progress-primary w-full" value="0" max="100"></progress>

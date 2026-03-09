@@ -238,6 +238,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
     initSidebarMenu();
+    initAdminAiWorkFilters();
     const preferredSection = localStorage.getItem(ADMIN_SIDEBAR_SECTION_STORAGE_KEY) || 'overview';
     showSection(preferredSection);
 });
@@ -1901,11 +1902,41 @@ function formatAdminAiWorkStatusBadge(status) {
     return '<span class="badge badge-warning badge-sm">排队中</span>';
 }
 
+function formatAdminAiWorkTypeBadge(jobType) {
+    const raw = String(jobType || '').toLowerCase();
+    if (raw === 'customer_analysis') return '<span class="badge badge-secondary badge-sm">用户</span>';
+    if (raw === 'session_recap') return '<span class="badge badge-accent badge-sm">房间</span>';
+    return '<span class="badge badge-ghost badge-sm">其他</span>';
+}
+
 function formatAdminAiWorkDateTime(value) {
     if (!value) return '--';
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return escapeHtml(String(value));
     return date.toLocaleString('zh-CN');
+}
+
+function initAdminAiWorkFilters() {
+    const statusSelect = document.getElementById('admin-ai-work-status');
+    const typeSelect = document.getElementById('admin-ai-work-job-type');
+    const searchInput = document.getElementById('admin-ai-work-search');
+    if (statusSelect && !statusSelect.dataset.bound) {
+        statusSelect.addEventListener('change', () => loadAdminAiWorkJobs(1));
+        statusSelect.dataset.bound = 'true';
+    }
+    if (typeSelect && !typeSelect.dataset.bound) {
+        typeSelect.addEventListener('change', () => loadAdminAiWorkJobs(1));
+        typeSelect.dataset.bound = 'true';
+    }
+    if (searchInput && !searchInput.dataset.bound) {
+        searchInput.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                loadAdminAiWorkJobs(1);
+            }
+        });
+        searchInput.dataset.bound = 'true';
+    }
 }
 
 async function loadAdminAiWorkJobs(page = 1) {
@@ -1914,12 +1945,14 @@ async function loadAdminAiWorkJobs(page = 1) {
     if (!tbody) return;
 
     const status = document.getElementById('admin-ai-work-status')?.value || '';
+    const jobType = document.getElementById('admin-ai-work-job-type')?.value || '';
     const search = document.getElementById('admin-ai-work-search')?.value?.trim() || '';
     tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/60">正在加载 AI 工作任务...</td></tr>';
 
     try {
         const params = new URLSearchParams({ page: String(page), limit: '20' });
         if (status) params.set('status', status);
+        if (jobType) params.set('jobType', jobType);
         if (search) params.set('search', search);
         const res = await Auth.apiFetch(`/api/admin/ai-work/jobs?${params.toString()}`);
         const data = await res.json();
@@ -1929,14 +1962,24 @@ async function loadAdminAiWorkJobs(page = 1) {
         if (!jobs.length) {
             tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/60">暂无 AI 工作任务</td></tr>';
         } else {
-            tbody.innerHTML = jobs.map(job => `
+            tbody.innerHTML = jobs.map(job => {
+                const subjectMain = job.jobType === 'customer_analysis'
+                    ? (job.targetNickname || job.targetUserId || '-')
+                    : (job.roomId || '-');
+                const subjectSub = job.jobType === 'customer_analysis'
+                    ? `${job.targetUserId || '-'}${job.roomId ? ' · 房间 ' + job.roomId : ''}`
+                    : (job.sessionId || '-');
+                return `
                 <tr>
                     <td>${Number(job.id || 0)}</td>
                     <td>${formatAdminAiWorkStatusBadge(job.status)}</td>
                     <td>${escapeHtml(job.nickname || job.username || '-')}</td>
                     <td>
-                        <div class="font-semibold">${escapeHtml(job.roomId || '-')}</div>
-                        <div class="text-xs text-base-content/55 mt-1">${escapeHtml(job.sessionId || '-')}</div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            ${formatAdminAiWorkTypeBadge(job.jobType)}
+                            <span class="font-semibold">${escapeHtml(subjectMain)}</span>
+                        </div>
+                        <div class="text-xs text-base-content/55 mt-1">${escapeHtml(subjectSub)}</div>
                     </td>
                     <td>
                         <div>${escapeHtml(job.currentStep || '-')}</div>
@@ -1946,7 +1989,8 @@ async function loadAdminAiWorkJobs(page = 1) {
                     <td class="text-xs">${formatAdminAiWorkDateTime(job.createdAt)}</td>
                     <td><button class="btn btn-xs btn-outline" onclick="loadAdminAiWorkJobDetail(${Number(job.id || 0)})">详情</button></td>
                 </tr>
-            `).join('');
+            `;
+            }).join('');
         }
 
         renderPagination('admin-ai-work-pagination', data.pagination || { page: 1, limit: 20, total: 0 }, 'loadAdminAiWorkJobs');
@@ -1979,10 +2023,13 @@ async function loadAdminAiWorkJobDetail(jobId) {
                     ${formatAdminAiWorkStatusBadge(job.status)}
                     <span class="badge badge-outline">任务 #${Number(job.id || 0)}</span>
                     <span class="badge badge-ghost">用户 ${escapeHtml(job.nickname || job.username || '-')}</span>
+                    ${formatAdminAiWorkTypeBadge(job.jobType)}
                     <span class="badge badge-ghost">通知 ${job.notificationSent ? '已发送' : '未发送'}</span>
                 </div>
                 <div class="rounded-box bg-base-200/70 p-4 text-sm leading-7">
                     <div><span class="font-semibold">标题：</span>${escapeHtml(job.title || '-')}</div>
+                    <div><span class="font-semibold">分类：</span>${escapeHtml(job.jobTypeLabel || '-')}</div>
+                    <div><span class="font-semibold">对象：</span>${escapeHtml(job.jobType === 'customer_analysis' ? (job.targetNickname || job.targetUserId || '-') : (job.roomId || '-'))}</div>
                     <div><span class="font-semibold">房间 / 场次：</span>${escapeHtml(job.roomId || '-')} / ${escapeHtml(job.sessionId || '-')}</div>
                     <div><span class="font-semibold">当前步骤：</span>${escapeHtml(job.currentStep || '-')} · ${Number(job.progressPercent || 0)}%</div>
                     <div><span class="font-semibold">创建：</span>${formatAdminAiWorkDateTime(job.createdAt)}</div>
@@ -2054,6 +2101,11 @@ async function loadPromptTemplates(force = false) {
                     </div>
                 </div>
                 <div class="text-xs text-base-content/50 mb-3">可用变量：${(item.variables || []).map(v => `<code>${escapeHtml(`{{${v}}}`)}</code>`).join('、') || '无'}</div>
+                ${item.key === 'customer_analysis_review' ? `
+                    <div class="rounded-box border border-base-300 bg-base-200/80 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
+                        系统已经提前计算好客户数值、时间、排行与模型标签；编辑该模板时，请让 AI 只负责解释、总结、策略和话术，不要让 AI 自己重算事实。
+                    </div>
+                ` : ''}
                 <textarea id="prompt-template-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[22rem] font-mono text-xs leading-6">${escapeHtml(item.content || '')}</textarea>
                 <div class="flex flex-wrap items-center gap-3 mt-4">
                     <button class="btn btn-primary btn-sm" onclick="savePromptTemplate('${escapeHtml(item.key)}')">保存提示词</button>

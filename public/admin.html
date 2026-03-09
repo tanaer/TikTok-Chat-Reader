@@ -792,7 +792,7 @@
                             <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
                                 <div>
                                     <h3 class="card-title">AI 工作任务</h3>
-                                    <p class="text-sm text-base-content/60 mt-1">查看每个 AI直播复盘任务的排队、执行、失败与完成状态，便于监听调试与优化。</p>
+                                    <p class="text-sm text-base-content/60 mt-1">查看 AI客户分析 与 AI直播复盘 等后台任务的排队、执行、失败与完成状态，便于监听调试与优化。</p>
                                 </div>
                                 <button class="btn btn-sm btn-primary" onclick="loadAdminAiWorkJobs(1)">刷新</button>
                             </div>
@@ -804,7 +804,12 @@
                                     <option value="completed">已完成</option>
                                     <option value="failed">失败</option>
                                 </select>
-                                <input id="admin-ai-work-search" class="input input-bordered input-sm flex-1 min-w-[16rem]" placeholder="搜索用户 / 房间 / 场次 / 标题">
+                                <select id="admin-ai-work-job-type" class="select select-bordered select-sm">
+                                    <option value="">全部分类</option>
+                                    <option value="customer_analysis">用户</option>
+                                    <option value="session_recap">房间</option>
+                                </select>
+                                <input id="admin-ai-work-search" class="input input-bordered input-sm flex-1 min-w-[16rem]" placeholder="搜索目标用户 / 房间 / 场次 / 标题">
                                 <button class="btn btn-outline btn-sm" onclick="loadAdminAiWorkJobs(1)">查询</button>
                             </div>
                             <div class="overflow-x-auto">
@@ -814,7 +819,7 @@
                                             <th>ID</th>
                                             <th>状态</th>
                                             <th>用户</th>
-                                            <th>房间 / 场次</th>
+                                            <th>分类 / 对象</th>
                                             <th>当前步骤</th>
                                             <th>模型</th>
                                             <th>创建时间</th>
@@ -851,7 +856,7 @@
                         <div class="flex flex-wrap items-start justify-between gap-3 mb-6">
                             <div>
                                 <h3 class="card-title">提示词管理</h3>
-                                <p class="text-sm text-base-content/60 mt-1">集中管理 AI直播复盘的弹幕筛选提示词和主分析提示词，保存后下次生成直接生效。</p>
+                                <p class="text-sm text-base-content/60 mt-1">集中管理 AI直播复盘与 AI客户分析的核心提示词，保存后下次生成直接生效。</p>
                             </div>
                             <button class="btn btn-sm btn-primary" onclick="loadPromptTemplates(true)">刷新</button>
                         </div>

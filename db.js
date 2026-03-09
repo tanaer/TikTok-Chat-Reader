@@ -66,12 +66,21 @@ async function initDb() {
                 unique_id TEXT,
                 nickname TEXT,
                 gift_id INTEGER,
+                gift_name TEXT,
+                gift_image TEXT,
+                group_id TEXT,
                 diamond_count INTEGER DEFAULT 0,
                 repeat_count INTEGER DEFAULT 1,
                 like_count INTEGER DEFAULT 0,
                 total_like_count INTEGER DEFAULT 0,
                 comment TEXT,
                 viewer_count INTEGER,
+                region TEXT,
+                is_admin INTEGER DEFAULT 0,
+                is_super_admin INTEGER DEFAULT 0,
+                is_moderator INTEGER DEFAULT 0,
+                fan_level INTEGER DEFAULT 0,
+                fan_club_name TEXT,
                 data_json TEXT
             )
         `);
@@ -86,6 +95,12 @@ async function initDb() {
                 common_language TEXT,
                 mastered_languages TEXT,
                 ai_analysis TEXT,
+                ai_analysis_json TEXT,
+                ai_analysis_prompt_key TEXT,
+                ai_analysis_prompt_updated_at TIMESTAMP,
+                ai_analysis_context_version TEXT,
+                ai_analysis_model_version TEXT,
+                ai_analysis_current_room_id TEXT,
                 is_moderator INTEGER DEFAULT 0,
                 region TEXT
             )
@@ -176,6 +191,15 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_type_room ON event(type, room_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_gift_agg ON event(room_id, type, user_id) WHERE type = 'gift'`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_room_created ON session(room_id, created_at DESC)`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS gift_name TEXT`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS gift_image TEXT`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS group_id TEXT`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS region TEXT`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS is_admin INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS is_super_admin INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS is_moderator INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS fan_level INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS fan_club_name TEXT`);
 
         // Performance optimization: partial index for orphaned events (session_id IS NULL)
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_room_null_session ON event(room_id, timestamp) WHERE session_id IS NULL`);
@@ -564,6 +588,51 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_work_job_user_room_session ON ai_work_job(user_id, room_id, session_id, created_at DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_ai_work_job_log_job_created ON ai_work_job_log(job_id, created_at ASC)`);
 
+        // Admin async job queue tables
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS admin_async_job (
+                id SERIAL PRIMARY KEY,
+                queue_name TEXT NOT NULL,
+                job_type TEXT NOT NULL,
+                title TEXT NOT NULL DEFAULT '',
+                dedupe_key TEXT NOT NULL DEFAULT '',
+                created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                status TEXT NOT NULL DEFAULT 'queued',
+                current_step TEXT DEFAULT '',
+                progress_percent INTEGER DEFAULT 0,
+                attempt_count INTEGER DEFAULT 0,
+                request_payload_json TEXT,
+                result_json TEXT,
+                error_message TEXT DEFAULT '',
+                source TEXT NOT NULL DEFAULT 'manual',
+                queued_at TIMESTAMP DEFAULT NOW(),
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP,
+                created_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS queue_name TEXT DEFAULT 'maintenance'`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS job_type TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS title TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS dedupe_key TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS created_by_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL`).catch(() => {});
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'queued'`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS current_step TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS progress_percent INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS request_payload_json TEXT`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS result_json TEXT`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS error_message TEXT DEFAULT ''`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'manual'`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS queued_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS started_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS finished_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`ALTER TABLE admin_async_job ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_async_job_queue_status_created ON admin_async_job(queue_name, status, queued_at ASC, id ASC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_admin_async_job_dedupe_status_created ON admin_async_job(dedupe_key, status, created_at DESC)`);
+
         // Email verification codes table
         await pool.query(`
             CREATE TABLE IF NOT EXISTS email_verification (
@@ -719,14 +788,32 @@ async function initDb() {
                 member_id INTEGER NOT NULL,
                 target_user_id TEXT NOT NULL,
                 result TEXT NOT NULL,
+                result_json TEXT,
                 chat_count INTEGER DEFAULT 0,
                 model_name TEXT,
+                model_version TEXT,
+                prompt_key TEXT,
+                prompt_updated_at TIMESTAMP,
+                context_version TEXT,
+                current_room_id TEXT,
                 latency_ms INTEGER DEFAULT 0,
                 source TEXT DEFAULT 'api',
                 created_at TIMESTAMP DEFAULT NOW()
             )
         `);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_ai_analysis_member ON user_ai_analysis(member_id, target_user_id)`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_json TEXT`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_prompt_key TEXT`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_prompt_updated_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_context_version TEXT`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_model_version TEXT`);
+        await pool.query(`ALTER TABLE "user" ADD COLUMN IF NOT EXISTS ai_analysis_current_room_id TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS result_json TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS model_version TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS prompt_key TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS prompt_updated_at TIMESTAMP`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS context_version TEXT`);
+        await pool.query(`ALTER TABLE user_ai_analysis ADD COLUMN IF NOT EXISTS current_room_id TEXT`);
 
         // Single-session AI review cache table
         await pool.query(`

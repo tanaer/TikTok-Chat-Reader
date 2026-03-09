@@ -34,13 +34,13 @@
                 <div>
                     <div class="badge badge-primary badge-outline">一级菜单 · AI工作中心</div>
                     <h1 class="text-3xl font-black mt-3">AI 已启动，正在后台工作中。</h1>
-                    <p class="text-base-content/70 leading-7 mt-3 max-w-3xl">像 AI直播复盘 这类耗时较长的任务，提交后会自动进入后台处理。你不用一直停留在监控页，处理完成后会发送站内通知，这里也会自动刷新最新状态。</p>
+                    <p class="text-base-content/70 leading-7 mt-3 max-w-3xl">像 AI客户分析、AI直播复盘 这类耗时较长的任务，提交后会自动进入后台处理。你不用一直停留在监控页，处理完成后会发送站内通知，这里也会自动刷新最新状态。</p>
                 </div>
                 <div class="rounded-box bg-base-200/80 p-4 text-sm leading-7 min-w-[18rem]">
                     <div class="text-xs uppercase tracking-[0.18em] opacity-60">当前说明</div>
                     <div class="mt-3">- 支持查看排队中 / 处理中 / 已完成 / 失败</div>
-                    <div>- AI直播复盘完成后可回监控中心查看完整内容</div>
-                    <div>- 如任务失败，可在监控中心重新发起</div>
+                    <div>- AI客户分析、AI直播复盘都会进入这里统一跟踪</div>
+                    <div>- 任务完成后可一键跳回监控中心查看结果</div>
                 </div>
             </div>
         </section>
@@ -59,7 +59,7 @@
             <div class="stat bg-base-100 rounded-box shadow border border-base-300/60">
                 <div class="stat-title">已完成</div>
                 <div class="stat-value text-success mono-lite" id="count-completed">0</div>
-                <div class="stat-desc">可回监控中心查看复盘</div>
+                <div class="stat-desc">可回监控中心查看结果</div>
             </div>
             <div class="stat bg-base-100 rounded-box shadow border border-base-300/60">
                 <div class="stat-title">失败</div>
@@ -82,6 +82,11 @@
                             <option value="processing">处理中</option>
                             <option value="completed">已完成</option>
                             <option value="failed">失败</option>
+                        </select>
+                        <select id="job-type-filter" class="select select-bordered select-sm">
+                            <option value="">全部分类</option>
+                            <option value="customer_analysis">用户</option>
+                            <option value="session_recap">房间</option>
                         </select>
                         <button class="btn btn-primary btn-sm" onclick="loadAiWorkJobs(1)">刷新</button>
                     </div>
@@ -123,6 +128,27 @@
             return '<span class="badge badge-warning">排队中</span>';
         }
 
+        function getJobTypeBadge(job) {
+            const jobType = String(job?.jobType || '').toLowerCase();
+            if (jobType === 'customer_analysis') return '<span class="badge badge-secondary badge-outline">用户</span>';
+            if (jobType === 'session_recap') return '<span class="badge badge-accent badge-outline">房间</span>';
+            return '<span class="badge badge-ghost badge-outline">其他</span>';
+        }
+
+        function buildJobSubject(job) {
+            const isCustomerAnalysis = String(job?.jobType || '').toLowerCase() === 'customer_analysis';
+            if (isCustomerAnalysis) {
+                return {
+                    main: job.targetNickname || job.targetUserId || '未命名用户',
+                    sub: `${job.targetUserId || '-'}${job.roomId ? ` · 房间 ${job.roomId}` : ''}`
+                };
+            }
+            return {
+                main: job.roomId || '-',
+                sub: `场次 ${job.sessionId || '-'}`
+            };
+        }
+
         function renderCounts(counts = {}) {
             document.getElementById('count-queued').textContent = Number(counts.queued || 0).toLocaleString();
             document.getElementById('count-processing').textContent = Number(counts.processing || 0).toLocaleString();
@@ -132,21 +158,29 @@
 
         function buildJobCard(job) {
             const progress = Math.max(0, Math.min(100, Number(job.progressPercent || 0)));
+            const isCustomerAnalysis = String(job?.jobType || '').toLowerCase() === 'customer_analysis';
+            const subject = buildJobSubject(job);
             const summaryText = job.status === 'failed'
                 ? (job.errorMessage || '处理失败，请稍后重试')
-                : (job.summary || (job.status === 'completed' ? '结果已生成，可回监控中心查看完整 AI直播复盘。' : 'AI 正在后台处理中，完成后会主动通知。'));
+                : (job.summary || (job.status === 'completed'
+                    ? (isCustomerAnalysis ? '结果已生成，可回监控中心查看完整 AI客户分析。' : '结果已生成，可回监控中心查看完整 AI直播复盘。')
+                    : 'AI 正在后台处理中，完成后会主动通知。'));
             const actionText = job.status === 'completed'
-                ? '回监控中心查看'
+                ? (isCustomerAnalysis ? '查看客户分析' : '查看直播复盘')
                 : job.status === 'failed'
                     ? '回监控中心重试'
                     : '查看监控中心';
+            const actionUrl = String(job.actionUrl || '/monitor.html');
             return `
                 <div class="card bg-base-100 border border-base-300 shadow ai-work-card">
                     <div class="card-body gap-4">
                         <div class="flex items-start justify-between gap-3">
                             <div class="min-w-0">
-                                <div class="text-lg font-bold leading-7 break-words">${escapeHtml(job.title || 'AI 工作任务')}</div>
-                                <div class="text-xs text-base-content/55 mt-1">房间 ${escapeHtml(job.roomId || '-')} · 场次 ${escapeHtml(job.sessionId || '-')}</div>
+                                <div class="flex flex-wrap items-center gap-2">
+                                    ${getJobTypeBadge(job)}
+                                    <div class="text-lg font-bold leading-7 break-words">${escapeHtml(job.title || 'AI 工作任务')}</div>
+                                </div>
+                                <div class="text-xs text-base-content/55 mt-1">${escapeHtml(subject.main)} · ${escapeHtml(subject.sub)}</div>
                             </div>
                             ${getStatusBadge(job)}
                         </div>
@@ -164,9 +198,9 @@
                             <span class="badge badge-ghost">创建 ${escapeHtml(formatDateTime(job.createdAt))}</span>
                             <span class="badge badge-ghost">完成 ${escapeHtml(formatDateTime(job.finishedAt))}</span>
                         </div>
-                        <div class="card-actions justify-between items-center">
+                        <div class="card-actions justify-between items-center gap-3">
                             <div class="text-xs text-base-content/55">通知状态：${job.notificationSent ? '已发送' : '待发送/未完成'}</div>
-                            <button class="btn btn-outline btn-sm" onclick="window.location.href='/monitor.html'">${actionText}</button>
+                            <button class="btn btn-outline btn-sm" onclick="window.location.href='${escapeHtml(actionUrl)}'">${actionText}</button>
                         </div>
                     </div>
                 </div>
@@ -192,8 +226,10 @@
         async function loadAiWorkJobs(page = 1) {
             aiWorkPage = page;
             const status = document.getElementById('job-status-filter')?.value || '';
+            const jobType = document.getElementById('job-type-filter')?.value || '';
             const params = new URLSearchParams({ page: String(page), limit: '20' });
             if (status) params.set('status', status);
+            if (jobType) params.set('jobType', jobType);
             const list = document.getElementById('ai-work-job-list');
             if (list) list.innerHTML = '<div class="rounded-box bg-base-200 px-5 py-8 text-sm text-base-content/60 xl:col-span-2">正在加载任务...</div>';
 
@@ -233,6 +269,7 @@
             if (!sessionOk) return;
             Auth.updateNavbar();
             document.getElementById('job-status-filter')?.addEventListener('change', () => loadAiWorkJobs(1));
+            document.getElementById('job-type-filter')?.addEventListener('change', () => loadAiWorkJobs(1));
             await loadAiWorkJobs(1);
             startAiWorkPolling();
         });
