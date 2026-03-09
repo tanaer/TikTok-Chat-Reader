@@ -52,7 +52,19 @@ function localizeCustomerAnalysisText(value) {
         .replace(/\btrue\b/gi, '是')
         .replace(/\bfalse\b/gi, '否');
 
+    output = convertRankFractionToTopPercent(output);
+
     return output;
+}
+
+function convertRankFractionToTopPercent(text) {
+    return String(text || '').replace(/排名\s*([0-9][0-9,]*)\s*\/\s*([0-9][0-9,]*)/g, (_match, rankText, totalText) => {
+        const rank = Number(String(rankText || '').replace(/,/g, ''));
+        const total = Number(String(totalText || '').replace(/,/g, ''));
+        if (!rank || !total || total <= 0) return _match;
+        const topPercent = Math.max(1, Math.min(100, Math.ceil((rank / total) * 100)));
+        return `位于前${topPercent}%`;
+    });
 }
 
 function stripMarkdownCodeFence(text) {

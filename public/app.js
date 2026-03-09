@@ -17,7 +17,7 @@ var sessionAiJobPollTarget = null;
 var sessionRecapExporting = false;
 var roomCustomerAnalysisJobPollTimer = null;
 var currentRoomCustomerAnalysisJobId = 0;
-var currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '' };
+var currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '', hasAnalysisResult: false };
 const DEFAULT_SESSION_RECAP_POINTS = 20;
 const DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS = 3;
 const SESSION_RECAP_LOADING_TIPS = [
@@ -165,7 +165,7 @@ $(document).ready(async () => {
         if (roomCustomerAnalysisModal) {
             roomCustomerAnalysisModal.addEventListener('close', () => {
                 clearRoomCustomerAnalysisJobPolling();
-                currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '' };
+                currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '', hasAnalysisResult: false };
             });
         }
         // Show export button for admins or users with export feature
@@ -2229,16 +2229,18 @@ function renderRoomCustomerAnalysisResult(resultText, analysisPayload = null) {
 function setRoomCustomerAnalysisButtonsPending(pending, isProcessing = false) {
     const runBtn = document.getElementById('runRoomCustomerAnalysisBtn');
     const rerunBtn = document.getElementById('rerunRoomCustomerAnalysisBtn');
+    const hasAnalysisResult = Boolean(currentRoomCustomerAnalysisState?.hasAnalysisResult);
+    const idleLabel = hasAnalysisResult ? '重新分析' : '分析';
     if (runBtn) {
         runBtn.disabled = Boolean(pending);
         runBtn.classList.toggle('loading', Boolean(pending) && Boolean(isProcessing));
         runBtn.innerHTML = pending
             ? (isProcessing ? '后台分析中...' : '处理中...')
-            : `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>分析`;
+            : `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>${idleLabel}`;
     }
     if (rerunBtn) {
-        rerunBtn.disabled = Boolean(pending);
-        rerunBtn.textContent = pending ? '请稍候' : '重新分析';
+        rerunBtn.disabled = true;
+        rerunBtn.classList.add('hidden');
     }
 }
 
@@ -2309,6 +2311,7 @@ async function loadRoomCustomerAnalysis(roomId, userId) {
     }
 
     clearRoomCustomerAnalysisJobPolling();
+    currentRoomCustomerAnalysisState.hasAnalysisResult = Boolean(data.analyzedAt && (data.analysis || data.result));
     setRoomCustomerAnalysisButtonsPending(false);
     renderRoomCustomerAnalysisResult(data.result || '点击分析按钮开始生成客户分析...', data.analysis || null);
 
@@ -2382,7 +2385,8 @@ async function openRoomCustomerAnalysisModal(roomId, userId, nickname = '', uniq
         roomId: safeRoomId,
         userId: safeUserId,
         nickname: String(nickname || '').trim(),
-        uniqueId: String(uniqueId || '').trim()
+        uniqueId: String(uniqueId || '').trim(),
+        hasAnalysisResult: false
     };
 
     const identityEl = document.getElementById('roomCustomerAnalysisIdentity');
@@ -2400,23 +2404,25 @@ async function openRoomCustomerAnalysisModal(roomId, userId, nickname = '', uniq
     }
 
     document.getElementById('roomCustomerAnalysisModal')?.showModal();
+    setRoomCustomerAnalysisButtonsPending(false);
     await loadRoomCustomerAnalysis(safeRoomId, safeUserId);
 }
 
 function closeRoomCustomerAnalysisModal() {
     clearRoomCustomerAnalysisJobPolling();
-    currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '' };
+    currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '', hasAnalysisResult: false };
     const modal = document.getElementById('roomCustomerAnalysisModal');
     if (modal?.open) modal.close();
 }
 
-async function runRoomCustomerAnalysis(force = false) {
+async function runRoomCustomerAnalysis(force = null) {
     const roomId = String(currentRoomCustomerAnalysisState.roomId || '').trim();
     const userId = String(currentRoomCustomerAnalysisState.userId || '').trim();
     if (!roomId || !userId) return;
 
+    const resolvedForce = typeof force === 'boolean' ? force : Boolean(currentRoomCustomerAnalysisState.hasAnalysisResult);
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
-    if (force && !isAdmin) {
+    if (resolvedForce && !isAdmin) {
         const confirmed = window.confirm(`重新分析将重新消耗 ${DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS} AI点，是否继续？`);
         if (!confirmed) return;
     }
@@ -2434,7 +2440,7 @@ async function runRoomCustomerAnalysis(force = false) {
     try {
         const res = await Auth.apiFetch(`/api/rooms/${encodeURIComponent(roomId)}/customer-analysis`, {
             method: 'POST',
-            body: JSON.stringify({ userId, force })
+            body: JSON.stringify({ userId, force: resolvedForce })
         });
         const data = await res.json().catch(() => ({}));
         if (!res.ok) {
@@ -2451,12 +2457,14 @@ async function runRoomCustomerAnalysis(force = false) {
 
         clearRoomCustomerAnalysisJobPolling();
         if (data.skipped) {
+            currentRoomCustomerAnalysisState.hasAnalysisResult = false;
             renderRoomCustomerAnalysisResult(data.result, null);
             if (statusEl) statusEl.textContent = `(语料 ${Number(data.chatCount || 0)} 条)`;
             setRoomCustomerAnalysisButtonsPending(false);
             return;
         }
 
+        currentRoomCustomerAnalysisState.hasAnalysisResult = Boolean(data.analysis || data.result);
         renderRoomCustomerAnalysisResult(data.result, data.analysis || null);
         const sourceMap = { member_cache: '当前账号缓存', api: '实时分析' };
         if (statusEl) statusEl.textContent = `(${sourceMap[data.source] || (data.cached ? '缓存' : '实时分析')})`;
