@@ -11,7 +11,9 @@ const CUSTOMER_ANALYSIS_SYSTEM_GUARDRAILS = [
     '如果引用模型结果，必须直接围绕模型评分、模型分层和系统说明写结论，不要直接抄英文键名。',
     '输出中不要出现 platform_lrfm、room_lrfm、abc_current_room、clv_current_room_30d、otherRoomGrowthFlag、currentRoomValueShare30d 这类英文键名。',
     '如果引用布尔信号，统一写成中文业务描述和“是/否”，不要输出 true/false。',
-    '结果要适合专业运营页面分区展示：数据依据优先拆成模型判断依据、价值贡献依据、风险趋势依据、互动语料观察四组，不要把所有证据堆成一个列表。',
+    '结果要适合前台“客户价值深度挖掘”展示：优先给直接结论、重点结论、下一步动作、主播承接话术、注意事项，少写长篇依据说明。',
+    '如需引用依据，只保留最关键的 1-2 条事实，并且必须说人话，不要把 LRFM、ABC、贡献占比逐项铺成长报告。',
+    '涉及 currentRoomValueShare30d / otherRoomsValueShare30d 时，必须明确写成“该客户近30天总贡献里，投向本房/其他房间的占比”，避免歧义。',
     '只能输出合法 JSON，不要输出 Markdown、代码块或额外说明。'
 ].join('\n');
 
@@ -20,8 +22,8 @@ const CUSTOMER_ANALYSIS_TEXT_REPLACEMENTS = [
     ['room_lrfm', '本房LRFM'],
     ['clv_current_room_30d', '近30天本房客户价值'],
     ['abc_current_room', '本房ABC分层'],
-    ['currentRoomValueShare30d', '近30天本房贡献占比'],
-    ['otherRoomsValueShare30d', '近30天其他房间贡献占比'],
+    ['currentRoomValueShare30d', '近30天该客户总贡献里投向本房的占比'],
+    ['otherRoomsValueShare30d', '近30天该客户总贡献里投向其他房间的占比'],
     ['giftTrend7dVsPrev7d', '近7天礼物趋势（较前7天）'],
     ['watchTrend7dVsPrev7d', '近7天观看趋势（较前7天）'],
     ['danmuTrend7dVsPrev7d', '近7天弹幕趋势（较前7天）'],
@@ -98,8 +100,10 @@ function replaceValueDisplay(text) {
     let output = String(text || '').trim();
     if (!output) return '';
 
-    output = replaceLabelNumber(output, '近30天本房贡献占比', numeric => `${'近30天本房贡献占比'}约${formatPercentNumber(numeric)}`);
-    output = replaceLabelNumber(output, '近30天其他房间贡献占比', numeric => `${'近30天其他房间贡献占比'}约${formatPercentNumber(numeric)}`);
+    output = replaceLabelNumber(output, '近30天本房贡献占比', numeric => `近30天该客户总贡献里投向本房的占比约${formatPercentNumber(numeric)}`);
+    output = replaceLabelNumber(output, '近30天该客户总贡献里投向本房的占比', numeric => `近30天该客户总贡献里投向本房的占比约${formatPercentNumber(numeric)}`);
+    output = replaceLabelNumber(output, '近30天其他房间贡献占比', numeric => `近30天该客户总贡献里投向其他房间的占比约${formatPercentNumber(numeric)}`);
+    output = replaceLabelNumber(output, '近30天该客户总贡献里投向其他房间的占比', numeric => `近30天该客户总贡献里投向其他房间的占比约${formatPercentNumber(numeric)}`);
 
     output = replaceLabelNumber(output, '近7天礼物趋势（较前7天）', numeric => {
         if (Math.abs(numeric) < 0.005) return '近7天礼物趋势（较前7天）基本持平';
@@ -282,7 +286,7 @@ function formatCustomerAnalysisResult(analysis = {}) {
     const sections = [];
 
     if (analysis.summary) {
-        sections.push(`客户总结\n${analysis.summary}`);
+        sections.push(`直接结论\n${analysis.summary}`);
     }
 
     const overviewRows = [
@@ -297,37 +301,22 @@ function formatCustomerAnalysisResult(analysis = {}) {
     }
 
     if (analysis.keySignals?.length) {
-        sections.push(`关键信号\n${analysis.keySignals.map(item => `- ${item}`).join('\n')}`);
-    }
-    if (analysis.modelEvidence?.length) {
-        sections.push(`模型判断依据\n${analysis.modelEvidence.map(item => `- ${item}`).join('\n')}`);
-    }
-    if (analysis.contributionEvidence?.length) {
-        sections.push(`价值贡献依据\n${analysis.contributionEvidence.map(item => `- ${item}`).join('\n')}`);
-    }
-    if (analysis.riskEvidence?.length) {
-        sections.push(`风险趋势依据\n${analysis.riskEvidence.map(item => `- ${item}`).join('\n')}`);
-    }
-    if (analysis.interactionEvidence?.length) {
-        sections.push(`互动语料观察\n${analysis.interactionEvidence.map(item => `- ${item}`).join('\n')}`);
-    }
-    if (analysis.evidence?.length) {
-        sections.push(`补充事实依据\n${analysis.evidence.map(item => `- ${item}`).join('\n')}`);
+        sections.push(`重点结论\n${analysis.keySignals.map(item => `- ${item}`).join('\n')}`);
     }
     if (analysis.recommendedActions?.length) {
-        sections.push(`建议动作\n${analysis.recommendedActions.map(item => `- ${item}`).join('\n')}`);
+        sections.push(`下一步动作\n${analysis.recommendedActions.map(item => `- ${item}`).join('\n')}`);
     }
     if (analysis.outreachScript?.length) {
-        sections.push(`建议话术\n${analysis.outreachScript.map(item => `- ${item}`).join('\n')}`);
+        sections.push(`主播承接话术\n${analysis.outreachScript.map(item => `- ${item}`).join('\n')}`);
     }
     if (analysis.forbiddenActions?.length) {
-        sections.push(`不建议动作\n${analysis.forbiddenActions.map(item => `- ${item}`).join('\n')}`);
+        sections.push(`注意事项\n${analysis.forbiddenActions.map(item => `- ${item}`).join('\n')}`);
     }
     if (analysis.tags?.length) {
-        sections.push(`标签\n${analysis.tags.join(' ')}`);
+        sections.push(`客户标签\n${analysis.tags.join(' ')}`);
     }
 
-    return sections.join('\n\n').trim() || '未生成有效的客户分析结果';
+    return sections.join('\n\n').trim() || '未生成有效的客户价值深度挖掘结果';
 }
 
 async function prepareCustomerAnalysis({ userId, roomId = null, roomFilter = null, now = new Date() } = {}) {

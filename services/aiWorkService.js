@@ -45,7 +45,7 @@ function buildAiWorkTitle(jobType, { roomId = '', sessionId = '', targetUserId =
         const userLabel = targetNickname
             ? `${targetNickname} (${targetUserId || '-'})`
             : (targetUserId || '-');
-        return `AI客户分析 · 用户 ${userLabel}${roomId ? ` · 房间 ${roomId}` : ''}`;
+        return `客户价值深度挖掘 · 用户 ${userLabel}${roomId ? ` · 房间 ${roomId}` : ''}`;
     }
     return `AI工作 · ${roomId || '-'} · ${sessionId || '-'}`;
 }

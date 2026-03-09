@@ -6,6 +6,11 @@
 - All future git commit messages must be written in Chinese.
 - Prefer Conventional Commits, but keep the type/scope structure readable with a Chinese summary and body.
 
+### Instruction Hygiene
+- 不要把用户给 Codex 的操作要求、提示词、审阅意见、协作规则原样写进业务代码、页面文案、注释、配置、测试数据或日志文案，除非用户明确要求这些文字本身成为产品内容的一部分。
+- 区分“实现要求”和“交付内容”：前者用于指导实现，后者才进入程序。
+- 需要长期保留的协作偏好，优先记录到 `AGENTS.md`、相关文档或记忆文件，不要混入应用产物。
+
 ### Security First
 - Treat every API response as public unless the route is explicitly admin-only.
 - For user-facing APIs, use explicit response whitelists. Do not return raw database rows or raw `metadata` blobs directly.
