@@ -2402,7 +2402,22 @@ async function loadPromptTemplates(force = false) {
                         <span class="badge badge-ghost">${item.updatedAt ? `更新于 ${escapeHtml(new Date(item.updatedAt).toLocaleString('zh-CN'))}` : '使用内置默认值'}</span>
                     </div>
                 </div>
-                <div class="text-xs text-base-content/50 mb-3">可用变量：${(item.variables || []).map(v => `<code>${escapeHtml(`{{${v}}}`)}</code>`).join('、') || '无'}</div>
+                <div class="rounded-box border border-base-300 bg-base-200/60 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
+                    <div class="font-semibold text-base-content/80 mb-2">可用变量</div>
+                    <div class="space-y-2">
+                        ${(Array.isArray(item.variableSourceMappings) ? item.variableSourceMappings : []).map(mapping => `
+                            <div>
+                                <code>${escapeHtml(`{{${mapping.variable}}}`)}</code>
+                                ${mapping.isStructuredSource ? `
+                                    <span class="text-base-content/80"> · ${escapeHtml(mapping.sourceTitle || mapping.sourceKey || '结构化数据源')}</span>
+                                    ${mapping.sourceDescription ? `<span class="text-base-content/55"> · ${escapeHtml(mapping.sourceDescription)}</span>` : ''}
+                                ` : `
+                                    <span class="text-base-content/55"> · 普通模板变量</span>
+                                `}
+                            </div>
+                        `).join('') || '<div>无</div>'}
+                    </div>
+                </div>
                 ${structuredSources.length ? `
                     <div class="rounded-box border border-base-300 bg-base-200/70 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
                         <div class="flex flex-wrap items-center justify-between gap-3">

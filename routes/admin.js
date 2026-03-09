@@ -1408,7 +1408,18 @@ router.get('/prompt-templates', async (req, res) => {
         res.json({
             templates: templates.map(item => ({
                 ...item,
-                structuredSources: sourceMap.get(item.key) || []
+                structuredSources: sourceMap.get(item.key) || [],
+                variableSourceMappings: (item.variables || []).map(variable => {
+                    const matchedSource = sources.find(source => source.token === variable && source.scene === item.key);
+                    return {
+                        variable,
+                        sourceKey: matchedSource?.key || '',
+                        sourceTitle: matchedSource?.title || '',
+                        sourceDescription: matchedSource?.description || '',
+                        sceneLabel: matchedSource?.sceneLabel || '',
+                        isStructuredSource: Boolean(matchedSource)
+                    };
+                })
             }))
         });
     } catch (err) {

@@ -3,12 +3,15 @@ const { manager } = require('../manager');
 const { buildCustomerContext } = require('./aiContextService');
 
 const AI_STRUCTURED_DATA_SOURCE_VERSION = 'ai-structured-data-source.v1';
+const SESSION_RECAP_COMMENT_FILTER_SCENE = 'session_recap_comment_filter';
 const SESSION_RECAP_PROMPT_SCENE = 'session_recap_review';
 const CUSTOMER_ANALYSIS_PROMPT_SCENE = 'customer_analysis_review';
 const SESSION_RECAP_BENCHMARK_BASELINE_HOURS = 6;
 const SESSION_RECAP_BENCHMARK_BASELINE_GIFT_VALUE = 64000;
+const SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD = 15;
 
 const SCENE_LABELS = Object.freeze({
+    [SESSION_RECAP_COMMENT_FILTER_SCENE]: 'AI直播复盘 · 高频弹幕筛选',
     [SESSION_RECAP_PROMPT_SCENE]: 'AI直播复盘 · 主分析流程',
     [CUSTOMER_ANALYSIS_PROMPT_SCENE]: 'AI客户分析 · 主分析流程'
 });
@@ -98,6 +101,24 @@ function normalizeValuableComments(value, limit = 12) {
         })
         .filter(Boolean)
         .slice(0, limit);
+}
+
+function normalizeCommentFilterCandidates(commentCandidates = [], limit = 50) {
+    const source = Array.isArray(commentCandidates) ? commentCandidates : [];
+    return source
+        .map(item => ({
+            text: safeTrimString(item?.text || item?.comment || '', 80),
+            count: Math.max(0, Number(item?.count || 0))
+        }))
+        .filter(item => item.text && item.count > 0)
+        .slice(0, Math.max(1, Number(limit || 50)));
+}
+
+function buildSessionRecapCommentFilterCandidates(recap = {}) {
+    const normalizedCandidates = normalizeCommentFilterCandidates(recap?.commentSignals?.topComments || [], 100);
+    return normalizedCandidates
+        .filter(item => item.count <= SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD)
+        .slice(0, 50);
 }
 
 function serializeValueCustomer(item = {}) {
@@ -350,6 +371,32 @@ async function loadCustomerContextBundle(context = {}, runtime = {}) {
 
 const AI_STRUCTURED_DATA_SOURCES = Object.freeze([
     {
+        key: 'session_recap.comment_filter_candidates_json',
+        token: 'topCommentCandidatesJson',
+        scene: SESSION_RECAP_COMMENT_FILTER_SCENE,
+        sceneLabel: SCENE_LABELS[SESSION_RECAP_COMMENT_FILTER_SCENE],
+        category: '直播复盘',
+        title: '高频弹幕候选语料',
+        description: 'AI直播复盘·高频弹幕筛选 实际使用的候选弹幕语料。已自动剔除重复超过 15 次的高频自动弹幕，只保留待交给 AI 再筛选的 Top50 候选。',
+        inputSchema: {
+            type: 'object',
+            required: ['roomId'],
+            properties: {
+                roomId: { type: 'string', label: '房间ID' },
+                sessionId: { type: 'string', label: '场次ID', description: '留空或传 live 表示当前直播场次' }
+            }
+        },
+        defaultTestInput: {
+            roomId: '',
+            sessionId: 'live'
+        },
+        autoAppendWhenMissing: false,
+        resolver: async (input = {}, runtime = {}) => {
+            const bundle = await loadSessionRecapBundle(input, runtime);
+            return buildSessionRecapCommentFilterCandidates(bundle.recap);
+        }
+    },
+    {
         key: 'session_recap.prompt_payload_json',
         token: 'sessionDataJson',
         scene: SESSION_RECAP_PROMPT_SCENE,
@@ -550,9 +597,11 @@ async function testAiStructuredDataSource(key, input = {}, runtime = {}) {
 
 module.exports = {
     AI_STRUCTURED_DATA_SOURCE_VERSION,
+    SESSION_RECAP_COMMENT_FILTER_SCENE,
     SESSION_RECAP_PROMPT_SCENE,
     CUSTOMER_ANALYSIS_PROMPT_SCENE,
     SCENE_LABELS,
+    buildSessionRecapCommentFilterCandidates,
     listAiStructuredDataSources,
     getAiStructuredDataSourceDefinition,
     resolveAiStructuredDataSource,
