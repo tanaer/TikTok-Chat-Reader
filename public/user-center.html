@@ -8,7 +8,7 @@
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
     <script src="https://cdn.tailwindcss.com"></script>
     <link rel="stylesheet" href="/shared-shell.css">
-    <script src="/js/auth.js?v=20260308i"></script>
+    <script src="/js/auth.js?v=20260309a"></script>
     <script src="/js/email-verification-flow.js"></script>
     <script src="/vendor/qrious.min.js"></script>
     <style>
@@ -485,139 +485,6 @@
             }
         }
 
-        .notification-entry-btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-        }
-
-        .notification-hero {
-            border-radius: 22px;
-            border: 1px solid rgba(96, 165, 250, 0.28);
-            background: linear-gradient(135deg, rgba(29, 78, 216, 0.18), rgba(15, 23, 42, 0.96));
-            box-shadow: 0 18px 42px rgba(0, 0, 0, 0.24);
-        }
-
-        .notification-hero .card-body {
-            gap: 1rem;
-        }
-
-        .notification-hero-head {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 1rem;
-        }
-
-        .notification-hero-kicker {
-            font-size: 0.72rem;
-            letter-spacing: 0.18em;
-            text-transform: uppercase;
-            color: rgba(191, 219, 254, 0.78);
-        }
-
-        .notification-hero-title {
-            font-size: 1.2rem;
-            font-weight: 700;
-            color: #f8fafc;
-        }
-
-        .notification-hero-subtitle {
-            color: rgba(226, 232, 240, 0.7);
-            font-size: 0.92rem;
-        }
-
-        .notification-hero-list,
-        .notification-list {
-            display: grid;
-            gap: 0.85rem;
-        }
-
-        .notification-card {
-            display: flex;
-            align-items: flex-start;
-            justify-content: space-between;
-            gap: 0.9rem;
-            padding: 0.95rem 1rem;
-            border-radius: 18px;
-            border: 1px solid rgba(148, 163, 184, 0.14);
-            background: rgba(8, 15, 30, 0.82);
-            cursor: pointer;
-        }
-
-        .notification-card.is-unread {
-            border-color: rgba(96, 165, 250, 0.38);
-            box-shadow: inset 0 0 0 1px rgba(96, 165, 250, 0.08);
-        }
-
-        .notification-card-main {
-            min-width: 0;
-            flex: 1;
-        }
-
-        .notification-card-title {
-            display: flex;
-            align-items: center;
-            gap: 0.6rem;
-            margin-bottom: 0.35rem;
-            color: #f8fafc;
-            font-weight: 700;
-        }
-
-        .notification-dot {
-            width: 0.6rem;
-            height: 0.6rem;
-            border-radius: 999px;
-            background: #f87171;
-            box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.55);
-            animation: notificationPulse 1.8s ease-in-out infinite;
-        }
-
-        .notification-card-meta {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 0.55rem;
-            align-items: center;
-            color: rgba(226, 232, 240, 0.56);
-            font-size: 0.78rem;
-        }
-
-        .notification-card-content {
-            color: rgba(226, 232, 240, 0.78);
-            line-height: 1.65;
-            word-break: break-word;
-        }
-
-        .notification-level-badge.badge-success {
-            background: rgba(34, 197, 94, 0.18);
-            color: #bbf7d0;
-            border-color: rgba(34, 197, 94, 0.28);
-        }
-
-        .notification-level-badge.badge-info {
-            background: rgba(59, 130, 246, 0.18);
-            color: #bfdbfe;
-            border-color: rgba(59, 130, 246, 0.28);
-        }
-
-        .notification-level-badge.badge-warning {
-            background: rgba(234, 179, 8, 0.18);
-            color: #fde68a;
-            border-color: rgba(234, 179, 8, 0.28);
-        }
-
-        .notification-level-badge.badge-error {
-            background: rgba(239, 68, 68, 0.18);
-            color: #fecaca;
-            border-color: rgba(239, 68, 68, 0.28);
-        }
-
-        .notification-empty {
-            padding: 2.4rem 1rem;
-            text-align: center;
-            color: rgba(226, 232, 240, 0.5);
-        }
-
         .notification-toast-wrap {
             position: fixed;
             top: 1rem;
@@ -640,24 +507,6 @@
         .notification-toast-title {
             font-weight: 700;
             margin-bottom: 0.25rem;
-        }
-
-        .notification-badge-inline.hidden {
-            display: none !important;
-        }
-
-        @keyframes notificationPulse {
-            0% {
-                box-shadow: 0 0 0 0 rgba(248, 113, 113, 0.55);
-            }
-
-            70% {
-                box-shadow: 0 0 0 8px rgba(248, 113, 113, 0);
-            }
-
-            100% {
-                box-shadow: 0 0 0 0 rgba(248, 113, 113, 0);
-            }
         }
 
         @media (max-width: 640px) {
@@ -1342,7 +1191,14 @@
         }
 
         .plan-compare-row {
+            position: relative;
             display: grid;
+            z-index: 0;
+        }
+
+        .plan-compare-row:hover,
+        .plan-compare-row:focus-within {
+            z-index: 6;
         }
 
         .plan-compare-row+.plan-compare-row {
@@ -1388,6 +1244,112 @@
             font-size: 0.82rem;
             line-height: 1.5;
             color: var(--fantasy-muted);
+        }
+
+        .plan-compare-heading-line {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .plan-feature-info {
+            position: relative;
+            display: inline-flex;
+            align-items: center;
+        }
+
+        .plan-feature-info-trigger {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            border-radius: 999px;
+            border: 1px solid rgba(125, 211, 252, 0.45);
+            background: rgba(56, 189, 248, 0.14);
+            color: #7dd3fc;
+            font-size: 0.78rem;
+            font-weight: 800;
+            line-height: 1;
+            cursor: help;
+            box-shadow: 0 4px 12px rgba(14, 116, 144, 0.18);
+            transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+        }
+
+        .plan-feature-info:hover .plan-feature-info-trigger {
+            transform: translateY(-1px);
+            background: rgba(56, 189, 248, 0.22);
+            border-color: rgba(125, 211, 252, 0.75);
+        }
+
+        .plan-feature-preview {
+            position: absolute;
+            top: calc(100% + 12px);
+            left: -8px;
+            width: min(360px, calc(100vw - 56px));
+            padding: 12px;
+            border-radius: 18px;
+            border: 1px solid rgba(148, 163, 184, 0.28);
+            background: rgba(6, 10, 18, 0.96);
+            box-shadow: 0 20px 48px rgba(2, 8, 23, 0.42);
+            opacity: 0;
+            visibility: hidden;
+            transform: translateY(8px);
+            transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s ease;
+            pointer-events: none;
+            z-index: 12;
+            backdrop-filter: blur(10px);
+        }
+
+        .plan-feature-info:hover .plan-feature-preview,
+        .plan-feature-info:focus-within .plan-feature-preview {
+            opacity: 1;
+            visibility: visible;
+            transform: translateY(0);
+        }
+
+        .plan-feature-preview::before {
+            content: '';
+            position: absolute;
+            top: -8px;
+            left: 14px;
+            width: 14px;
+            height: 14px;
+            transform: rotate(45deg);
+            border-top: 1px solid rgba(148, 163, 184, 0.28);
+            border-left: 1px solid rgba(148, 163, 184, 0.28);
+            background: rgba(6, 10, 18, 0.96);
+        }
+
+        .plan-feature-preview-title {
+            font-size: 0.78rem;
+            font-weight: 700;
+            letter-spacing: 0.06em;
+            color: rgba(226, 232, 240, 0.92);
+            text-transform: uppercase;
+            margin-bottom: 8px;
+        }
+
+        .plan-feature-preview-frame {
+            border-radius: 14px;
+            overflow: hidden;
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            background: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(226, 232, 240, 0.98));
+        }
+
+        .plan-feature-preview-caption {
+            margin-top: 8px;
+            font-size: 0.76rem;
+            line-height: 1.5;
+            color: rgba(148, 163, 184, 0.92);
+        }
+
+        @media (max-width: 768px) {
+            .plan-feature-preview {
+                left: 0;
+                width: min(320px, calc(100vw - 40px));
+            }
         }
 
         .plan-head-card {
@@ -1580,7 +1542,7 @@
     </style>
 </head>
 
-<body class="fantasy-body min-h-screen">
+<body class="fantasy-body min-h-screen" data-shell-messages="true" data-shell-message-poll="self">
     <!-- Navbar -->
     <div class="navbar app-shell-nav sticky top-0 z-50 flex-wrap gap-2 px-3 py-2">
         <div class="flex-1 min-w-0 flex flex-wrap items-center gap-2">
@@ -1588,12 +1550,6 @@
             <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1 ml-0 sm:ml-2"></ul>
         </div>
         <div class="w-full md:w-auto flex flex-wrap items-center justify-start md:justify-end gap-2">
-            <button id="message-menu-btn" type="button" class="btn btn-ghost btn-sm gap-2 app-shell-nav-action"
-                onclick="openMessagesModal()">
-                消息
-                <span id="message-menu-badge"
-                    class="badge badge-error badge-sm notification-badge-inline hidden">0</span>
-            </button>
             <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap gap-1 px-0"></ul>
         </div>
     </div>
@@ -1886,24 +1842,6 @@
         </div>
     </dialog>
 
-    <dialog id="messageModal" class="modal">
-        <div class="modal-box max-w-3xl">
-            <div class="flex items-center justify-between gap-3 mb-4 flex-wrap">
-                <div>
-                    <h3 class="font-bold text-lg">消息</h3>
-                    <p id="message-modal-subtitle" class="text-sm text-base-content/55 mt-1">充值到账、人工确认等消息会显示在这里。</p>
-                </div>
-                <div class="flex items-center gap-2">
-                    <button id="message-read-all-btn" type="button" class="btn btn-primary btn-sm"
-                        onclick="markAllNotificationsRead()">全部已读</button>
-                    <button type="button" class="btn btn-ghost btn-sm"
-                        onclick="document.getElementById('messageModal').close()">关闭</button>
-                </div>
-            </div>
-            <div id="message-list" class="notification-list"></div>
-            <div id="message-empty" class="notification-empty hidden">暂无消息</div>
-        </div>
-    </dialog>
 
     <!-- Recharge modal -->
     <dialog id="rechargeModal" class="modal">
@@ -2003,9 +1941,7 @@
     <script>
         let currentTab = 'overview';
         let pendingPurchase = null;
-        let notificationsCache = [];
         let notificationUnreadCount = 0;
-        let notificationPage = 1;
         let notificationPollTimer = null;
         let latestNotificationIdSeen = 0;
         let notificationsInitialized = false;
@@ -2073,6 +2009,24 @@
             loadOverview();
             loadNotifications(1, { silent: true });
             startNotificationPolling();
+            const startupParams = new URLSearchParams(window.location.search || '');
+            const startupTab = startupParams.get('tab') || '';
+            const shouldOpenMessages = startupParams.get('openMessages') === '1';
+            if (startupTab) {
+                const validTabs = ['overview', 'orders', 'balance', 'subscription', 'settings'];
+                const targetTab = validTabs.includes(startupTab) ? startupTab : 'overview';
+                if (targetTab !== 'overview') {
+                    const tabEl = document.getElementById(`main-tab-${targetTab}`) || document.querySelector(`.tab[onclick*="${targetTab}"]`);
+                    if (tabEl) switchTab(targetTab, tabEl);
+                }
+            }
+            if (shouldOpenMessages) {
+                startupParams.delete('openMessages');
+                const nextQuery = startupParams.toString();
+                const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash || ''}`;
+                window.history.replaceState({}, '', nextUrl);
+                window.setTimeout(() => Auth.openShellMessagesModal(), 0);
+            }
             window.addEventListener('scroll', updateSubscriptionSideNav, { passive: true });
             window.addEventListener('resize', updateSubscriptionSideNav);
             document.getElementById('rechargeModal')?.addEventListener('close', () => resetRechargeSelection(true));
@@ -2148,20 +2102,6 @@
             }
         }
 
-        function getNotificationLevelMeta(level) {
-            if (level === 'success') return { badge: 'badge-success', label: '到账' };
-            if (level === 'warning') return { badge: 'badge-warning', label: '提醒' };
-            if (level === 'error') return { badge: 'badge-error', label: '异常' };
-            return { badge: 'badge-info', label: '通知' };
-        }
-
-        function formatNotificationTime(value) {
-            if (!value) return '-';
-            const date = new Date(value);
-            if (Number.isNaN(date.getTime())) return value;
-            return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
-        }
-
         function renderNotificationBadges() {
             const text = notificationUnreadCount > 99 ? '99+' : String(notificationUnreadCount);
             ['message-menu-badge'].forEach(id => {
@@ -2170,45 +2110,9 @@
                 el.textContent = text;
                 el.classList.toggle('hidden', notificationUnreadCount <= 0);
             });
-            const readAllBtn = document.getElementById('message-read-all-btn');
-            if (readAllBtn) readAllBtn.disabled = notificationUnreadCount <= 0;
-            const subtitle = document.getElementById('message-modal-subtitle');
-            if (subtitle) subtitle.textContent = notificationUnreadCount > 0
-                ? `当前有 ${notificationUnreadCount} 条未读通知，请及时处理。`
-                : '支付到账、人工确认、AI处理结果等消息会显示在这里。';
-        }
-
-        function buildNotificationCard(item, compact = false) {
-            const levelMeta = getNotificationLevelMeta(item.level);
-            const unreadDot = item.isRead ? '' : '<span class="notification-dot"></span>';
-            const orderMeta = item.relatedOrderNo ? `<span>订单号 ${escapeHtml(item.relatedOrderNo)}</span>` : '';
-            const actionBtn = item.isRead
-                ? ''
-                : `<button type="button" class="btn btn-ghost btn-xs" onclick="event.stopPropagation(); markNotificationRead(${Number(item.id)}, { silentReload: true });">标记已读</button>`;
-            return `
-            <div class="notification-card ${item.isRead ? '' : 'is-unread'}" onclick="handleNotificationClick(${Number(item.id)}, '${item.actionTab || 'overview'}', '${encodeURIComponent(item.actionUrl || '')}')">
-                <div class="notification-card-main">
-                    <div class="notification-card-title">${unreadDot}<span>${escapeHtml(item.title || '通知')}</span><span class="badge badge-sm notification-level-badge ${levelMeta.badge}">${levelMeta.label}</span></div>
-                    <div class="notification-card-content">${escapeHtml(item.content || '')}</div>
-                    <div class="notification-card-meta"><span>${formatNotificationTime(item.createdAt)}</span>${orderMeta}</div>
-                </div>
-                ${compact ? '' : actionBtn}
-            </div>
-        `;
-        }
-        function renderOverviewNotifications() { }
-
-        function renderNotificationsList() {
-            const list = document.getElementById('message-list');
-            const empty = document.getElementById('message-empty');
-            if (!list || !empty) return;
-            if (!notificationsCache.length) {
-                list.innerHTML = '';
-                empty.classList.remove('hidden');
-                return;
+            if (window.Auth && typeof Auth.setMessageBadgeCount === 'function') {
+                Auth.setMessageBadgeCount(notificationUnreadCount);
             }
-            empty.classList.add('hidden');
-            list.innerHTML = notificationsCache.map(item => buildNotificationCard(item, false)).join('');
         }
 
         function showUserCenterToast(title, content = '') {
@@ -2231,15 +2135,11 @@
                 const newestItem = data.notifications?.[0] || null;
                 const shouldToast = notificationsInitialized && !silent && newestId > latestNotificationIdSeen;
 
-                notificationPage = Number(data.pagination?.page || page || 1);
-                notificationsCache = Array.isArray(data.notifications) ? data.notifications : [];
                 notificationUnreadCount = Number(data.unreadCount || 0);
                 latestNotificationIdSeen = Math.max(latestNotificationIdSeen, newestId);
                 notificationsInitialized = true;
 
                 renderNotificationBadges();
-                renderOverviewNotifications();
-                renderNotificationsList();
 
                 if (shouldToast && newestItem) {
                     showUserCenterToast(newestItem.title || '你有新通知', newestItem.content || '');
@@ -2247,53 +2147,6 @@
             } catch (err) {
                 console.error('Load notifications error:', err);
             }
-        }
-
-        async function markNotificationRead(id, { silentReload = false } = {}) {
-            try {
-                const res = await Auth.apiFetch(`/api/user/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '操作失败');
-                await loadNotifications(notificationPage || 1, { silent: true });
-                if (!silentReload) showUserCenterToast('通知已读');
-            } catch (err) {
-                if (!silentReload) alert(err.message || '操作失败');
-            }
-        }
-
-        async function markAllNotificationsRead() {
-            try {
-                const res = await Auth.apiFetch('/api/user/notifications/read-all', { method: 'POST' });
-                const data = await res.json();
-                if (!res.ok) throw new Error(data.error || '操作失败');
-                await loadNotifications(1, { silent: true });
-                showUserCenterToast(data.message || '已全部标记为已读');
-            } catch (err) {
-                alert(err.message || '操作失败');
-            }
-        }
-
-        function openMessagesModal() {
-            document.getElementById('messageModal')?.showModal();
-            loadNotifications(1, { silent: true });
-        }
-
-        function handleNotificationClick(id, actionTab = 'overview', encodedActionUrl = '') {
-            if (id) markNotificationRead(id, { silentReload: true });
-            document.getElementById('messageModal')?.close();
-            const actionUrl = encodedActionUrl ? decodeURIComponent(encodedActionUrl) : '';
-            if (actionUrl) {
-                window.location.href = actionUrl;
-                return;
-            }
-            if (actionTab === 'ai_work') {
-                const tabEl = document.getElementById('main-tab-overview') || document.querySelector(`.tab[onclick*="overview"]`);
-                if ('overview' !== currentTab) switchTab('overview', tabEl);
-                return;
-            }
-            const target = ['overview', 'orders', 'balance', 'subscription', 'settings'].includes(actionTab) ? actionTab : 'overview';
-            const tabEl = document.getElementById(`main-tab-${target}`) || document.querySelector(`.tab[onclick*="${target}"]`);
-            if (target !== currentTab) switchTab(target, tabEl);
         }
 
         function startNotificationPolling() {
@@ -2765,6 +2618,7 @@
                 {
                     label: 'AI直播复盘',
                     hint: '单场 AI直播复盘与老板摘要',
+                    tooltip: true,
                     render: (item) => hasFlag(item.features, 'ai_live_recap', 'aiLiveRecap') ? '<strong>支持</strong>' : '<span class="opacity-50">未包含</span>'
                 },
                 {
@@ -2797,10 +2651,90 @@
                     </div>`).join('')}
             </div>`;
 
+            const aiRecapPreviewMarkup = `
+                <span class="plan-feature-info">
+                    <span class="plan-feature-info-trigger" tabindex="0" aria-label="查看 AI直播复盘功能示意">!</span>
+                    <span class="plan-feature-preview" role="tooltip">
+                        <div class="plan-feature-preview-title">AI直播复盘示意</div>
+                        <div class="plan-feature-preview-frame" aria-hidden="true">
+                            <svg viewBox="0 0 520 360" width="100%" height="100%" xmlns="http://www.w3.org/2000/svg">
+                                <defs>
+                                    <linearGradient id="previewBg" x1="0" y1="0" x2="0" y2="1">
+                                        <stop offset="0%" stop-color="#f8fafc"/>
+                                        <stop offset="100%" stop-color="#e5edf7"/>
+                                    </linearGradient>
+                                    <linearGradient id="panelSky" x1="0" y1="0" x2="1" y2="1">
+                                        <stop offset="0%" stop-color="#eff6ff"/>
+                                        <stop offset="100%" stop-color="#dbeafe"/>
+                                    </linearGradient>
+                                    <linearGradient id="panelMint" x1="0" y1="0" x2="1" y2="1">
+                                        <stop offset="0%" stop-color="#ecfdf5"/>
+                                        <stop offset="100%" stop-color="#d1fae5"/>
+                                    </linearGradient>
+                                    <linearGradient id="panelAmber" x1="0" y1="0" x2="1" y2="1">
+                                        <stop offset="0%" stop-color="#fffbeb"/>
+                                        <stop offset="100%" stop-color="#fde68a"/>
+                                    </linearGradient>
+                                    <linearGradient id="panelRose" x1="0" y1="0" x2="1" y2="1">
+                                        <stop offset="0%" stop-color="#fff1f2"/>
+                                        <stop offset="100%" stop-color="#fecdd3"/>
+                                    </linearGradient>
+                                </defs>
+                                <rect width="520" height="360" rx="20" fill="url(#previewBg)"/>
+                                <rect x="18" y="18" width="484" height="110" rx="18" fill="#ffffff"/>
+                                <rect x="30" y="30" width="220" height="86" rx="14" fill="url(#panelSky)"/>
+                                <polyline points="42,88 76,52 108,74 144,34 180,42 214,82 236,66" fill="none" stroke="#60a5fa" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                                <polyline points="42,64 76,70 108,78 144,44 180,54 214,58 236,92" fill="none" stroke="#f59e0b" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" opacity="0.88"/>
+                                <rect x="264" y="30" width="226" height="86" rx="14" fill="#f8fafc"/>
+                                <polygon points="378,46 432,66 412,108 344,108 324,66" fill="none" stroke="#818cf8" stroke-width="4" stroke-linejoin="round"/>
+                                <text x="316" y="145" font-size="14" font-weight="700" fill="#334155">关键词时间线</text>
+                                <rect x="392" y="136" width="78" height="22" rx="11" fill="#e2e8f0"/>
+                                <text x="413" y="151" font-size="11" font-weight="700" fill="#64748b">Top 3</text>
+                                <rect x="18" y="168" width="484" height="95" rx="18" fill="#ffffff"/>
+                                <rect x="30" y="183" width="145" height="66" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+                                <rect x="188" y="183" width="145" height="66" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+                                <rect x="346" y="183" width="145" height="66" rx="14" fill="#f8fafc" stroke="#e2e8f0"/>
+                                <text x="42" y="205" font-size="14" font-weight="700" fill="#334155">礼物高峰</text>
+                                <text x="200" y="205" font-size="14" font-weight="700" fill="#334155">互动高峰</text>
+                                <text x="358" y="205" font-size="14" font-weight="700" fill="#334155">流量峰值</text>
+                                <rect x="124" y="191" width="38" height="18" rx="9" fill="#e2e8f0"/>
+                                <rect x="282" y="191" width="32" height="18" rx="9" fill="#e2e8f0"/>
+                                <rect x="440" y="191" width="36" height="18" rx="9" fill="#e2e8f0"/>
+                                <rect x="18" y="276" width="152" height="66" rx="16" fill="url(#panelMint)"/>
+                                <rect x="184" y="276" width="152" height="66" rx="16" fill="url(#panelAmber)"/>
+                                <rect x="350" y="276" width="152" height="66" rx="16" fill="url(#panelSky)"/>
+                                <text x="30" y="298" font-size="13" font-weight="700" fill="#10b981">本场亮点</text>
+                                <text x="196" y="298" font-size="13" font-weight="700" fill="#f59e0b">主要问题</text>
+                                <text x="362" y="298" font-size="13" font-weight="700" fill="#38bdf8">下一步建议</text>
+                                <g stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round">
+                                    <line x1="30" y1="312" x2="148" y2="312"/>
+                                    <line x1="30" y1="322" x2="128" y2="322"/>
+                                    <line x1="30" y1="332" x2="118" y2="332"/>
+                                    <line x1="196" y1="312" x2="314" y2="312"/>
+                                    <line x1="196" y1="322" x2="304" y2="322"/>
+                                    <line x1="196" y1="332" x2="288" y2="332"/>
+                                    <line x1="362" y1="312" x2="480" y2="312"/>
+                                    <line x1="362" y1="322" x2="470" y2="322"/>
+                                    <line x1="362" y1="332" x2="448" y2="332"/>
+                                </g>
+                            </svg>
+                        </div>
+                        <div class="plan-feature-preview-caption">AI 直播复盘页面样式示意，包含亮点、问题、建议与高价值信号。</div>
+                    </span>
+                </span>`;
+
+            const renderComparisonLabel = (row) => {
+                const label = escapeHtml(row.label);
+                if (!row.tooltip) {
+                    return `<div class="plan-compare-heading">${label}</div>`;
+                }
+                return `<div class="plan-compare-heading"><span class="plan-compare-heading-line">${label}${aiRecapPreviewMarkup}</span></div>`;
+            };
+
             const bodyRows = comparisonRows.map((row) => `
             <div class="plan-compare-row" style="${columnStyle}">
                 <div class="plan-compare-label">
-                    <div class="plan-compare-heading">${escapeHtml(row.label)}</div>
+                    ${renderComparisonLabel(row)}
                     <div class="plan-compare-subheading">${escapeHtml(row.hint)}</div>
                 </div>
                 ${preparedPlans.map((item) => `<div class="plan-compare-cell"><div class="plan-compare-value">${row.render(item)}</div></div>`).join('')}

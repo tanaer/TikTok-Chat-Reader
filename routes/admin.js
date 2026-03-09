@@ -17,6 +17,13 @@ const {
 const quotaService = require('../services/quotaService');
 const { listAdminAiWorkJobs, getAdminAiWorkJobDetail } = require('../services/aiWorkService');
 const keyManager = require('../utils/keyManager');
+const { isEulerRateLimitMessage, normalizeEulerKeyHealthStatus } = require('../utils/eulerKeyStatus');
+const {
+    PREMIUM_ROOM_LOOKUP_LEVELS,
+    normalizePremiumRoomLookupLevel,
+    getPremiumRoomLookupState,
+    getPremiumRoomLookupLevel,
+} = require('../utils/eulerKeyCapability');
 const {
     isSessionMaintenanceSettingKey,
     saveSessionMaintenanceConfig,
@@ -185,6 +192,52 @@ function serializeAdminSmtpService(row) {
         cooldownRemainingSeconds: cooldown.cooldownRemainingSeconds,
         createdAt: row.createdAt || null,
         updatedAt: row.updatedAt || null,
+    };
+}
+
+function isEulerRoomLookupNoise(message) {
+    const normalized = String(message || '').trim().toLowerCase();
+    if (!normalized) return false;
+    return normalized.includes('euler room lookup')
+        || normalized.includes('euler live status lookup')
+        || normalized.includes('premium room lookup');
+}
+
+function derivePremiumRoomLookupStateFromLevel(level) {
+    if (level === PREMIUM_ROOM_LOOKUP_LEVELS.PREMIUM) return 'enabled';
+    if (level === PREMIUM_ROOM_LOOKUP_LEVELS.BASIC) return 'disabled';
+    return 'unknown';
+}
+
+function serializeAdminEulerKey(row) {
+    const keyValue = row?.keyValue || row?.key_value || '';
+    const premiumRoomLookupLevel = getPremiumRoomLookupLevel(row);
+    const rawLastError = row?.lastError || row?.last_error || '';
+    const rawLastStatus = row?.lastStatus || row?.last_status || 'unknown';
+    const hideRoomLookupNoise = premiumRoomLookupLevel !== PREMIUM_ROOM_LOOKUP_LEVELS.PREMIUM && isEulerRoomLookupNoise(rawLastError);
+    const lastError = hideRoomLookupNoise ? '' : rawLastError;
+    const lastStatus = hideRoomLookupNoise && rawLastStatus === 'error' ? 'ok' : rawLastStatus;
+    const premiumRoomLookupState = derivePremiumRoomLookupStateFromLevel(premiumRoomLookupLevel);
+
+    return {
+        id: row?.id,
+        name: row?.name || '',
+        keyValue,
+        isActive: Boolean(row?.isActive ?? row?.is_active),
+        callCount: Number(row?.callCount ?? row?.call_count ?? 0),
+        lastUsedAt: row?.lastUsedAt || row?.last_used_at || null,
+        lastError,
+        lastStatus,
+        effectiveStatus: normalizeEulerKeyHealthStatus(lastStatus, lastError),
+        hasRateLimitError: isEulerRateLimitMessage(lastError),
+        premiumRoomLookupLevel,
+        premiumRoomLookupState,
+        premiumRoomLookupEnabled: premiumRoomLookupLevel === PREMIUM_ROOM_LOOKUP_LEVELS.PREMIUM,
+        premiumRoomLookupCheckedAt: row?.premiumRoomLookupCheckedAt || row?.premium_room_lookup_checked_at || null,
+        premiumRoomLookupLastStatus: Number(row?.premiumRoomLookupLastStatus ?? row?.premium_room_lookup_last_status ?? 0),
+        premiumRoomLookupLastError: '',
+        premiumRoomLookupProbeUniqueId: '',
+        createdAt: row?.createdAt || row?.created_at || null,
     };
 }
 
@@ -465,9 +518,6 @@ router.put('/users/:id/quota-overrides', async (req, res) => {
             'roomLimitPermanent',
             'roomLimitTemporary',
             'roomLimitTemporaryExpiresAt',
-            'openRoomLimitPermanent',
-            'openRoomLimitTemporary',
-            'openRoomLimitTemporaryExpiresAt',
             'dailyRoomCreateLimitPermanent',
             'dailyRoomCreateLimitTemporary',
             'dailyRoomCreateLimitTemporaryExpiresAt'
@@ -499,9 +549,6 @@ router.put('/users/:id/quota-overrides', async (req, res) => {
             if (hasOwn('roomLimitPermanent')) payload.room_limit_permanent = parseLimit(req.body.roomLimitPermanent, '永久可建房间数');
             if (hasOwn('roomLimitTemporary')) payload.room_limit_temporary = parseLimit(req.body.roomLimitTemporary, '临时可建房间数');
             if (hasOwn('roomLimitTemporaryExpiresAt')) payload.room_limit_temporary_expires_at = parseDate(req.body.roomLimitTemporaryExpiresAt, '可建房间数临时到期时间');
-            if (hasOwn('openRoomLimitPermanent')) payload.open_room_limit_permanent = parseLimit(req.body.openRoomLimitPermanent, '永久可打开房间数');
-            if (hasOwn('openRoomLimitTemporary')) payload.open_room_limit_temporary = parseLimit(req.body.openRoomLimitTemporary, '临时可打开房间数');
-            if (hasOwn('openRoomLimitTemporaryExpiresAt')) payload.open_room_limit_temporary_expires_at = parseDate(req.body.openRoomLimitTemporaryExpiresAt, '可打开房间数临时到期时间');
             if (hasOwn('dailyRoomCreateLimitPermanent')) payload.daily_room_create_limit_permanent = parseLimit(req.body.dailyRoomCreateLimitPermanent, '永久每日可添加次数');
             if (hasOwn('dailyRoomCreateLimitTemporary')) payload.daily_room_create_limit_temporary = parseLimit(req.body.dailyRoomCreateLimitTemporary, '临时每日可添加次数');
             if (hasOwn('dailyRoomCreateLimitTemporaryExpiresAt')) payload.daily_room_create_limit_temporary_expires_at = parseDate(req.body.dailyRoomCreateLimitTemporaryExpiresAt, '每日可添加次数临时到期时间');
@@ -688,7 +735,12 @@ router.get('/orders', async (req, res) => {
  */
 router.get('/plans', async (req, res) => {
     try {
-        const plans = await db.all('SELECT * FROM subscription_plans ORDER BY sort_order');
+        const plans = await db.all(
+            `SELECT id, name, code, room_limit, price_monthly, price_quarterly, price_annual,
+                    feature_flags, sort_order, is_active, daily_room_create_limit, ai_credits_monthly
+             FROM subscription_plans
+             ORDER BY sort_order`
+        );
         res.json({ plans });
     } catch (err) {
         res.status(500).json({ error: '获取套餐失败' });
@@ -710,15 +762,15 @@ router.post('/plans', [
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
     try {
-        const { name, code, roomLimit, openRoomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, dailyRoomCreateLimit, aiCreditsMonthly } = req.body;
+        const { name, code, roomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, dailyRoomCreateLimit, aiCreditsMonthly } = req.body;
 
         const existing = await db.get('SELECT id FROM subscription_plans WHERE code = ?', [code]);
         if (existing) return res.status(409).json({ error: '套餐代码已存在' });
 
         await db.run(
-            `INSERT INTO subscription_plans (name, code, room_limit, open_room_limit, price_monthly, price_quarterly, price_annual, feature_flags, sort_order, daily_room_create_limit, ai_credits_monthly)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-            [name, code, roomLimit, openRoomLimit !== undefined ? openRoomLimit : -1, Math.round(priceMonthly), Math.round(priceQuarterly), Math.round(priceAnnual), JSON.stringify(featureFlags || {}), sortOrder || 0, dailyRoomCreateLimit !== undefined ? dailyRoomCreateLimit : -1, aiCreditsMonthly || 0]
+            `INSERT INTO subscription_plans (name, code, room_limit, price_monthly, price_quarterly, price_annual, feature_flags, sort_order, daily_room_create_limit, ai_credits_monthly)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [name, code, roomLimit, Math.round(priceMonthly), Math.round(priceQuarterly), Math.round(priceAnnual), JSON.stringify(featureFlags || {}), sortOrder || 0, dailyRoomCreateLimit !== undefined ? dailyRoomCreateLimit : -1, aiCreditsMonthly || 0]
         );
         res.status(201).json({ message: '套餐创建成功' });
     } catch (err) {
@@ -732,7 +784,7 @@ router.post('/plans', [
  */
 router.put('/plans/:id', async (req, res) => {
     try {
-        const { name, roomLimit, openRoomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, isActive, dailyRoomCreateLimit } = req.body;
+        const { name, roomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, isActive, dailyRoomCreateLimit } = req.body;
         const planId = req.params.id;
 
         const updates = [];
@@ -741,7 +793,6 @@ router.put('/plans/:id', async (req, res) => {
 
         if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
         if (roomLimit !== undefined) { updates.push(`room_limit = $${++idx}`); params.push(roomLimit); }
-        if (openRoomLimit !== undefined) { updates.push(`open_room_limit = $${++idx}`); params.push(openRoomLimit); }
         if (priceMonthly !== undefined) { updates.push(`price_monthly = $${++idx}`); params.push(Math.round(priceMonthly)); }
         if (priceQuarterly !== undefined) { updates.push(`price_quarterly = $${++idx}`); params.push(Math.round(priceQuarterly)); }
         if (priceAnnual !== undefined) { updates.push(`price_annual = $${++idx}`); params.push(Math.round(priceAnnual)); }
@@ -1259,8 +1310,20 @@ router.get('/ai-work/jobs/:id', async (req, res) => {
  */
 router.get('/euler-keys', async (req, res) => {
     try {
-        const keys = await db.all('SELECT id, name, key_value, is_active, call_count, last_used_at, last_error, last_status, created_at FROM euler_api_keys ORDER BY id');
-        const runtimeStatus = keyManager.getStatus();
+        const rows = await db.all('SELECT id, name, key_value, is_active, call_count, last_used_at, last_error, last_status, created_at, premium_room_lookup_level, premium_room_lookup_state, premium_room_lookup_checked_at, premium_room_lookup_last_status, premium_room_lookup_last_error, premium_room_lookup_probe_unique_id FROM euler_api_keys ORDER BY id');
+        const keys = rows.map(serializeAdminEulerKey);
+        const settings = await manager.getAllSettings();
+        const baseRuntimeStatus = keyManager.getStatus();
+        const runtimeStatus = {
+            ...baseRuntimeStatus,
+            lastEvaluatedAt: new Date().toISOString(),
+            settingsListConfigured: Boolean(String(settings?.euler_keys || '').trim()),
+            legacySingleKeyConfigured: Boolean(String(settings?.euler_api_key || '').trim()),
+            envListConfigured: Boolean(String(process.env.EULER_KEYS || '').trim()),
+            envSingleKeyConfigured: Boolean(String(process.env.EULER_API_KEY || '').trim()),
+            premiumRoomLookupManagementMode: 'manual',
+            premiumRoomLookupDisabledByEnv: String(process.env.EULER_DISABLE_PREMIUM_ROOM_LOOKUP || '').trim().toLowerCase() === 'true',
+        };
         res.json({ keys, runtimeStatus });
     } catch (err) {
         console.error('[Admin] Euler keys error:', err.message);
@@ -1280,13 +1343,14 @@ router.post('/euler-keys', [
 
     try {
         const { keyValue, name } = req.body;
+        const premiumRoomLookupLevel = normalizePremiumRoomLookupLevel(req.body?.premiumRoomLookupLevel || PREMIUM_ROOM_LOOKUP_LEVELS.BASIC);
         // Check duplicate
         const existing = await db.get('SELECT id FROM euler_api_keys WHERE key_value = ?', [keyValue.trim()]);
         if (existing) return res.status(409).json({ error: '该 Key 已存在' });
 
         await db.run(
-            'INSERT INTO euler_api_keys (key_value, name) VALUES (?, ?)',
-            [keyValue.trim(), name || '']
+            'INSERT INTO euler_api_keys (key_value, name, is_active, premium_room_lookup_level, premium_room_lookup_state) VALUES (?, ?, ?, ?, ?)',
+            [keyValue.trim(), name || '', req.body?.isActive !== false, premiumRoomLookupLevel, derivePremiumRoomLookupStateFromLevel(premiumRoomLookupLevel)]
         );
         await keyManager.refreshKeys({});
         res.status(201).json({ message: 'Key 添加成功' });
@@ -1302,18 +1366,48 @@ router.post('/euler-keys', [
 router.put('/euler-keys/:id', async (req, res) => {
     try {
         const { name, isActive } = req.body;
+        const premiumRoomLookupLevel = req.body?.premiumRoomLookupLevel !== undefined
+            ? normalizePremiumRoomLookupLevel(req.body?.premiumRoomLookupLevel)
+            : null;
         const updates = [];
         const params = [];
         let idx = 0;
 
         if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
         if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
+        if (premiumRoomLookupLevel !== null) {
+            updates.push(`premium_room_lookup_level = $${++idx}`);
+            params.push(premiumRoomLookupLevel);
+            updates.push(`premium_room_lookup_state = $${++idx}`);
+            params.push(derivePremiumRoomLookupStateFromLevel(premiumRoomLookupLevel));
+            updates.push(`premium_room_lookup_checked_at = NULL`);
+            updates.push(`premium_room_lookup_last_status = NULL`);
+            updates.push(`premium_room_lookup_last_error = NULL`);
+            updates.push(`premium_room_lookup_probe_unique_id = NULL`);
+        }
 
         if (updates.length === 0) return res.status(400).json({ error: '无更新' });
 
         updates.push('updated_at = NOW()');
         params.push(req.params.id);
         await db.pool.query(`UPDATE euler_api_keys SET ${updates.join(', ')} WHERE id = $${idx + 1}`, params);
+
+        if (premiumRoomLookupLevel !== null && premiumRoomLookupLevel !== PREMIUM_ROOM_LOOKUP_LEVELS.PREMIUM) {
+            await db.pool.query(
+                `UPDATE euler_api_keys
+                    SET last_error = NULL,
+                        last_status = CASE WHEN COALESCE(last_status, 'unknown') = 'error' THEN 'ok' ELSE last_status END,
+                        updated_at = NOW()
+                  WHERE id = $1
+                    AND (
+                        LOWER(COALESCE(last_error, '')) LIKE '%euler room lookup%'
+                        OR LOWER(COALESCE(last_error, '')) LIKE '%euler live status lookup%'
+                        OR LOWER(COALESCE(last_error, '')) LIKE '%premium room lookup%'
+                    )`,
+                [req.params.id]
+            ).catch(() => {});
+        }
+
         await keyManager.refreshKeys({});
         res.json({ message: '更新成功' });
     } catch (err) {
@@ -1368,6 +1462,12 @@ router.post('/euler-keys/:id/test', async (req, res) => {
                 [req.params.id]
             );
             res.json({ success: false, latency, status: response.status, error: 'Key 无效或已过期' });
+        } else if (response.status === 429) {
+            await db.run(
+                `UPDATE euler_api_keys SET last_status = 'ok', last_error = ?, last_used_at = NOW(), updated_at = NOW() WHERE id = ?`,
+                ['Key 当前被限流 (429)', req.params.id]
+            );
+            res.json({ success: false, transient: true, latency, status: response.status, error: 'Key 有效，但当前接口被限流 (429)' });
         } else {
             await db.run(
                 `UPDATE euler_api_keys SET last_status = 'error', last_error = ?, last_used_at = NOW(), updated_at = NOW() WHERE id = ?`,
@@ -1382,6 +1482,17 @@ router.post('/euler-keys/:id/test', async (req, res) => {
         );
         res.json({ success: false, error: err.message });
     }
+});
+
+
+/**
+ * POST /api/admin/euler-keys/:id/test-room-lookup - Probe premium room lookup capability for a specific key
+ */
+router.post('/euler-keys/:id/test-room-lookup', async (req, res) => {
+    return res.status(410).json({
+        success: false,
+        error: 'Premium 自动探测已停用，请直接在后台编辑该 Key 的等级。',
+    });
 });
 
 // ==================== AI Channels & Models ====================

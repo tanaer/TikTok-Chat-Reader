@@ -7,6 +7,7 @@ var currentDetailRoomId = null;
 var currentSessionId = 'live'; // 'live' or session UUID
 var roomIsLive = false;
 var connectedRoomId = null; // Track actually connected room to prevent cross-room event display
+var liveDetailAggregationState = createEmptyLiveDetailAggregationState();
 var globalLoadingCount = 0;
 var sessionRecapTrendChart = null;
 var sessionRecapRadarChart = null;
@@ -226,6 +227,7 @@ function initSocket() {
     socket.on('chat', (msg) => {
         if (!isViewingLive()) return;
         addChatMessage(msg);
+        updateChatStats(msg);
     });
 
     socket.on('gift', (msg) => {
@@ -338,12 +340,12 @@ async function loadRoom(id) {
                 updateRoomStatusUI(true);
                 addSystemMessage('🟢 房间正在直播中，已自动接入实时数据');
 
-                // Auto-connect to live stream
-                connectToLive(id);
-
                 // Show stats
+                setLiveDetailAggregationState(id, statsRes.summary, statsRes.leaderboards);
                 updateRoomHeader(statsRes.summary);
                 updateLeaderboards(statsRes.leaderboards);
+
+                connectToLive(id);
 
             } else if (sessions && sessions.length > 0) {
                 // Not live - auto-select last session
@@ -361,6 +363,7 @@ async function loadRoom(id) {
 
                 updateRoomHeader(lastStats.summary);
                 updateLeaderboards(lastStats.leaderboards);
+                clearLiveDetailAggregationState();
 
             } else {
                 // No sessions and not live - show empty state
@@ -373,6 +376,7 @@ async function loadRoom(id) {
                 // Show empty data
                 updateRoomHeader({ duration: 0, totalVisits: 0, totalComments: 0, totalLikes: 0, totalGiftValue: 0 });
                 updateLeaderboards({ gifters: [], chatters: [], likers: [] });
+                clearLiveDetailAggregationState();
             }
 
             if (isSessionRecapTabActive()) {
@@ -421,9 +425,12 @@ async function changeSession(val) {
                 addSystemMessage('切换到实时视图');
                 updateRoomStatusUI(roomIsLive);
                 if (roomIsLive) {
-                    connectToLive(currentDetailRoomId);
+                    ensureLiveDetailAggregationState(currentDetailRoomId);
                 }
                 await loadDetailStats(currentDetailRoomId, 'live');
+                if (roomIsLive) {
+                    connectToLive(currentDetailRoomId);
+                }
             } else {
                 disconnectLive();
                 updateRoomStatusUI(false);
@@ -444,6 +451,11 @@ async function changeSession(val) {
 async function loadDetailStats(roomId, sessionId) {
     try {
         const res = await $.get(`/api/rooms/${roomId}/stats_detail?sessionId=${sessionId}`);
+        if (sessionId === 'live') {
+            setLiveDetailAggregationState(roomId, res.summary, res.leaderboards);
+        } else {
+            clearLiveDetailAggregationState();
+        }
         updateRoomHeader(res.summary);
         updateLeaderboards(res.leaderboards);
         hideLoadingState();
@@ -482,6 +494,230 @@ function formatDuration(sec) {
     const m = Math.floor((sec % 3600) / 60);
     const s = sec % 60;
     return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+}
+
+function toStatsNumber(value, fallback = 0) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : fallback;
+}
+
+function createEmptyLiveSummary() {
+    return {
+        duration: 0,
+        startTime: null,
+        totalVisits: 0,
+        totalComments: 0,
+        totalLikes: 0,
+        totalGiftValue: 0
+    };
+}
+
+function createEmptyLiveDetailAggregationState() {
+    return {
+        active: false,
+        roomId: null,
+        summary: createEmptyLiveSummary(),
+        gifters: new Map(),
+        chatters: new Map(),
+        likers: new Map(),
+        giftDetails: new Map()
+    };
+}
+
+function clearLiveDetailAggregationState() {
+    liveDetailAggregationState = createEmptyLiveDetailAggregationState();
+}
+
+function ensureLiveDetailAggregationState(roomId = currentDetailRoomId) {
+    const nextRoomId = String(roomId || '').trim();
+    if (!nextRoomId) return;
+    if (liveDetailAggregationState.roomId === nextRoomId && liveDetailAggregationState.active) return;
+
+    liveDetailAggregationState = createEmptyLiveDetailAggregationState();
+    liveDetailAggregationState.active = true;
+    liveDetailAggregationState.roomId = nextRoomId;
+}
+
+function normalizeLiveUserKey({ userId, uniqueId, nickname } = {}) {
+    const rawValue = userId ?? uniqueId ?? nickname ?? '';
+    const normalized = String(rawValue || '').trim();
+    return normalized || 'anonymous';
+}
+
+function normalizeLiveGiftKey(userKey, { giftId, giftName } = {}) {
+    const giftPart = String(giftId ?? giftName ?? '').trim() || 'unknown-gift';
+    return `${userKey}::${giftPart}`;
+}
+
+function upsertLiveLeaderboardEntry(map, key, payload = {}, metricKey = 'value', delta = 0) {
+    const existing = map.get(key) || {
+        userId: payload.userId || '',
+        uniqueId: payload.uniqueId || '',
+        nickname: payload.nickname || payload.uniqueId || '匿名',
+        value: 0,
+        count: 0
+    };
+
+    existing.userId = payload.userId || existing.userId || '';
+    existing.uniqueId = payload.uniqueId || existing.uniqueId || '';
+    existing.nickname = payload.nickname || existing.nickname || existing.uniqueId || '匿名';
+    existing[metricKey] = toStatsNumber(existing[metricKey], 0) + toStatsNumber(delta, 0);
+    map.set(key, existing);
+    return existing;
+}
+
+function upsertLiveGiftDetailEntry(payload = {}) {
+    const userKey = normalizeLiveUserKey(payload);
+    const giftKey = normalizeLiveGiftKey(userKey, payload);
+    const existing = liveDetailAggregationState.giftDetails.get(giftKey) || {
+        userId: payload.userId || '',
+        uniqueId: payload.uniqueId || '',
+        nickname: payload.nickname || payload.uniqueId || '匿名',
+        giftId: payload.giftId ?? null,
+        giftName: payload.giftName || '未知礼物',
+        count: 0,
+        unitPrice: 0,
+        totalValue: 0
+    };
+
+    const repeatCount = toStatsNumber(payload.repeatCount, 1);
+    const unitPrice = toStatsNumber(payload.diamondCount, 0);
+
+    existing.userId = payload.userId || existing.userId || '';
+    existing.uniqueId = payload.uniqueId || existing.uniqueId || '';
+    existing.nickname = payload.nickname || existing.nickname || existing.uniqueId || '匿名';
+    existing.giftId = payload.giftId ?? existing.giftId ?? null;
+    existing.giftName = payload.giftName || existing.giftName || '未知礼物';
+    existing.count = toStatsNumber(existing.count, 0) + repeatCount;
+    existing.unitPrice = Math.max(toStatsNumber(existing.unitPrice, 0), unitPrice);
+    existing.totalValue = toStatsNumber(existing.totalValue, 0) + unitPrice * repeatCount;
+
+    liveDetailAggregationState.giftDetails.set(giftKey, existing);
+    return existing;
+}
+
+function seedLiveLeaderboardMap(map, rows = [], metricKey = 'value') {
+    rows.forEach(row => {
+        const key = normalizeLiveUserKey(row);
+        map.set(key, {
+            userId: row.userId || '',
+            uniqueId: row.uniqueId || row.unique_id || '',
+            nickname: row.nickname || row.uniqueId || row.unique_id || '匿名',
+            value: metricKey === 'value' ? toStatsNumber(row.value, 0) : 0,
+            count: metricKey === 'count' ? toStatsNumber(row.count, 0) : 0
+        });
+    });
+}
+
+function seedLiveGiftDetailMap(rows = []) {
+    rows.forEach(row => {
+        const userKey = normalizeLiveUserKey(row);
+        const giftKey = normalizeLiveGiftKey(userKey, row);
+        liveDetailAggregationState.giftDetails.set(giftKey, {
+            userId: row.userId || '',
+            uniqueId: row.uniqueId || row.unique_id || '',
+            nickname: row.nickname || row.uniqueId || row.unique_id || '匿名',
+            giftId: row.giftId ?? null,
+            giftName: row.giftName || '未知礼物',
+            count: toStatsNumber(row.count, 0),
+            unitPrice: toStatsNumber(row.unitPrice, 0),
+            totalValue: toStatsNumber(row.totalValue, 0)
+        });
+    });
+}
+
+function setLiveDetailAggregationState(roomId, summary = {}, boards = {}) {
+    ensureLiveDetailAggregationState(roomId);
+
+    liveDetailAggregationState.summary = {
+        duration: toStatsNumber(summary.duration, 0),
+        startTime: summary.startTime || null,
+        totalVisits: toStatsNumber(summary.totalVisits, 0),
+        totalComments: toStatsNumber(summary.totalComments, 0),
+        totalLikes: toStatsNumber(summary.totalLikes, 0),
+        totalGiftValue: toStatsNumber(summary.totalGiftValue, 0)
+    };
+
+    liveDetailAggregationState.gifters = new Map();
+    liveDetailAggregationState.chatters = new Map();
+    liveDetailAggregationState.likers = new Map();
+    liveDetailAggregationState.giftDetails = new Map();
+
+    seedLiveLeaderboardMap(liveDetailAggregationState.gifters, Array.isArray(boards.gifters) ? boards.gifters : [], 'value');
+    seedLiveLeaderboardMap(liveDetailAggregationState.chatters, Array.isArray(boards.chatters) ? boards.chatters : [], 'count');
+    seedLiveLeaderboardMap(liveDetailAggregationState.likers, Array.isArray(boards.likers) ? boards.likers : [], 'count');
+    seedLiveGiftDetailMap(Array.isArray(boards.giftDetails) ? boards.giftDetails : []);
+}
+
+function isLiveDetailAggregationReady() {
+    return isViewingLive() &&
+        liveDetailAggregationState.active &&
+        liveDetailAggregationState.roomId === currentDetailRoomId;
+}
+
+function getLiveSummaryForRender() {
+    const summary = {
+        ...createEmptyLiveSummary(),
+        ...(liveDetailAggregationState.summary || {})
+    };
+
+    if (summary.startTime) {
+        const startMs = new Date(summary.startTime).getTime();
+        if (!Number.isNaN(startMs)) {
+            summary.duration = Math.max(toStatsNumber(summary.duration, 0), Math.floor((Date.now() - startMs) / 1000));
+        }
+    }
+
+    return summary;
+}
+
+function sortLiveLeaderboardEntries(map, metricKey = 'value', limit = 20) {
+    return Array.from(map.values())
+        .sort((left, right) => {
+            const metricDiff = toStatsNumber(right[metricKey], 0) - toStatsNumber(left[metricKey], 0);
+            if (metricDiff !== 0) return metricDiff;
+            return String(left.nickname || '').localeCompare(String(right.nickname || ''));
+        })
+        .slice(0, limit);
+}
+
+function sortLiveGiftDetailEntries(limit = 100) {
+    return Array.from(liveDetailAggregationState.giftDetails.values())
+        .sort((left, right) => {
+            const totalDiff = toStatsNumber(right.totalValue, 0) - toStatsNumber(left.totalValue, 0);
+            if (totalDiff !== 0) return totalDiff;
+            const countDiff = toStatsNumber(right.count, 0) - toStatsNumber(left.count, 0);
+            if (countDiff !== 0) return countDiff;
+            return String(left.nickname || '').localeCompare(String(right.nickname || ''));
+        })
+        .slice(0, limit);
+}
+
+function renderLiveSummaryState() {
+    if (!isLiveDetailAggregationReady()) return;
+    updateRoomHeader(getLiveSummaryForRender());
+}
+
+function renderLiveGiftState() {
+    if (!isLiveDetailAggregationReady()) return;
+    renderGiftTable('#giftTable tbody', sortLiveGiftDetailEntries(100));
+    const gifters = sortLiveLeaderboardEntries(liveDetailAggregationState.gifters, 'value', 20);
+    renderTopTable('#currentGiftersTable tbody', gifters, '💎', 'value');
+    renderTopTable('#topGiftersTable tbody', gifters, '💎', 'value');
+}
+
+function renderLiveChatterState() {
+    if (!isLiveDetailAggregationReady()) return;
+    const chatters = sortLiveLeaderboardEntries(liveDetailAggregationState.chatters, 'count', 20);
+    renderTopTable('#currentChattersTable tbody', chatters, '💬', 'count');
+    renderTopTable('#topContributorsTable tbody', chatters, '💬', 'count');
+}
+
+function renderLiveLikerState() {
+    if (!isLiveDetailAggregationReady()) return;
+    const likers = sortLiveLeaderboardEntries(liveDetailAggregationState.likers, 'count', 20);
+    renderTopTable('#currentLikersTable tbody', likers, '❤️', 'count');
+    renderTopTable('#topLikersTable tbody', likers, '❤️', 'count');
 }
 
 function updateLeaderboards(boards) {
@@ -588,6 +824,9 @@ function renderTopTable(selector, data, icon, valueKey) {
 }
 
 function connectToLive(roomId) {
+    if (currentSessionId === 'live') {
+        ensureLiveDetailAggregationState(roomId);
+    }
     addSystemMessage(`Connecting to ${roomId} live...`);
     socket.emit('setUniqueId', roomId);
     if (socket) socket.emit('connectTiktok');
@@ -682,16 +921,53 @@ function addGiftMessage(msg) {
     scrollToBottom();
 }
 
+function updateChatStats(msg) {
+    if (!isLiveDetailAggregationReady()) return;
+
+    const userKey = normalizeLiveUserKey(msg);
+    liveDetailAggregationState.summary.totalComments += 1;
+    upsertLiveLeaderboardEntry(liveDetailAggregationState.chatters, userKey, msg, 'count', 1);
+
+    renderLiveSummaryState();
+    renderLiveChatterState();
+}
+
 function updateGiftStats(msg) {
-    // Basic aggregation for UI table
+    if (!isLiveDetailAggregationReady()) return;
+
+    const userKey = normalizeLiveUserKey(msg);
+    const giftValue = toStatsNumber(msg.diamondCount, 0) * toStatsNumber(msg.repeatCount, 1);
+
+    liveDetailAggregationState.summary.totalGiftValue += giftValue;
+    upsertLiveLeaderboardEntry(liveDetailAggregationState.gifters, userKey, msg, 'value', giftValue);
+    upsertLiveGiftDetailEntry(msg);
+
+    renderLiveSummaryState();
+    renderLiveGiftState();
 }
 
 function updateMemberStats(msg) {
-    // ...
+    if (!isLiveDetailAggregationReady()) return;
+
+    liveDetailAggregationState.summary.totalVisits += 1;
+    renderLiveSummaryState();
 }
 
 function updateLikeStats(msg) {
-    // ...
+    if (!isLiveDetailAggregationReady()) return;
+
+    const userKey = normalizeLiveUserKey(msg);
+    const likeDelta = toStatsNumber(msg.likeCount, 0);
+    const currentLikes = toStatsNumber(liveDetailAggregationState.summary.totalLikes, 0);
+
+    liveDetailAggregationState.summary.totalLikes = Math.max(
+        currentLikes + likeDelta,
+        toStatsNumber(msg.totalLikeCount, 0)
+    );
+    upsertLiveLeaderboardEntry(liveDetailAggregationState.likers, userKey, msg, 'count', likeDelta);
+
+    renderLiveSummaryState();
+    renderLiveLikerState();
 }
 
 function scrollToBottom() {

@@ -84,16 +84,13 @@ function inferAdminButtonBusyText(url, method) {
 
 function getAdminRequestUiRefs() {
     return {
-        banner: document.getElementById('admin-request-banner'),
-        bannerText: document.getElementById('admin-request-banner-text'),
-        bannerMeta: document.getElementById('admin-request-banner-meta'),
         overlay: document.getElementById('admin-content-loading-overlay'),
         overlayText: document.getElementById('admin-content-loading-text'),
     };
 }
 
 function renderAdminRequestUi() {
-    const { banner, bannerText, bannerMeta, overlay, overlayText } = getAdminRequestUiRefs();
+    const { overlay, overlayText } = getAdminRequestUiRefs();
     const total = adminReadRequestCount + adminWriteRequestCount;
     if (adminRequestHideTimer) {
         clearTimeout(adminRequestHideTimer);
@@ -101,7 +98,6 @@ function renderAdminRequestUi() {
     }
 
     if (total <= 0) {
-        if (banner) banner.classList.add('hidden');
         if (overlay) overlay.classList.add('hidden');
         return;
     }
@@ -110,17 +106,6 @@ function renderAdminRequestUi() {
     const activeCount = activeKind === 'write' ? adminWriteRequestCount : adminReadRequestCount;
     const baseMessage = adminLatestRequestMessage || (activeKind === 'write' ? '正在提交后台数据...' : '正在加载后台数据...');
     const message = activeCount > 1 ? `${baseMessage}（${activeCount} 项请求）` : baseMessage;
-
-    if (banner) {
-        banner.classList.remove('hidden');
-    }
-    if (bannerText) {
-        bannerText.textContent = message;
-    }
-    if (bannerMeta) {
-        bannerMeta.textContent = activeKind === 'write' ? '提交中' : '读取中';
-        bannerMeta.className = `badge badge-sm ${activeKind === 'write' ? 'badge-primary' : 'badge-ghost'}`;
-    }
 
     if (overlay) {
         overlay.classList.toggle('hidden', adminReadRequestCount <= 0);
@@ -245,6 +230,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 });
 
 let currentSection = 'overview';
+let eulerKeysAutoRefreshTimer = null;
+
+function stopEulerKeysAutoRefresh() {
+    if (!eulerKeysAutoRefreshTimer) return;
+    clearInterval(eulerKeysAutoRefreshTimer);
+    eulerKeysAutoRefreshTimer = null;
+}
+
+function startEulerKeysAutoRefresh() {
+    stopEulerKeysAutoRefresh();
+    if (currentSection !== 'eulerKeys') return;
+    eulerKeysAutoRefreshTimer = setInterval(() => {
+        if (currentSection !== 'eulerKeys') {
+            stopEulerKeysAutoRefresh();
+            return;
+        }
+        loadEulerKeys();
+    }, 15000);
+}
 let currentAdminUserDetailId = null;
 let adminDocsLoadedOnce = false;
 let adminDocsListCache = [];
@@ -387,6 +391,8 @@ function showSection(name, event) {
     localStorage.setItem(ADMIN_SIDEBAR_SECTION_STORAGE_KEY, resolvedName);
     document.getElementById('section-title').textContent = ADMIN_SECTION_META[resolvedName]?.title || resolvedName;
     runSectionLoader(resolvedName);
+    if (resolvedName === 'eulerKeys') startEulerKeysAutoRefresh();
+    else stopEulerKeysAutoRefresh();
     return false;
 }
 
@@ -779,7 +785,6 @@ async function loadPlans() {
     }
     container.innerHTML = data.plans.map(p => {
         const roomText = p.roomLimit === -1 ? '无限' : p.roomLimit;
-        const openText = (p.openRoomLimit == null || p.openRoomLimit === -1) ? '不限' : p.openRoomLimit;
         const dailyText = p.dailyRoomCreateLimit === -1 ? '无限' : (p.dailyRoomCreateLimit || '无限');
         return `
         <div class="card bg-base-100 border ${p.isActive ? 'border-base-300' : 'border-error opacity-60'}">
@@ -787,7 +792,7 @@ async function loadPlans() {
                 <div class="flex justify-between items-start">
                     <div>
                         <h4 class="font-bold">${p.name} <span class="text-xs text-base-content/60">(${p.code})</span></h4>
-                        <p class="text-sm">房间: ${roomText} | 可打开: ${openText} | 每日新建: ${dailyText} | AI: ${p.aiCreditsMonthly || 0}点/月 | 月¥${p.priceMonthly} / 季¥${p.priceQuarterly} / 年¥${p.priceAnnual}</p>
+                        <p class="text-sm">房间: ${roomText} | 每日新建: ${dailyText} | AI: ${p.aiCreditsMonthly || 0}点/月 | 月¥${p.priceMonthly} / 季¥${p.priceQuarterly} / 年¥${p.priceAnnual}</p>
                         ${!p.isActive ? '<span class="badge badge-error badge-sm">已下架</span>' : ''}
                     </div>
                     <div class="flex gap-1">
@@ -822,7 +827,6 @@ function showPlanForm(plan) {
     document.getElementById('pf-code').value = plan?.code || '';
     document.getElementById('pf-code').disabled = !!plan;
     document.getElementById('pf-room').value = plan?.roomLimit ?? '';
-    document.getElementById('pf-open-room').value = plan?.openRoomLimit ?? -1;
     document.getElementById('pf-daily').value = plan?.dailyRoomCreateLimit ?? -1;
     document.getElementById('pf-ai').value = plan?.aiCreditsMonthly ?? 0;
     document.getElementById('pf-pm').value = plan?.priceMonthly ?? '';
@@ -861,7 +865,6 @@ async function submitPlanForm() {
         name: document.getElementById('pf-name').value,
         code: document.getElementById('pf-code').value,
         roomLimit: parseIntOr('pf-room', -1),
-        openRoomLimit: parseIntOr('pf-open-room', -1),
         dailyRoomCreateLimit: parseIntOr('pf-daily', -1),
         aiCreditsMonthly: parseIntOr('pf-ai', 0),
         priceMonthly: parseFloatOr('pf-pm', 0),
@@ -2400,6 +2403,77 @@ function formatEulerTime(value, fallback = '从未') {
     return time.toLocaleString('zh-CN');
 }
 
+function getEulerStatusBadge(key) {
+    const effectiveStatus = String(key?.effectiveStatus || key?.lastStatus || 'unknown').toLowerCase();
+    if (effectiveStatus === 'ok') {
+        return '<span class="badge badge-success badge-xs">正常</span>';
+    }
+    if (effectiveStatus === 'error') {
+        return '<span class="badge badge-error badge-xs">异常</span>';
+    }
+    return '<span class="badge badge-ghost badge-xs">未测试</span>';
+}
+
+function getEulerPoolStatusMeta(status) {
+    const normalized = String(status || 'unknown').toLowerCase();
+    if (normalized === 'healthy') return { label: '池状态正常', badge: 'badge-success' };
+    if (normalized === 'degraded') return { label: '池状态降级', badge: 'badge-warning' };
+    if (normalized === 'exhausted') return { label: '全池冷却', badge: 'badge-error' };
+    if (normalized === 'empty') return { label: '未配置 Key', badge: 'badge-ghost' };
+    return { label: '池状态未知', badge: 'badge-ghost' };
+}
+
+function getEulerConnectivityModeMeta(mode) {
+    const normalized = String(mode || 'unknown').toLowerCase();
+    if (normalized === 'euler_available') return { label: 'Euler 可直接参与建连', badge: 'badge-success' };
+    if (normalized === 'fallback_active') return { label: '当前已有回退链路成功（HTML / API / Euler兜底）', badge: 'badge-warning' };
+    if (normalized === 'fallback_possible') return { label: 'Euler 池不可用，系统可能退化到 HTML / API / Euler兜底链路', badge: 'badge-warning' };
+    return { label: '系统建连能力待确认', badge: 'badge-ghost' };
+}
+
+function formatEulerPathLabel(path) {
+    const normalized = String(path || 'unknown').toLowerCase();
+    if (normalized === 'euler_room_lookup') return 'Euler 直连解析';
+    if (normalized === 'euler_room_lookup_fallback') return 'Euler 兜底解析';
+    if (normalized === 'tiktok_html') return 'TikTok HTML 解析';
+    if (normalized === 'tiktok_api') return 'TikTok API 解析';
+    if (normalized === 'tiktok_fallback') return 'TikTok HTML/API 回退链';
+    return '未知';
+}
+
+function formatEulerConfigSource(runtimeStatus = {}) {
+    const source = String(runtimeStatus?.configSource || 'unknown').toLowerCase();
+    if (source === 'db_table') return '后台 Key 表';
+    if (source === 'settings') return '系统设置 euler_keys';
+    if (source === 'env') return '环境变量';
+    if (source === 'none') return '未配置';
+    return '未知';
+}
+
+
+function getPremiumRoomLookupLevelMeta(level) {
+    const normalized = String(level || 'unset').toLowerCase();
+    if (normalized === 'premium') {
+        return {
+            label: 'Premium / Business',
+            badge: 'badge-success',
+            description: '这把 Key 已手工标记为 Premium，可在 HTML / API 失败时启用 Euler /webcast/room_id 兜底。',
+        };
+    }
+    if (normalized === 'basic') {
+        return {
+            label: '基础 / Community',
+            badge: 'badge-neutral',
+            description: '这把 Key 按基础等级处理，不会使用 Euler /webcast/room_id。',
+        };
+    }
+    return {
+        label: '未设置等级',
+        badge: 'badge-ghost',
+        description: '这把 Key 尚未手工设置等级；默认不启用 Euler /webcast/room_id。',
+    };
+}
+
 function renderEulerRuntimeSummary(runtimeStatus, keys) {
     const container = document.getElementById('euler-keys-runtime');
     if (!container) return;
@@ -2413,9 +2487,38 @@ function renderEulerRuntimeSummary(runtimeStatus, keys) {
     const disabledCount = Number(runtimeStatus?.disabledCount || 0);
     const reenabledCount = Number(runtimeStatus?.reenabledCount || 0);
     const allKeysDisabledCount = Number(runtimeStatus?.allKeysDisabledCount || 0);
-    const sourceHint = keys.length === 0 && total > 0
-        ? '<div class="alert alert-info py-2 text-xs mt-3">数据库中暂无 Euler Key，当前展示的是运行时加载的环境变量 Key 状态。</div>'
-        : '';
+    const roomLookupRequestCount = Number(runtimeStatus?.roomLookupRequestCount || 0);
+    const liveCheckRequestCount = Number(runtimeStatus?.liveCheckRequestCount || 0);
+    const connectSuccessCount = Number(runtimeStatus?.connectSuccessCount || 0);
+    const fallbackConnectCount = Number(runtimeStatus?.fallbackConnectCount || 0);
+    const permissionDeniedCount = Number(runtimeStatus?.permissionDeniedCount || 0);
+    const premiumRoomLookupPremiumCount = Number(runtimeStatus?.premiumRoomLookupPremiumCount || 0);
+    const premiumRoomLookupBasicCount = Number(runtimeStatus?.premiumRoomLookupBasicCount || 0);
+    const premiumRoomLookupUnsetCount = Number(runtimeStatus?.premiumRoomLookupUnsetCount || 0);
+    const poolStatus = getEulerPoolStatusMeta(runtimeStatus?.poolStatus);
+    const connectivityMode = getEulerConnectivityModeMeta(runtimeStatus?.connectivityMode);
+    const configSource = formatEulerConfigSource(runtimeStatus);
+    const lastConnectPath = formatEulerPathLabel(runtimeStatus?.lastConnectPath);
+    const sourceHints = [];
+    if (keys.length === 0 && total > 0) {
+        sourceHints.push('数据库中暂无 Euler Key，当前展示的是运行时加载的系统设置 / 环境变量 Key 状态。');
+    }
+    if (runtimeStatus?.legacySingleKeyConfigured) {
+        sourceHints.push('系统设置中的单 Key（euler_api_key）仍可参与兜底，但不会像后台 Key 表那样逐条展示运行时统计。');
+    }
+    if (runtimeStatus?.envSingleKeyConfigured) {
+        sourceHints.push('环境变量中的单 Key（EULER_API_KEY）更适合作为临时兜底；如需长期运营，建议迁移到后台 Key 表统一管理。');
+    }
+    if (runtimeStatus?.premiumRoomLookupDisabledByEnv) {
+        sourceHints.push('你已通过环境变量显式禁用 Premium room lookup；当前系统即使把某把 Key 手工设为 Premium，也不会启用 Euler `/webcast/room_id`。');
+    } else {
+        sourceHints.push('当前系统改为“手工等级”模式：默认先走 TikTok HTML / API；只有被你手工设为 Premium 的 Key，才允许在 HTML / API 失败时启用 Euler `/webcast/room_id` 兜底。');
+    }
+    if (premiumRoomLookupPremiumCount === 0) {
+        sourceHints.push('如果你长期使用的是 Community 套餐，但直播间监测一直正常，这是正常现象：系统主链路依赖的是 TikTok HTML / API 与 Euler 基础签名 / 建连能力，而不是 `/webcast/room_id`。');
+    }
+    sourceHints.push('系统不再自动探测 Premium 能力；如果你后续升级了某把 Key，请直接编辑该 Key 的等级。');
+    const sourceHint = sourceHints.map((message) => `<div class="alert alert-info py-2 text-xs mt-3">${message}</div>`).join('');
 
     if (total === 0) {
         container.innerHTML = '';
@@ -2428,27 +2531,42 @@ function renderEulerRuntimeSummary(runtimeStatus, keys) {
                 <div class="flex items-start justify-between gap-3 flex-wrap">
                     <div>
                         <h4 class="font-semibold">运行态总览</h4>
-                        <p class="text-xs text-base-content/60 mt-1">展示当前进程里 Key 选择、轮换、限流与冷却情况。</p>
+                        <p class="text-xs text-base-content/60 mt-1">展示当前进程里的 Euler Key 池状态、真实请求消耗与最近连接路径；不等同于系统绝对不可连接。</p>
                     </div>
-                    <div class="text-xs text-base-content/60">
-                        当前 Key：<span class="font-mono text-base-content">${runtimeStatus?.currentKeyMasked || '-'}</span>
+                    <div class="flex flex-wrap items-center gap-2 text-xs text-base-content/60">
+                        <span class="badge badge-sm ${poolStatus.badge}">${poolStatus.label}</span>
+                        <span class="badge badge-sm ${connectivityMode.badge}">${connectivityMode.label}</span>
                     </div>
                 </div>
-                <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4 text-sm">
+                <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-3 mt-4 text-sm">
                     <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">总 Key</div><div class="font-semibold mt-1">${total}</div></div>
-                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">可用 / 冷却</div><div class="font-semibold mt-1">${active} / ${disabled}</div></div>
-                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">已选次数</div><div class="font-semibold mt-1">${selectionCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">Euler Key 池可用 / 冷却</div><div class="font-semibold mt-1">${active} / ${disabled}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">被选中次数</div><div class="font-semibold mt-1">${selectionCount}</div></div>
                     <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">轮换次数</div><div class="font-semibold mt-1">${rotationCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">房间查询请求</div><div class="font-semibold mt-1">${roomLookupRequestCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">直播探活请求</div><div class="font-semibold mt-1">${liveCheckRequestCount}</div></div>
                     <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">限流次数</div><div class="font-semibold mt-1">${rateLimitCount}</div></div>
                     <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">禁用次数</div><div class="font-semibold mt-1">${disabledCount}</div></div>
                     <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">恢复次数</div><div class="font-semibold mt-1">${reenabledCount}</div></div>
                     <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">全 Key 冷却</div><div class="font-semibold mt-1">${allKeysDisabledCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">成功建连</div><div class="font-semibold mt-1">${connectSuccessCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">Fallback 建连</div><div class="font-semibold mt-1">${fallbackConnectCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">权限拒绝</div><div class="font-semibold mt-1">${permissionDeniedCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">Premium 等级</div><div class="font-semibold mt-1">${premiumRoomLookupPremiumCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">基础 / Community</div><div class="font-semibold mt-1">${premiumRoomLookupBasicCount}</div></div>
+                    <div class="rounded-box bg-base-200 px-3 py-2"><div class="text-xs text-base-content/60">未设置等级</div><div class="font-semibold mt-1">${premiumRoomLookupUnsetCount}</div></div>
                 </div>
                 <div class="flex flex-wrap gap-x-4 gap-y-1 mt-4 text-xs text-base-content/60">
+                    <span>配置来源：${configSource}</span>
                     <span>上次选择：${formatEulerTime(runtimeStatus?.lastSelectedAt)}</span>
                     <span>上次禁用：${formatEulerTime(runtimeStatus?.lastDisabledAt)}</span>
+                    <span>最近连接路径：${lastConnectPath}</span>
+                    <span>最近连接：${formatEulerTime(runtimeStatus?.lastConnectAt)}</span>
+                    <span>当前 Key：${runtimeStatus?.currentKeyMasked || '-'}</span>
                     <span>禁用原因：${runtimeStatus?.lastDisableReason || '-'}</span>
+                    <span>最近刷新：${formatEulerTime(runtimeStatus?.lastEvaluatedAt)}</span>
                 </div>
+                <div class="text-xs text-base-content/50 mt-3">说明：当 Euler Key 池全部进入冷却时，系统仍可能通过 TikTok HTML、TikTok API 或 Euler 兜底链路建立连接；因此“全池冷却”不等于“系统绝对不可连接”。</div>
                 ${sourceHint}
             </div>
         </div>`;
@@ -2475,47 +2593,60 @@ async function loadEulerKeys() {
         container.innerHTML = keys.map(k => {
             const runtime = runtimeKeyMap.get(k.id ?? (k.keyValue ? `${k.keyValue.slice(0, 10)}...` : null)) || {};
             const masked = k.keyValue ? k.keyValue.slice(0, 12) + '...' + k.keyValue.slice(-4) : '-';
-            const statusBadge = k.lastStatus === 'ok'
-                ? '<span class="badge badge-success badge-xs">正常</span>'
-                : k.lastStatus === 'error'
-                    ? '<span class="badge badge-error badge-xs">异常</span>'
-                    : '<span class="badge badge-ghost badge-xs">未测试</span>';
-            const runtimeBadge = runtime.isDisabled
-                ? '<span class="badge badge-warning badge-xs">冷却中</span>'
-                : '<span class="badge badge-info badge-xs">运行中</span>';
+            const safeName = escapeHtml(k.name || '未命名');
+            const safeMasked = escapeHtml(masked);
+            const statusBadge = getEulerStatusBadge(k);
+            const premiumRoomLookupMeta = getPremiumRoomLookupLevelMeta(k.premiumRoomLookupLevel || runtime.premiumRoomLookupLevel);
+            const runtimeBadge = !k.isActive
+                ? '<span class="badge badge-neutral badge-xs">未纳入运行池</span>'
+                : runtime.isDisabled
+                    ? '<span class="badge badge-warning badge-xs">冷却中</span>'
+                    : '<span class="badge badge-info badge-xs">可选中</span>';
+            const rateLimitBadge = !runtime.isDisabled && k.hasRateLimitError
+                ? '<span class="badge badge-warning badge-xs">上次限流</span>'
+                : '';
             const lastUsed = formatEulerTime(k.lastUsedAt);
             const lastSelectedAt = formatEulerTime(runtime.lastSelectedAt);
             const disabledUntil = formatEulerTime(runtime.disabledUntil, '-');
+            const lastConnectedAt = formatEulerTime(runtime.lastConnectAt, '-');
+            const lastConnectPath = formatEulerPathLabel(runtime.lastConnectPath);
+            const safeDisableReason = escapeHtml(runtime.lastDisableReason || '-');
             return `
             <div class="card bg-base-100 border ${k.isActive ? 'border-base-300' : 'border-error opacity-60'}">
                 <div class="card-body p-4">
                     <div class="flex justify-between items-start flex-wrap gap-2">
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2 flex-wrap">
-                                <h4 class="font-bold">${k.name || '未命名'}</h4>
+                                <h4 class="font-bold">${safeName}</h4>
                                 ${statusBadge}
                                 ${runtimeBadge}
+                                ${rateLimitBadge}
+                                <span class="badge ${premiumRoomLookupMeta.badge} badge-xs" title="${escapeHtml(premiumRoomLookupMeta.description)}">${premiumRoomLookupMeta.label}</span>
                                 ${!k.isActive ? '<span class="badge badge-error badge-xs">已禁用</span>' : ''}
                             </div>
-                            <p class="text-sm font-mono text-base-content/60 mt-1">${masked}</p>
-                            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-xs text-base-content/60">
-                                <div class="rounded-box bg-base-200 px-3 py-2"><span>调用次数</span><div class="text-base-content font-semibold mt-1">${k.callCount || 0}</div></div>
+                            <p class="text-sm font-mono text-base-content/60 mt-1">${safeMasked}</p>
+                            <div class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2 mt-3 text-xs text-base-content/60">
+                                <div class="rounded-box bg-base-200 px-3 py-2"><span>累计选中</span><div class="text-base-content font-semibold mt-1">${k.callCount || 0}</div></div>
                                 <div class="rounded-box bg-base-200 px-3 py-2"><span>运行选中</span><div class="text-base-content font-semibold mt-1">${runtime.selectedCount || 0}</div></div>
+                                <div class="rounded-box bg-base-200 px-3 py-2"><span>房间查询</span><div class="text-base-content font-semibold mt-1">${runtime.roomLookupRequestCount || 0}</div></div>
+                                <div class="rounded-box bg-base-200 px-3 py-2"><span>直播探活</span><div class="text-base-content font-semibold mt-1">${runtime.liveCheckRequestCount || 0}</div></div>
+                                <div class="rounded-box bg-base-200 px-3 py-2"><span>成功建连</span><div class="text-base-content font-semibold mt-1">${runtime.successCount || 0}</div></div>
                                 <div class="rounded-box bg-base-200 px-3 py-2"><span>限流次数</span><div class="text-base-content font-semibold mt-1">${runtime.rateLimitCount || 0}</div></div>
-                                <div class="rounded-box bg-base-200 px-3 py-2"><span>禁用次数</span><div class="text-base-content font-semibold mt-1">${runtime.disabledCount || 0}</div></div>
+                                <div class="rounded-box bg-base-200 px-3 py-2"><span>权限拒绝</span><div class="text-base-content font-semibold mt-1">${runtime.permissionDeniedCount || 0}</div></div>
                             </div>
                             <div class="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-base-content/50">
                                 <span>最后使用：${lastUsed}</span>
                                 <span>上次选中：${lastSelectedAt}</span>
                                 <span>冷却至：${disabledUntil}</span>
-                                <span>禁用原因：${runtime.lastDisableReason || '-'}</span>
+                                <span>最近连接：${lastConnectedAt}</span>
+                                <span>连接路径：${lastConnectPath}</span>
+                                <span>Key等级：${premiumRoomLookupMeta.label}</span>
+                                <span>禁用原因：${safeDisableReason}</span>
                             </div>
-                            ${k.lastError ? `<p class="text-xs text-error mt-1 break-all" title="${k.lastError}">${k.lastError}</p>` : ''}
-                            ${runtime.lastError && runtime.lastError !== k.lastError ? `<p class="text-xs text-warning mt-1 break-all" title="${runtime.lastError}">运行时错误：${runtime.lastError}</p>` : ''}
                         </div>
                         <div class="flex gap-1 flex-shrink-0">
-                            <button class="btn btn-xs btn-outline btn-info" onclick="testEulerKey(${k.id})">测试</button>
-                            <button class="btn btn-xs btn-ghost" onclick="editEulerKey(${k.id}, '${(k.name || '').replace(/'/g, "\'")}', ${k.isActive})">编辑</button>
+                            <button class="btn btn-xs btn-outline btn-info" title="检查该 Key 的基础额度接口是否可达" onclick="testEulerKey(event, ${k.id})">额度</button>
+                            <button class="btn btn-xs btn-ghost" onclick='editEulerKey(${k.id}, ${JSON.stringify(k.name || '')}, ${k.isActive}, ${JSON.stringify(k.premiumRoomLookupLevel || 'basic')})'>编辑</button>
                             <button class="btn btn-xs btn-error btn-outline" onclick="deleteEulerKey(${k.id})">删除</button>
                         </div>
                     </div>
@@ -2528,51 +2659,86 @@ async function loadEulerKeys() {
 }
 
 function showAddEulerKey() {
+    document.getElementById('ek-id').value = '';
     document.getElementById('ek-name').value = '';
     document.getElementById('ek-key').value = '';
+    document.getElementById('ek-premium-level').value = 'basic';
+    document.getElementById('ek-active').checked = true;
+    document.getElementById('euler-key-modal-title').textContent = '添加 Euler API Key';
+    document.getElementById('euler-key-modal-submit').textContent = '添加';
+    document.getElementById('ek-key-group').classList.remove('hidden');
     document.getElementById('eulerKeyModal').showModal();
 }
 
 async function submitEulerKey() {
+    const id = document.getElementById('ek-id').value.trim();
     const keyValue = document.getElementById('ek-key').value.trim();
     const name = document.getElementById('ek-name').value.trim();
-    if (!keyValue) { alert('请输入 API Key'); return; }
+    const premiumRoomLookupLevel = document.getElementById('ek-premium-level').value;
+    const isActive = document.getElementById('ek-active').checked;
 
-    const res = await Auth.apiFetch('/api/admin/euler-keys', {
-        method: 'POST', body: JSON.stringify({ keyValue, name })
+    if (!id && !keyValue) {
+        alert('请输入 API Key');
+        return;
+    }
+
+    const url = id ? `/api/admin/euler-keys/${id}` : '/api/admin/euler-keys';
+    const method = id ? 'PUT' : 'POST';
+    const payload = id
+        ? { name, isActive, premiumRoomLookupLevel }
+        : { keyValue, name, isActive, premiumRoomLookupLevel };
+
+    const res = await Auth.apiFetch(url, {
+        method,
+        body: JSON.stringify(payload),
     });
     const data = await res.json();
-    document.getElementById('eulerKeyModal').close();
-    if (res.ok) { loadEulerKeys(); }
-    else alert(data.error || '添加失败');
+    if (res.ok) {
+        document.getElementById('eulerKeyModal').close();
+        loadEulerKeys();
+        return;
+    }
+    alert(data.error || (id ? '保存失败' : '添加失败'));
 }
 
-async function testEulerKey(id) {
-    const btn = event.target;
-    btn.classList.add('loading');
+async function testEulerKey(event, id) {
+    const btn = event?.currentTarget || event?.target;
+    if (btn) btn.classList.add('loading');
     try {
         const res = await Auth.apiFetch(`/api/admin/euler-keys/${id}/test`, { method: 'POST' });
         const data = await res.json();
-        btn.classList.remove('loading');
         if (data.success) {
-            alert(`测试成功! 延迟: ${data.latency}ms`);
+            alert(`额度测试成功
+延迟: ${data.latency}ms`);
+        } else if (data.transient) {
+            alert(`额度测试结果
+${data.error || `HTTP ${data.status}`}`);
         } else {
-            alert(`测试失败: ${data.error || `HTTP ${data.status}`}`);
+            alert(`额度测试失败
+${data.error || `HTTP ${data.status}`}`);
         }
         loadEulerKeys();
     } catch (err) {
-        btn.classList.remove('loading');
-        alert('请求失败: ' + err.message);
+        alert('额度测试请求失败: ' + err.message);
+    } finally {
+        if (btn) btn.classList.remove('loading');
     }
 }
 
-function editEulerKey(id, name, isActive) {
-    const newName = prompt('Key 名称:', name);
-    if (newName === null) return;
-    const toggle = confirm('是否启用此 Key？（确定=启用，取消=禁用）');
-    Auth.apiFetch(`/api/admin/euler-keys/${id}`, {
-        method: 'PUT', body: JSON.stringify({ name: newName, isActive: toggle })
-    }).then(() => loadEulerKeys());
+async function testEulerKeyRoomLookup() {
+    alert('Premium 自动探测已停用，请直接在“编辑”里手工设置该 Key 的等级。');
+}
+
+function editEulerKey(id, name, isActive, premiumRoomLookupLevel = 'basic') {
+    document.getElementById('ek-id').value = String(id || '');
+    document.getElementById('ek-name').value = String(name || '');
+    document.getElementById('ek-key').value = '';
+    document.getElementById('ek-premium-level').value = String(premiumRoomLookupLevel || 'basic');
+    document.getElementById('ek-active').checked = Boolean(isActive);
+    document.getElementById('euler-key-modal-title').textContent = '编辑 Euler API Key';
+    document.getElementById('euler-key-modal-submit').textContent = '保存';
+    document.getElementById('ek-key-group').classList.add('hidden');
+    document.getElementById('eulerKeyModal').showModal();
 }
 
 async function deleteEulerKey(id) {

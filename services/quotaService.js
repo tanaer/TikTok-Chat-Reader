@@ -51,7 +51,6 @@ async function getActiveSubscription(userId) {
     return db.get(
         `SELECT us.*, p.name AS plan_name, p.code AS plan_code,
                 p.room_limit AS plan_room_limit,
-                p.open_room_limit AS plan_open_room_limit,
                 p.daily_room_create_limit AS plan_daily_room_create_limit,
                 p.feature_flags AS plan_feature_flags,
                 p.sort_order AS plan_sort_order
@@ -69,9 +68,6 @@ async function getQuotaOverrides(userId) {
                 room_limit_permanent,
                 room_limit_temporary,
                 room_limit_temporary_expires_at,
-                open_room_limit_permanent,
-                open_room_limit_temporary,
-                open_room_limit_temporary_expires_at,
                 daily_room_create_limit_permanent,
                 daily_room_create_limit_temporary,
                 daily_room_create_limit_temporary_expires_at,
@@ -86,9 +82,6 @@ async function getQuotaOverrides(userId) {
         roomLimitPermanent: null,
         roomLimitTemporary: null,
         roomLimitTemporaryExpiresAt: null,
-        openRoomLimitPermanent: null,
-        openRoomLimitTemporary: null,
-        openRoomLimitTemporaryExpiresAt: null,
         dailyRoomCreateLimitPermanent: null,
         dailyRoomCreateLimitTemporary: null,
         dailyRoomCreateLimitTemporaryExpiresAt: null,
@@ -124,18 +117,12 @@ async function getUserQuota(userId) {
             isUnlimited: true,
             hasSubscription: true,
             subscriptionEndDate: null,
-            baseOpenRoomLimit: -1,
-            openRoomBaseLimit: -1,
-            openRoomLimit: -1,
-            openCount: 0,
-            openRemaining: -1,
             baseDailyRoomCreateLimit: -1,
             dailyLimit: -1,
             dailyUsed: 0,
             dailyRemaining: -1,
             quotaOverrides: {
                 roomLimit: { base: -1, permanent: null, temporary: null, temporaryExpiresAt: null, effective: -1, source: 'base' },
-                openRoomLimit: { base: -1, permanent: null, temporary: null, temporaryExpiresAt: null, effective: -1, source: 'base' },
                 dailyCreateLimit: { base: -1, permanent: null, temporary: null, temporaryExpiresAt: null, effective: -1, source: 'base' },
             }
         };
@@ -143,7 +130,6 @@ async function getUserQuota(userId) {
 
     const sub = await getActiveSubscription(userId);
     const subLimit = sub ? normalizeLimitValue(sub.planRoomLimit, 0) : 0;
-    const baseOpenRoomLimit = sub ? normalizeLimitValue(sub.planOpenRoomLimit, -1) : -1;
     const fallbackGiftDailyRoomCreateLimit = sub && sub.planCode === 'gift' && subLimit > 0 ? subLimit : -1;
     const baseDailyRoomCreateLimit = sub
         ? normalizeLimitValue(sub.planDailyRoomCreateLimit, fallbackGiftDailyRoomCreateLimit)
@@ -172,12 +158,6 @@ async function getUserQuota(userId) {
         overrides.roomLimitTemporary,
         overrides.roomLimitTemporaryExpiresAt
     );
-    const openRoomLimitResolved = resolveEffectiveLimit(
-        baseOpenRoomLimit,
-        overrides.openRoomLimitPermanent,
-        overrides.openRoomLimitTemporary,
-        overrides.openRoomLimitTemporaryExpiresAt
-    );
     const dailyRoomCreateLimitResolved = resolveEffectiveLimit(
         baseDailyRoomCreateLimit,
         overrides.dailyRoomCreateLimitPermanent,
@@ -191,20 +171,11 @@ async function getUserQuota(userId) {
     );
     const used = normalizeLimitValue(countResult?.count, 0);
 
-    const openCountResult = await db.get(
-        `SELECT COUNT(*) AS count
-         FROM user_room
-         WHERE user_id = ? AND deleted_at IS NULL AND is_enabled = true`,
-        [userId]
-    );
-    const openCount = normalizeLimitValue(openCountResult?.count, 0);
     const dailyUsed = await getTodayRoomCreateCount(userId);
 
     const effectiveRoomLimit = roomLimitResolved.effective;
-    const effectiveOpenRoomLimit = openRoomLimitResolved.effective;
     const effectiveDailyRoomCreateLimit = dailyRoomCreateLimitResolved.effective;
     const isUnlimited = effectiveRoomLimit === -1;
-    const isOpenUnlimited = effectiveOpenRoomLimit === -1;
     const isDailyUnlimited = effectiveDailyRoomCreateLimit === -1;
 
     return {
@@ -220,11 +191,6 @@ async function getUserQuota(userId) {
         isUnlimited,
         hasSubscription,
         subscriptionEndDate: sub?.endDate || null,
-        baseOpenRoomLimit,
-        openRoomBaseLimit: baseOpenRoomLimit,
-        openRoomLimit: effectiveOpenRoomLimit,
-        openCount,
-        openRemaining: isOpenUnlimited ? -1 : Math.max(0, effectiveOpenRoomLimit - openCount),
         baseDailyRoomCreateLimit,
         dailyLimit: effectiveDailyRoomCreateLimit,
         dailyUsed,
@@ -237,14 +203,6 @@ async function getUserQuota(userId) {
                 temporaryExpiresAt: overrides.roomLimitTemporaryExpiresAt || null,
                 effective: effectiveRoomLimit,
                 source: roomLimitResolved.source,
-            },
-            openRoomLimit: {
-                base: baseOpenRoomLimit,
-                permanent: normalizeNullableLimit(overrides.openRoomLimitPermanent),
-                temporary: normalizeNullableLimit(overrides.openRoomLimitTemporary),
-                temporaryExpiresAt: overrides.openRoomLimitTemporaryExpiresAt || null,
-                effective: effectiveOpenRoomLimit,
-                source: openRoomLimitResolved.source,
             },
             dailyCreateLimit: {
                 base: baseDailyRoomCreateLimit,

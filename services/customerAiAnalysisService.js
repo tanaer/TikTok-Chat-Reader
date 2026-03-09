@@ -11,6 +11,7 @@ const CUSTOMER_ANALYSIS_SYSTEM_GUARDRAILS = [
     '只能输出合法 JSON，不要输出 Markdown、代码块或额外说明。'
 ].join('\n');
 
+
 function stripMarkdownCodeFence(text) {
     const normalized = String(text || '').trim();
     return normalized

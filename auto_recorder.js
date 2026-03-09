@@ -1,5 +1,5 @@
 
-const { TikTokConnectionWrapper, getKeyCount } = require('./connectionWrapper');
+const { TikTokConnectionWrapper } = require('./connectionWrapper');
 const { manager } = require('./manager');
 const {
     getSessionMaintenanceConfig,
@@ -193,6 +193,7 @@ class AutoRecorder {
 
     async checkConnectionHealth() {
         console.log(`[AutoRecorder] Heartbeat: Checking ${this.activeConnections.size} active connections...`);
+        const recentActivityThresholdMs = 90 * 1000;
 
         for (const [uniqueId, conn] of this.activeConnections.entries()) {
             const { wrapper } = conn;
@@ -218,6 +219,10 @@ class AutoRecorder {
             if (!wsConnected) {
                 // WebSocket is disconnected but connection is still in activeConnections
                 console.log(`[AutoRecorder] Heartbeat: ${uniqueId} WebSocket DISCONNECTED (lastEvent ${timeSinceEvent}s ago). Waiting for auto-reconnect...`);
+                continue;
+            }
+
+            if ((now - lastEventTime) <= recentActivityThresholdMs) {
                 continue;
             }
 
@@ -540,9 +545,11 @@ class AutoRecorder {
 
         // Check rooms with concurrency limit (Smart Concurrency: 1 per Key)
         if (roomsToCheck.length > 0) {
-            const keyCount = getKeyCount();
-            const CONCURRENCY_LIMIT = Math.max(1, keyCount);
-            console.log(`[AutoRecorder] Checking ${roomsToCheck.length} rooms (max ${CONCURRENCY_LIMIT} concurrent, based on ${keyCount} keys)...`);
+            const keyStatus = keyManager.getStatus();
+            const activeKeyCount = Math.max(0, Number(keyStatus.active || 0));
+            const totalKeyCount = Math.max(0, Number(keyStatus.total || 0));
+            const CONCURRENCY_LIMIT = Math.max(1, activeKeyCount);
+            console.log(`[AutoRecorder] Checking ${roomsToCheck.length} rooms (max ${CONCURRENCY_LIMIT} concurrent, based on ${activeKeyCount}/${totalKeyCount} active Euler keys)...`);
 
             for (let i = 0; i < roomsToCheck.length; i += CONCURRENCY_LIMIT) {
                 const batch = roomsToCheck.slice(i, i + CONCURRENCY_LIMIT);
@@ -628,7 +635,7 @@ class AutoRecorder {
             const options = {
                 enableExtendedGiftInfo: true,
                 fetchRoomInfoOnConnect: true,
-                preferEulerRoomLookup: true,
+                preferEulerRoomLookup: false,
                 proxyUrl: dbSettings.proxy_url || dbSettings.proxy,
                 eulerApiKey: dbSettings.euler_api_key,
                 // Conditionally add session credentials
@@ -975,6 +982,7 @@ class AutoRecorder {
                 uniqueId: msg.user?.uniqueId || msg.uniqueId,
                 nickname: msg.user?.nickname || msg.nickname,
                 userId: msg.user?.userId || msg.userId,
+                region: msg.user?.region || '',
                 ...roleInfo
             };
             logEvent('member', data);
@@ -1107,6 +1115,7 @@ class AutoRecorder {
                 uniqueId: msg.user?.uniqueId || msg.uniqueId,
                 nickname: msg.user?.nickname || msg.nickname,
                 userId: msg.user?.userId || msg.userId,
+                region: msg.user?.region || '',
                 likeCount: msg.likeCount,
                 totalLikeCount: msg.totalLikeCount,
                 ...roleInfo
@@ -1203,7 +1212,7 @@ class AutoRecorder {
             const options = {
                 enableExtendedGiftInfo: true,
                 fetchRoomInfoOnConnect: true,
-                preferEulerRoomLookup: true,
+                preferEulerRoomLookup: false,
                 proxyUrl: dbSettings.proxy_url || dbSettings.proxy,
                 eulerApiKey: dbSettings.euler_api_key,
                 ...(sessionId ? {

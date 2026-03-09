@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { initDb, query, run, get } = require('./db');
 const metricsService = require('./services/metricsService');
+const { getSchemeAConfig } = require('./services/featureFlagService');
 
 const PRICE_FILE = path.join(__dirname, 'prices.json');
 
@@ -33,6 +34,60 @@ function convertToBeijingTimeString(input) {
 
 function isLikelyExactRoomIdSearch(value) {
     return typeof value === 'string' && /^[A-Za-z0-9._@-]+$/.test(value.trim());
+}
+
+function toOptionalText(value) {
+    if (value === undefined || value === null || value === '') return null;
+    return String(value);
+}
+
+function toInteger(value, fallback = 0) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? Math.trunc(numeric) : fallback;
+}
+
+function toBooleanInteger(value) {
+    return value ? 1 : 0;
+}
+
+function safeJsonStringify(value, fallback = '{}') {
+    try {
+        return JSON.stringify(value ?? {});
+    } catch {
+        return fallback;
+    }
+}
+
+const EVENT_GIFT_NAME_SQL = `COALESCE(NULLIF(gift_name, ''), data_json::json->>'giftName')`;
+const EVENT_GIFT_IMAGE_SQL = `COALESCE(NULLIF(gift_image, ''), data_json::json->>'giftImage', data_json::json->>'giftPictureUrl')`;
+const EVENT_GIFT_TYPE_SQL = `LOWER(COALESCE(NULLIF(gift_name, ''), data_json::json->>'giftName', ''))`;
+
+function buildEventDataJsonFromRow(row = {}) {
+    return safeJsonStringify({
+        userId: row.userId || null,
+        uniqueId: row.uniqueId || null,
+        nickname: row.nickname || null,
+        giftId: row.giftId ?? null,
+        giftName: row.giftName || null,
+        giftImage: row.giftImage || null,
+        groupId: row.groupId || null,
+        diamondCount: row.diamondCount ?? 0,
+        repeatCount: row.repeatCount ?? 1,
+        likeCount: row.likeCount ?? 0,
+        totalLikeCount: row.totalLikeCount ?? 0,
+        comment: row.comment || null,
+        viewerCount: row.viewerCount ?? null,
+        region: row.region || null,
+        isAdmin: Boolean(row.isAdmin),
+        isSuperAdmin: Boolean(row.isSuperAdmin),
+        isModerator: Boolean(row.isModerator),
+        fanLevel: row.fanLevel ?? 0,
+        fanClubName: row.fanClubName || null,
+    });
+}
+
+function isIncrementalStatsReadEnabled() {
+    return Boolean(getSchemeAConfig().event.enableIncrementalStats);
 }
 
 class Manager {
@@ -368,25 +423,35 @@ class Manager {
                 params.push(sinceTime);
             }
             return await query(`
-                SELECT s.session_id, s.room_id, s.created_at, et.end_time
+                SELECT
+                    s.session_id,
+                    s.room_id,
+                    s.created_at,
+                    COALESCE(ss.end_time, et.end_time) as end_time
                 FROM session s
+                LEFT JOIN session_summary ss ON ss.session_id = s.session_id
                 LEFT JOIN LATERAL (
                     SELECT MAX(timestamp) as end_time
                     FROM event
                     WHERE event.session_id = s.session_id
-                ) et ON true
+                ) et ON ss.session_id IS NULL
                 WHERE s.room_id = ? ${timeFilter}
                 ORDER BY s.created_at DESC
             `, params);
         }
         return await query(`
-            SELECT s.session_id, s.room_id, s.created_at, et.end_time
+            SELECT
+                s.session_id,
+                s.room_id,
+                s.created_at,
+                COALESCE(ss.end_time, et.end_time) as end_time
             FROM session s
+            LEFT JOIN session_summary ss ON ss.session_id = s.session_id
             LEFT JOIN LATERAL (
                 SELECT MAX(timestamp) as end_time
                 FROM event
                 WHERE event.session_id = s.session_id
-            ) et ON true
+            ) et ON ss.session_id IS NULL
             ORDER BY s.created_at DESC
         `);
     }
@@ -416,46 +481,60 @@ class Manager {
         };
     }
 
-    // Event Logging - writes to expanded columns (data_json removed to save space)
+    // Event Logging - writes explicit analysis columns while retaining data_json for legacy compatibility
     async logEvent(roomId, eventType, data, sessionId = null) {
         await this.ensureDb();
         const now = getNowBeijing();
+        const payload = data && typeof data === 'object' ? data : {};
 
         // Only sync user data for meaningful event types (chat, gift, like)
         // This prevents recording users who only triggered member/view events
         const userRecordableTypes = ['chat', 'gift', 'like'];
-        if (data.userId && userRecordableTypes.includes(eventType)) {
+        if (payload.userId && userRecordableTypes.includes(eventType)) {
             await this.ensureUser({
-                userId: data.userId,
-                uniqueId: data.uniqueId,
-                nickname: data.nickname,
-                avatar: data.profilePictureUrl || '',
-                region: data.region || null
+                userId: payload.userId,
+                uniqueId: payload.uniqueId,
+                nickname: payload.nickname,
+                avatar: payload.profilePictureUrl || '',
+                region: payload.region || null
             });
         }
 
-        // Insert with expanded columns for fast querying (no data_json to save space)
         await run(`INSERT INTO event (
         room_id, session_id, type, timestamp,
         user_id, unique_id, nickname,
-        gift_id, diamond_count, repeat_count,
+        gift_id, gift_name, gift_image, group_id,
+        diamond_count, repeat_count,
         like_count, total_like_count,
-        comment, viewer_count
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
+        comment, viewer_count, region,
+        is_admin, is_super_admin, is_moderator,
+        fan_level, fan_club_name,
+        data_json
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, [
             roomId,
             sessionId,
             eventType,
             now,
-            data.userId || null,
-            data.uniqueId || null,
-            data.nickname || null,
-            data.giftId || null,
-            data.diamondCount || 0,
-            data.repeatCount || 1,
-            data.likeCount || 0,
-            data.totalLikeCount || 0,
-            data.comment || null,
-            data.viewerCount || null
+            toOptionalText(payload.userId),
+            toOptionalText(payload.uniqueId),
+            toOptionalText(payload.nickname),
+            payload.giftId == null || payload.giftId === '' ? null : toInteger(payload.giftId, null),
+            toOptionalText(payload.giftName),
+            toOptionalText(payload.giftImage),
+            toOptionalText(payload.groupId),
+            toInteger(payload.diamondCount, 0),
+            toInteger(payload.repeatCount, 1),
+            toInteger(payload.likeCount, 0),
+            toInteger(payload.totalLikeCount, 0),
+            toOptionalText(payload.comment),
+            payload.viewerCount == null || payload.viewerCount === '' ? null : toInteger(payload.viewerCount, null),
+            toOptionalText(payload.region),
+            toBooleanInteger(payload.isAdmin),
+            toBooleanInteger(payload.isSuperAdmin),
+            toBooleanInteger(payload.isModerator),
+            toInteger(payload.fanLevel, 0),
+            toOptionalText(payload.fanClubName),
+            safeJsonStringify(payload)
         ]);
     }
 
@@ -872,13 +951,90 @@ class Manager {
 
     async getSessionEvents(sessionId) {
         await this.ensureDb();
-        return await query('SELECT type, timestamp, data_json FROM event WHERE session_id = ? ORDER BY timestamp ASC',
-            [sessionId]);
+        const rows = await query(`
+            SELECT
+                type,
+                timestamp,
+                user_id,
+                unique_id,
+                nickname,
+                gift_id,
+                gift_name,
+                gift_image,
+                group_id,
+                diamond_count,
+                repeat_count,
+                like_count,
+                total_like_count,
+                comment,
+                viewer_count,
+                region,
+                is_admin,
+                is_super_admin,
+                is_moderator,
+                fan_level,
+                fan_club_name,
+                data_json
+            FROM event
+            WHERE session_id = ?
+            ORDER BY timestamp ASC
+        `, [sessionId]);
+        return rows.map(row => ({
+            type: row.type,
+            timestamp: row.timestamp,
+            dataJson: row.dataJson || buildEventDataJsonFromRow(row),
+        }));
     }
 
     // Time Statistics (30-min intervals) - supports full history or a specific session
     async getTimeStats(roomId, sessionId = null, sinceTime = null) {
         await this.ensureDb();
+
+        if (roomId && !sessionId && sinceTime && isIncrementalStatsReadEnabled()) {
+            const minuteParams = [roomId];
+            let minuteWhereClause = 'WHERE room_id = ?';
+            if (sinceTime) {
+                minuteWhereClause += ' AND stat_minute >= ?';
+                minuteParams.push(sinceTime);
+            }
+
+            const minuteStats = await query(`
+                WITH bucketed AS (
+                    SELECT
+                        date_trunc('hour', stat_minute)
+                            + floor(extract(minute from stat_minute) / 30) * interval '30 minute' as bucket_start,
+                        SUM(COALESCE(chat_count, 0)) as comments,
+                        SUM(COALESCE(gift_value, 0)) as income,
+                        SUM(COALESCE(member_count, 0)) as member_entries,
+                        0 as viewer_samples,
+                        MAX(COALESCE(max_viewer_count, 0)) as max_online
+                    FROM room_minute_stats
+                    ${minuteWhereClause}
+                    GROUP BY bucket_start
+                )
+                SELECT
+                    to_char(bucket_start, 'HH24:MI') || '-' ||
+                    to_char(bucket_start + interval '30 minute', 'HH24:MI') as time_range,
+                    comments,
+                    income,
+                    member_entries,
+                    viewer_samples,
+                    max_online
+                FROM bucketed
+                ORDER BY bucket_start ASC
+            `, minuteParams);
+
+            if (minuteStats.length > 0) {
+                return minuteStats.map(s => ({
+                    time_range: s.timeRange,
+                    income: parseInt(s.income) || 0,
+                    comments: parseInt(s.comments) || 0,
+                    member_entries: parseInt(s.memberEntries) || 0,
+                    viewer_samples: parseInt(s.viewerSamples) || 0,
+                    max_online: parseInt(s.maxOnline) || 0
+                }));
+            }
+        }
 
         let whereClause = `WHERE room_id = ? AND type IN ('gift', 'chat', 'roomUser', 'member')`;
         const params = [roomId];
@@ -903,7 +1059,6 @@ class Manager {
                     diamond_count,
                     repeat_count,
                     viewer_count,
-                    data_json,
                     date_trunc('hour', timestamp)
                         + floor(extract(minute from timestamp) / 30) * interval '30 minute' as bucket_start
                 FROM event
@@ -918,7 +1073,7 @@ class Manager {
                 COUNT(*) FILTER (WHERE type = 'roomUser') as viewer_samples,
                 GREATEST(
                     MAX(CASE
-                        WHEN type = 'roomUser' THEN COALESCE(viewer_count, (data_json::json->>'viewerCount')::int, 0)
+                        WHEN type = 'roomUser' THEN COALESCE(viewer_count, 0)
                         ELSE 0
                     END),
                     COUNT(*) FILTER (WHERE type = 'member')
@@ -1505,14 +1660,14 @@ class Manager {
         const topGiftStats = await query(`
             SELECT
                 user_id,
-                (data_json::json->>'giftName') as gift_name,
-                (data_json::json->>'giftPictureUrl') as gift_icon,
+                ${EVENT_GIFT_NAME_SQL} as gift_name,
+                ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
                 MAX(COALESCE(diamond_count, 0)) as unit_price,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL ${topGiftRoomClause}
-            GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
+            WHERE type = 'gift' AND user_id IN (${placeholders}) AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL ${topGiftRoomClause}
+            GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
             ORDER BY user_id, total_value DESC
         `, topGiftParams);
 
@@ -1632,16 +1787,16 @@ class Manager {
 
         if (giftPreference === 'true_love') {
             havingConditions.push(`
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'rose'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) >
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'tiktok'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0)
             `);
         } else if (giftPreference === 'knife') {
             havingConditions.push(`
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'tiktok'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) >
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'rose'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0)
             `);
         }
@@ -1680,9 +1835,9 @@ class Manager {
                 SUM(COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1)) as totalValue,
                 COUNT(DISTINCT e.room_id) as roomCount,
                 MAX(e.timestamp) as lastActive,
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'rose'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'rose'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) as rose_value,
-                COALESCE(SUM(CASE WHEN LOWER(e.data_json::json->>'giftName') = 'tiktok'
+                COALESCE(SUM(CASE WHEN ${EVENT_GIFT_TYPE_SQL} = 'tiktok'
                     THEN COALESCE(e.diamond_count, 0) * COALESCE(e.repeat_count, 1) ELSE 0 END), 0) as tiktok_value
             FROM event e
             JOIN "user" u ON e.user_id = u.user_id
@@ -1740,14 +1895,14 @@ class Manager {
         const topGiftStats = await query(`
             SELECT
                 user_id,
-                (data_json::json->>'giftName') as gift_name,
-                (data_json::json->>'giftPictureUrl') as gift_icon,
+                ${EVENT_GIFT_NAME_SQL} as gift_name,
+                ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
                 MAX(COALESCE(diamond_count, 0)) as unit_price,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders}) AND data_json IS NOT NULL ${subRoomClause}
-            GROUP BY user_id, (data_json::json->>'giftName'), (data_json::json->>'giftPictureUrl')
+            WHERE type = 'gift' AND user_id IN (${placeholders}) AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL ${subRoomClause}
+            GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
             ORDER BY user_id, total_value DESC
         `, [...userIds, ...subRoomParams]);
 
@@ -1769,14 +1924,14 @@ class Manager {
 
         const roseTikTokStats = await query(`
             SELECT user_id,
-                LOWER(data_json::json->>'giftName') as gift_type,
+                ${EVENT_GIFT_TYPE_SQL} as gift_type,
                 SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                 SUM(COALESCE(repeat_count, 1)) as gift_count
             FROM event
             WHERE type = 'gift'
               AND user_id IN (${placeholders})
-              AND LOWER(data_json::json->>'giftName') IN ('rose', 'tiktok')
-            GROUP BY user_id, LOWER(data_json::json->>'giftName')
+              AND ${EVENT_GIFT_TYPE_SQL} IN ('rose', 'tiktok')
+            GROUP BY user_id, ${EVENT_GIFT_TYPE_SQL}
         `, userIds);
 
         const roseMap = {};
@@ -1972,14 +2127,52 @@ class Manager {
             if (earliest > start) start = earliest;
         }
 
+        const normalizedLimit = parseInt(limit) || 100;
         let roomFilterClause = '';
         const params = [start.toISOString(), end.toISOString()];
         if (roomFilter && roomFilter.length > 0) {
             const placeholders = roomFilter.map(() => '?').join(',');
-            roomFilterClause = `AND e.room_id IN (${placeholders})`;
+            roomFilterClause = `AND rms.room_id IN (${placeholders})`;
             params.push(...roomFilter);
         }
-        params.push(parseInt(limit) || 100);
+        params.push(normalizedLimit);
+
+        if (isIncrementalStatsReadEnabled()) {
+            const minuteStats = await query(`
+                SELECT
+                    rms.room_id,
+                    MAX(r.name) as room_name,
+                    SUM(COALESCE(rms.member_count, 0)) as count,
+                    MAX(rs.valid_daily_avg) as daily_avg
+                FROM room_minute_stats rms
+                LEFT JOIN room r ON rms.room_id = r.room_id
+                LEFT JOIN room_stats rs ON rms.room_id = rs.room_id
+                WHERE rms.stat_minute >= ?
+                  AND rms.stat_minute <= ?
+                  ${roomFilterClause}
+                GROUP BY rms.room_id
+                ORDER BY count DESC
+                LIMIT ?
+            `, params);
+
+            if (minuteStats.length > 0) {
+                return minuteStats.map(s => ({
+                    roomId: s.roomId,
+                    roomName: s.roomName || s.roomId,
+                    count: parseInt(s.count) || 0,
+                    dailyAvg: parseInt(s.dailyAvg) || 0
+                }));
+            }
+        }
+
+        let eventRoomFilterClause = '';
+        const eventParams = [start.toISOString(), end.toISOString()];
+        if (roomFilter && roomFilter.length > 0) {
+            const placeholders = roomFilter.map(() => '?').join(',');
+            eventRoomFilterClause = `AND e.room_id IN (${placeholders})`;
+            eventParams.push(...roomFilter);
+        }
+        eventParams.push(normalizedLimit);
 
         const stats = await query(`
             SELECT
@@ -1993,11 +2186,11 @@ class Manager {
             WHERE e.type = 'member'
             AND e.timestamp >= ?
             AND e.timestamp <= ?
-            ${roomFilterClause}
+            ${eventRoomFilterClause}
             GROUP BY e.room_id
             ORDER BY count DESC
             LIMIT ?
-        `, params);
+        `, eventParams);
 
         return stats.map(s => ({
             roomId: s.roomId,
@@ -2612,24 +2805,63 @@ class Manager {
         // For Viewers/Members: COUNT(*) of 'member' events approx unique entries if session-based.
         // For Likes: MAX(likeCount) is best for snapshot.
 
-        const summary = await get(`
-            SELECT
-                SUM(CASE WHEN type='chat' THEN 1 ELSE 0 END) as totalComments,
-                SUM(CASE WHEN type='member' THEN 1 ELSE 0 END) as totalVisits,
-                MAX(CASE WHEN type='like' THEN COALESCE(total_like_count, 0) ELSE 0 END) as maxLikes,
-                SUM(CASE WHEN type='gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as totalGiftValue
-            FROM event
-            ${whereClause}
-        `, params);
-
-        // Duration calculation
-        // Min/Max timestamp
-        const timeRange = await get(`SELECT MIN(timestamp) as start, MAX(timestamp) as end FROM event ${whereClause}`, params);
+        let summary = null;
+        let timeRange = { start: null, end: null };
         let duration = 0;
-        if (timeRange.start && timeRange.end) {
-            const start = new Date(timeRange.start);
-            const end = new Date(timeRange.end);
-            duration = Math.floor((end - start) / 1000); // seconds
+
+        if (sessionId && sessionId !== 'live' && isIncrementalStatsReadEnabled()) {
+            const sessionSummary = await get(`
+                SELECT
+                    session_id,
+                    room_id,
+                    start_time,
+                    end_time,
+                    duration_secs,
+                    chat_count,
+                    gift_value,
+                    member_count
+                FROM session_summary
+                WHERE room_id = ? AND session_id = ?
+            `, [roomId, sessionId]);
+
+            if (sessionSummary) {
+                const likeSummary = await get(`
+                    SELECT MAX(CASE WHEN type='like' THEN COALESCE(total_like_count, 0) ELSE 0 END) as maxLikes
+                    FROM event
+                    WHERE room_id = ? AND session_id = ?
+                `, [roomId, sessionId]);
+
+                summary = {
+                    totalComments: sessionSummary.chatCount || 0,
+                    totalVisits: sessionSummary.memberCount || 0,
+                    maxLikes: likeSummary?.maxLikes || 0,
+                    totalGiftValue: sessionSummary.giftValue || 0
+                };
+                timeRange = {
+                    start: sessionSummary.startTime || null,
+                    end: sessionSummary.endTime || null
+                };
+                duration = parseInt(sessionSummary.durationSecs) || 0;
+            }
+        }
+
+        if (!summary) {
+            summary = await get(`
+                SELECT
+                    SUM(CASE WHEN type='chat' THEN 1 ELSE 0 END) as totalComments,
+                    SUM(CASE WHEN type='member' THEN 1 ELSE 0 END) as totalVisits,
+                    MAX(CASE WHEN type='like' THEN COALESCE(total_like_count, 0) ELSE 0 END) as maxLikes,
+                    SUM(CASE WHEN type='gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as totalGiftValue
+                FROM event
+                ${whereClause}
+            `, params);
+
+            timeRange = await get(`SELECT MIN(timestamp) as start, MAX(timestamp) as end FROM event ${whereClause}`, params);
+            if (timeRange.start && timeRange.end) {
+                const start = new Date(timeRange.start);
+                const end = new Date(timeRange.end);
+                duration = Math.floor((end - start) / 1000);
+            }
         }
 
         // 2. Leaderboards
@@ -3283,14 +3515,14 @@ class Manager {
                 const roseTiktokStats = await query(`
                     SELECT
                         user_id,
-                        LOWER(data_json::json->>'giftName') as gift_type,
+                        ${EVENT_GIFT_TYPE_SQL} as gift_type,
                         SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
                         SUM(COALESCE(repeat_count, 1)) as gift_count
                     FROM event
                     WHERE type = 'gift'
                       AND user_id IN (${placeholders})
-                      AND LOWER(data_json::json->>'giftName') IN ('rose', 'tiktok')
-                    GROUP BY user_id, LOWER(data_json::json->>'giftName')
+                      AND ${EVENT_GIFT_TYPE_SQL} IN ('rose', 'tiktok')
+                    GROUP BY user_id, ${EVENT_GIFT_TYPE_SQL}
                 `, batchIds);
 
                 const roseMap = {};

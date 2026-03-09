@@ -382,6 +382,11 @@ app.locals.autoRecorder = autoRecorder;
 // Enable CORS & request body parsing
 const REQUEST_BODY_LIMIT = '20mb';
 const ROOM_LIST_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ROOM_LIST_CACHE_TTL_MS || '10000', 10) || 10000);
+const ALLTIME_LEADERBOARDS_CACHE_TTL_MS = Math.max(0, parseInt(process.env.ALLTIME_LEADERBOARDS_CACHE_TTL_MS || '15000', 10) || 15000);
+const ROOM_SESSIONS_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 15000);
+const ARCHIVED_STATS_DETAIL_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 30000);
+const ANALYSIS_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 20000);
+const SESSION_RECAP_CACHE_TTL_MS = Math.max(ARCHIVED_STATS_DETAIL_CACHE_TTL_MS, 30000);
 const ROOM_LIST_CACHE_MAX_ENTRIES = 200;
 const roomListResponseCache = new Map();
 const ROOM_LIST_CACHE_NAMESPACE = 'room_list';
@@ -407,6 +412,150 @@ function buildRoomListCacheKey(endpoint, req, params = {}, cacheVersion = roomLi
 
 function buildRoomListRedisKey(cacheKey) {
     return cacheService.buildCacheKey(ROOM_LIST_CACHE_NAMESPACE, cacheKey);
+}
+
+function buildAllTimeLeaderboardsCacheKey(roomId) {
+    return cacheService.buildCacheKey('room_detail', 'alltime_leaderboards', roomId);
+}
+
+function buildRoomSessionsCacheKey(roomId) {
+    return cacheService.buildCacheKey('room_detail', 'sessions', roomId);
+}
+
+function buildArchivedStatsDetailCacheKey(roomId, sessionId) {
+    return cacheService.buildCacheKey('room_detail', 'stats_detail', roomId, sessionId);
+}
+
+async function getCachedRoomSessions(roomId) {
+    if (!roomId || !cacheService.isRoomCacheEnabled() || ROOM_SESSIONS_CACHE_TTL_MS <= 0) {
+        return manager.getSessions(roomId);
+    }
+
+    const cacheKey = buildRoomSessionsCacheKey(roomId);
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const sessions = await manager.getSessions(roomId);
+    await cacheService.setJson(cacheKey, sessions, { ttlMs: ROOM_SESSIONS_CACHE_TTL_MS });
+    return sessions;
+}
+
+async function getCachedArchivedStatsDetail(roomId, sessionId) {
+    if (!roomId || !sessionId || sessionId === 'live' || !cacheService.isRoomCacheEnabled() || ARCHIVED_STATS_DETAIL_CACHE_TTL_MS <= 0) {
+        return manager.getRoomDetailStats(roomId, sessionId);
+    }
+
+    const cacheKey = buildArchivedStatsDetailCacheKey(roomId, sessionId);
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const data = await manager.getRoomDetailStats(roomId, sessionId);
+    await cacheService.setJson(cacheKey, data, { ttlMs: ARCHIVED_STATS_DETAIL_CACHE_TTL_MS });
+    return data;
+}
+
+async function invalidateRoomDetailCaches(roomId, sessionId = null) {
+    if (!roomId || !cacheService.isRoomCacheEnabled()) return;
+
+    await cacheService.del(buildRoomSessionsCacheKey(roomId));
+    if (sessionId) {
+        await cacheService.del(buildArchivedStatsDetailCacheKey(roomId, sessionId));
+    }
+}
+
+function normalizeRoomFilterCacheKey(roomFilter) {
+    if (roomFilter === null) return 'all';
+    if (!Array.isArray(roomFilter) || roomFilter.length === 0) return 'none';
+    return Array.from(new Set(roomFilter.map(item => String(item || '').trim()).filter(Boolean))).sort().join(',');
+}
+
+function buildAnalysisCacheKey(endpoint, req, roomFilter, params = {}) {
+    return cacheService.buildCacheKey(
+        'analysis',
+        endpoint,
+        getRoomListActorCacheKey(req),
+        normalizeRoomFilterCacheKey(roomFilter),
+        JSON.stringify(params || {})
+    );
+}
+
+async function getCachedAnalysisPayload(cacheKey, loader) {
+    if (!cacheService.isRoomCacheEnabled() || ANALYSIS_CACHE_TTL_MS <= 0) {
+        return loader();
+    }
+
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const payload = await loader();
+    await cacheService.setJson(cacheKey, payload, { ttlMs: ANALYSIS_CACHE_TTL_MS });
+    return payload;
+}
+
+function buildUserAnalysisDetailVersionKey(targetUserId) {
+    return cacheService.buildCacheKey('analysis', 'user_detail_version', String(targetUserId || '').trim());
+}
+
+function buildUserAnalysisDetailCacheKey(req, roomFilter, targetUserId, cacheVersion = 0) {
+    return buildAnalysisCacheKey('user_detail', req, roomFilter, {
+        userId: String(targetUserId || '').trim(),
+        version: Number(cacheVersion || 0)
+    });
+}
+
+async function getUserAnalysisDetailCacheVersion(targetUserId) {
+    const normalizedTargetUserId = String(targetUserId || '').trim();
+    if (!normalizedTargetUserId || !cacheService.isRoomCacheEnabled()) {
+        return 0;
+    }
+
+    const version = await cacheService.getNumber(buildUserAnalysisDetailVersionKey(normalizedTargetUserId));
+    return Number.isFinite(version) && version > 0 ? version : 0;
+}
+
+async function invalidateUserAnalysisDetailCaches(targetUserId) {
+    const normalizedTargetUserId = String(targetUserId || '').trim();
+    if (!normalizedTargetUserId || !cacheService.isRoomCacheEnabled()) {
+        return 0;
+    }
+
+    return cacheService.increment(buildUserAnalysisDetailVersionKey(normalizedTargetUserId), 1);
+}
+
+async function getCachedUserAnalysisBase(req, targetUserId, roomFilter) {
+    const normalizedTargetUserId = String(targetUserId || '').trim();
+    if (!normalizedTargetUserId) {
+        return manager.getUserAnalysis(targetUserId, roomFilter);
+    }
+
+    const cacheVersion = await getUserAnalysisDetailCacheVersion(normalizedTargetUserId);
+    const cacheKey = buildUserAnalysisDetailCacheKey(req, roomFilter, normalizedTargetUserId, cacheVersion);
+    return getCachedAnalysisPayload(cacheKey, () => manager.getUserAnalysis(normalizedTargetUserId, roomFilter));
+}
+
+function buildSessionRecapCacheKey(roomId, sessionId, req, roomFilter) {
+    return cacheService.buildCacheKey(
+        'room_detail',
+        'session_recap',
+        roomId,
+        sessionId,
+        getRoomListActorCacheKey(req),
+        normalizeRoomFilterCacheKey(roomFilter)
+    );
+}
+
+async function getCachedSessionRecap(roomId, sessionId, req, roomFilter) {
+    if (!roomId || !sessionId || sessionId === 'live' || !cacheService.isRoomCacheEnabled() || SESSION_RECAP_CACHE_TTL_MS <= 0) {
+        return manager.getSessionRecap(roomId, sessionId, roomFilter);
+    }
+
+    const cacheKey = buildSessionRecapCacheKey(roomId, sessionId, req, roomFilter);
+    const cached = await cacheService.getJson(cacheKey);
+    if (cached) return cached;
+
+    const recap = await manager.getSessionRecap(roomId, sessionId, roomFilter);
+    await cacheService.setJson(cacheKey, recap, { ttlMs: SESSION_RECAP_CACHE_TTL_MS });
+    return recap;
 }
 
 function readLocalRoomListCache(cacheKey) {
@@ -1065,7 +1214,7 @@ app.get('/api/rooms/:id/sessions', optionalAuth, async (req, res) => {
     try {
         const access = await canAccessRoom(req, req.params.id);
         if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
-        const sessions = await manager.getSessions(req.params.id);
+        const sessions = await getCachedRoomSessions(req.params.id);
         res.json(sessions);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1175,8 +1324,6 @@ app.get('/api/rooms/quota', optionalAuth, async (req, res) => {
                     used: 0,
                     remaining: -1,
                     isUnlimited: true,
-                    openRoomLimit: -1,
-                    openRemaining: -1,
                     dailyLimit: -1,
                     dailyUsed: 0,
                     dailyRemaining: -1,
@@ -1339,13 +1486,13 @@ app.get('/api/rooms/:id/stats_detail', optionalAuth, async (req, res) => {
         const sessionId = req.query.sessionId || null;
 
         // Get stats
-        const data = await manager.getRoomDetailStats(roomId, sessionId);
+        const data = await getCachedArchivedStatsDetail(roomId, sessionId);
 
         // Get isLive status
         const isLive = await getEffectiveRoomLiveFlag(roomId);
 
         // Get last session for fallback
-        const sessions = await manager.getSessions(roomId);
+        const sessions = await getCachedRoomSessions(roomId);
         const lastSession = sessions && sessions.length > 0 ? sessions[0] : null;
 
         res.json({
@@ -1376,7 +1523,7 @@ app.get('/api/rooms/:id/session-recap', optionalAuth, async (req, res) => {
 
         const sessionId = req.query.sessionId || 'live';
         const roomFilter = await getUserRoomFilter(req);
-        const recap = await manager.getSessionRecap(roomId, sessionId, roomFilter);
+        const recap = await getCachedSessionRecap(roomId, sessionId, req, roomFilter);
         const cachedReview = req.user && sessionId !== 'live'
             ? await getCachedSessionAiReview(req.user.id, roomId, sessionId)
             : null;
@@ -1553,7 +1700,20 @@ app.get('/api/rooms/:id/alltime-leaderboards', optionalAuth, async (req, res) =>
         const access = await canAccessRoom(req, roomId);
         if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
 
+        const cacheKey = buildAllTimeLeaderboardsCacheKey(roomId);
+        if (cacheService.isRoomCacheEnabled() && ALLTIME_LEADERBOARDS_CACHE_TTL_MS > 0) {
+            const cached = await cacheService.getJson(cacheKey);
+            if (cached) {
+                return res.json(cached);
+            }
+        }
+
         const data = await manager.getAllTimeLeaderboards(roomId);
+
+        if (cacheService.isRoomCacheEnabled() && ALLTIME_LEADERBOARDS_CACHE_TTL_MS > 0) {
+            await cacheService.setJson(cacheKey, data, { ttlMs: ALLTIME_LEADERBOARDS_CACHE_TTL_MS });
+        }
+
         res.json(data);
     } catch (err) {
         console.error('[API] alltime-leaderboards error:', err);
@@ -1572,6 +1732,8 @@ app.post('/api/sessions/end', async (req, res) => {
         // Tag all untagged events for this room with the new session_id
         await manager.tagEventsWithSession(roomId, sessionId, startTime);
 
+        await invalidateRoomDetailCaches(roomId, sessionId);
+
         console.log(`[SESSION] Ended session ${sessionId} for room ${roomId}, events tagged`);
         res.json({ success: true, sessionId });
     } catch (err) {
@@ -1586,7 +1748,7 @@ app.get('/api/sessions', optionalAuth, async (req, res) => {
             const access = await canAccessRoom(req, roomId);
             if (!access.allowed) return res.status(403).json({ error: '无权访问此房间' });
         }
-        const sessions = await manager.getSessions(roomId);
+        const sessions = roomId ? await getCachedRoomSessions(roomId) : await manager.getSessions(roomId);
         res.json(sessions);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1642,7 +1804,20 @@ app.get('/api/analysis/users', optionalAuth, async (req, res) => {
         const roomFilter = await getUserRoomFilter(req);
         if (roomFilter) filters.roomFilter = roomFilter;
         console.log(`[API] /api/analysis/users - user: ${req.user?.username || 'anonymous'}, role: ${req.user?.role || 'none'}, roomFilter: ${roomFilter === null ? 'null(admin)' : JSON.stringify(roomFilter)}`);
-        const result = await manager.getTopGifters(page, pageSize, filters);
+
+        const cacheKey = buildAnalysisCacheKey('users', req, roomFilter, {
+            page,
+            pageSize,
+            lang: filters.lang,
+            languageFilter: filters.languageFilter,
+            minRooms: filters.minRooms,
+            activeHour: filters.activeHour,
+            activeHourEnd: filters.activeHourEnd,
+            search: filters.search,
+            searchExact: filters.searchExact,
+            giftPreference: filters.giftPreference
+        });
+        const result = await getCachedAnalysisPayload(cacheKey, () => manager.getTopGifters(page, pageSize, filters));
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1651,7 +1826,6 @@ app.get('/api/analysis/users', optionalAuth, async (req, res) => {
 
 app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
     try {
-        // This shows a TikTok user's analysis; access requires login
         if (!req.user) return res.status(401).json({ error: '请先登录' });
         const roomFilter = await getUserRoomFilter(req);
         const [data, memberAnalysis, latestAiJob] = await Promise.all([
@@ -1663,7 +1837,6 @@ app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
         const response = serializeUserAnalysisDetail(data);
         response.aiAnalysis = memberAnalysis?.result || null;
         response.aiAnalysisJson = safeParseJsonObject(memberAnalysis?.resultJson);
-
         if (latestAiJob && ['queued', 'processing'].includes(String(latestAiJob.status || '').toLowerCase())) {
             response.aiJob = serializeSessionAiWorkJobForClient(latestAiJob);
         }
@@ -1700,7 +1873,6 @@ app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
         const roomFilter = await getUserRoomFilter(req);
         if (roomFilter) filters.roomFilter = roomFilter;
 
-        // Get user list first
         const exportListCacheKey = buildAnalysisCacheKey('users_export_list', req, roomFilter, {
             limit,
             lang: filters.lang,
@@ -1714,28 +1886,23 @@ app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
         const result = await getCachedAnalysisPayload(exportListCacheKey, () => manager.getTopGifters(1, limit, filters));
         const memberAnalysisMap = await getLatestMemberPersonalityAnalysisMap(req.user.id, result.users.map(user => user.userId));
 
-        // Fetch details for each user
-        const usersWithDetails = [];
-        for (const user of result.users) {
-            const details = await manager.getUserAnalysis(user.userId, roomFilter);
+        const usersWithDetails = await mapWithConcurrency(result.users, 8, async (user) => {
+            const details = await getCachedUserAnalysisBase(req, user.userId, roomFilter);
             const aiAnalysis = memberAnalysisMap.get(user.userId)?.result || null;
 
-            usersWithDetails.push({
+            return {
                 ...user,
                 ...details,
                 aiAnalysis,
-                // Format top gifts
                 topGiftsText: (user.topGifts || []).map(g => `${g.giftName || g.giftId}(${g.totalValue})`).join(', '),
                 roseValue: user.roseValue || 0,
                 tiktokValue: user.tiktokValue || 0,
-                // Format rooms
                 giftRoomsText: (details.giftRooms || []).slice(0, 5).map(r => `${r.name || r.roomId}(${r.val})`).join(', '),
                 visitRoomsText: (details.visitRooms || []).slice(0, 5).map(r => `${r.name || r.roomId}(${r.cnt}次)`).join(', '),
-                // Format time distribution
                 peakHours: formatPeakHours(details.hourStats),
                 peakDays: formatPeakDays(details.dayStats)
-            });
-        }
+            };
+        });
 
         res.json({ users: usersWithDetails, total: result.total });
     } catch (err) {
@@ -1756,6 +1923,30 @@ function formatPeakDays(dayStats) {
     const dayNames = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
     const sorted = [...dayStats].sort((a, b) => (b.cnt || 0) - (a.cnt || 0));
     return sorted.slice(0, 3).map(d => dayNames[parseInt(d.day)] || '').join(', ');
+}
+
+async function mapWithConcurrency(items, concurrency, iterator) {
+    if (!Array.isArray(items) || items.length === 0) {
+        return [];
+    }
+
+    const normalizedConcurrency = Math.max(1, Math.min(Number(concurrency) || 1, items.length));
+    const results = new Array(items.length);
+    let nextIndex = 0;
+
+    async function worker() {
+        while (true) {
+            const currentIndex = nextIndex;
+            nextIndex += 1;
+            if (currentIndex >= items.length) {
+                return;
+            }
+            results[currentIndex] = await iterator(items[currentIndex], currentIndex);
+        }
+    }
+
+    await Promise.all(Array.from({ length: normalizedConcurrency }, () => worker()));
+    return results;
 }
 
 function serializeUserAnalysisDetail(data = {}) {
@@ -1799,6 +1990,14 @@ function buildMemberPersonalityAnalysisCacheKey(memberId, targetUserId, cacheVer
     return cacheService.buildCacheKey('analysis', 'member_personality_ai_latest', memberId, targetUserId, Number(cacheVersion || 0));
 }
 
+function buildMemberAnalysisVersionKey(memberId, targetUserId) {
+    return buildMemberPersonalityAnalysisVersionKey(memberId, targetUserId);
+}
+
+function buildMemberAnalysisCacheKey(memberId, targetUserId, cacheVersion = 0) {
+    return buildMemberPersonalityAnalysisCacheKey(memberId, targetUserId, cacheVersion);
+}
+
 async function getMemberPersonalityAnalysisCacheVersion(memberId, targetUserId) {
     if (!memberId || !targetUserId || !cacheService.isRoomCacheEnabled()) {
         return 0;
@@ -1808,12 +2007,20 @@ async function getMemberPersonalityAnalysisCacheVersion(memberId, targetUserId) 
     return Number.isFinite(version) && version > 0 ? version : 0;
 }
 
+async function getMemberAnalysisCacheVersion(memberId, targetUserId) {
+    return getMemberPersonalityAnalysisCacheVersion(memberId, targetUserId);
+}
+
 async function invalidateMemberPersonalityAnalysisCache(memberId, targetUserId) {
     if (!memberId || !targetUserId || !cacheService.isRoomCacheEnabled()) {
         return 0;
     }
 
     return cacheService.increment(buildMemberPersonalityAnalysisVersionKey(memberId, targetUserId), 1);
+}
+
+async function invalidateMemberAnalysisCache(memberId, targetUserId) {
+    return invalidateMemberPersonalityAnalysisCache(memberId, targetUserId);
 }
 
 async function getCachedLatestMemberPersonalityAnalysis(memberId, targetUserId) {
@@ -1883,6 +2090,18 @@ async function getLatestMemberRoomCustomerAnalysis(memberId, targetUserId, roomI
          LIMIT 1`,
         [memberId, targetUserId, 'customer_analysis_review', String(roomId || '')]
     );
+}
+
+async function getCachedLatestMemberAnalysis(memberId, targetUserId) {
+    return getCachedLatestMemberPersonalityAnalysis(memberId, targetUserId);
+}
+
+async function getLatestMemberAnalysis(memberId, targetUserId) {
+    return getLatestMemberPersonalityAnalysis(memberId, targetUserId);
+}
+
+async function getLatestMemberAnalysisMap(memberId, targetUserIds = []) {
+    return getLatestMemberPersonalityAnalysisMap(memberId, targetUserIds);
 }
 
 function normalizeCacheTimestamp(value) {
@@ -3261,7 +3480,8 @@ app.get('/api/analysis/stats', optionalAuth, async (req, res) => {
     try {
         const roomFilter = await getUserRoomFilter(req);
         console.log(`[API] /api/analysis/stats - user: ${req.user?.username || 'anonymous'}, roomFilter: ${roomFilter === null ? 'null(admin)' : JSON.stringify(roomFilter)}`);
-        const stats = await manager.getGlobalStats(roomFilter);
+        const cacheKey = buildAnalysisCacheKey('stats', req, roomFilter);
+        const stats = await getCachedAnalysisPayload(cacheKey, () => manager.getGlobalStats(roomFilter));
         res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -3273,7 +3493,12 @@ app.get('/api/analysis/rooms/entry', optionalAuth, async (req, res) => {
         const { startDate, endDate, limit } = req.query;
         const roomFilter = await getUserRoomFilter(req);
         console.log(`[API] /api/analysis/rooms/entry - user: ${req.user?.username || 'anonymous'}, roomFilter: ${roomFilter === null ? 'null(admin)' : JSON.stringify(roomFilter)}`);
-        const stats = await manager.getRoomEntryStats(startDate, endDate, limit, roomFilter);
+        const cacheKey = buildAnalysisCacheKey('rooms_entry', req, roomFilter, {
+            startDate: String(startDate || ''),
+            endDate: String(endDate || ''),
+            limit: String(limit || '')
+        });
+        const stats = await getCachedAnalysisPayload(cacheKey, () => manager.getRoomEntryStats(startDate, endDate, limit, roomFilter));
         res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -3637,14 +3862,6 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
                 return res.status(403).json({
                     error: '房间配额已满，请升级套餐或购买扩容包',
                     code: 'QUOTA_EXCEEDED',
-                    quota
-                });
-            }
-            // Check open room limit (simultaneously monitored rooms)
-            if (quota.openRoomLimit !== -1 && quota.openRemaining <= 0) {
-                return res.status(403).json({
-                    error: `同时打开的房间数已达上限（${quota.openRoomLimit}个），请关闭其他房间后再试`,
-                    code: 'OPEN_ROOM_LIMIT',
                     quota
                 });
             }

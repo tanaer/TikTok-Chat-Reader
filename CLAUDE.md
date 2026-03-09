@@ -76,7 +76,7 @@ Routes are modularized in `api/`:
 ### Frontend
 
 Located in `public/`:
-- `landing/` - Marketing pages (index.html, subscription.html, user-center.html, admin.html)
+- `landing/` - Marketing pages (index.html, subscription.html, user-center.html, tanaer.html)
 - `public/index.html` + `app.js` - Main monitor dashboard (requires auth)
 - `auth.js` - Client-side auth state, token refresh
 - `plan_service.js` - Subscription modal logic
