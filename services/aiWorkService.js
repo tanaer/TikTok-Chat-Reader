@@ -51,17 +51,32 @@ function buildAiWorkTitle(jobType, { roomId = '', sessionId = '', targetUserId =
 }
 
 function buildCustomerAnalysisActionUrl(requestPayload = {}) {
+    const analysisScene = String(requestPayload?.analysisScene || '').trim().toLowerCase();
     const targetUserId = String(requestPayload?.targetUserId || '').trim();
-    if (!targetUserId) return '/monitor.html?section=userAnalysis';
-
-    const params = new URLSearchParams({
-        section: 'userAnalysis',
-        analysisUserId: targetUserId
-    });
     const targetNickname = String(requestPayload?.targetNickname || '').trim();
     const targetUniqueId = String(requestPayload?.targetUniqueId || '').trim();
-    if (targetNickname) params.set('analysisNickname', targetNickname);
-    if (targetUniqueId) params.set('analysisUniqueId', targetUniqueId);
+
+    if (analysisScene === 'personality' || !String(requestPayload?.currentRoomId || requestPayload?.requestedRoomId || '').trim()) {
+        if (!targetUserId) return '/monitor.html?section=userAnalysis';
+        const params = new URLSearchParams({
+            section: 'userAnalysis',
+            analysisUserId: targetUserId
+        });
+        if (targetNickname) params.set('analysisNickname', targetNickname);
+        if (targetUniqueId) params.set('analysisUniqueId', targetUniqueId);
+        return `/monitor.html?${params.toString()}`;
+    }
+
+    const roomId = String(requestPayload?.currentRoomId || requestPayload?.requestedRoomId || '').trim();
+    if (!roomId || !targetUserId) return '/monitor.html?section=roomDetail';
+
+    const params = new URLSearchParams({
+        roomId,
+        detailTab: 'timeStats',
+        customerAnalysisUserId: targetUserId
+    });
+    if (targetNickname) params.set('customerAnalysisNickname', targetNickname);
+    if (targetUniqueId) params.set('customerAnalysisUniqueId', targetUniqueId);
     return `/monitor.html?${params.toString()}`;
 }
 
@@ -83,7 +98,11 @@ function getAiWorkJobTypeLabel(jobType) {
 function extractAiWorkSummary(jobType, resultPayload = {}) {
     const normalizedJobType = normalizeAiWorkJobType(jobType);
     if (normalizedJobType === AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS) {
-        return String(resultPayload?.analysis?.summary || resultPayload?.result || '').trim();
+        const analysisScene = String(resultPayload?.analysisScene || '').trim().toLowerCase();
+        if (analysisScene === 'personality') {
+            return String(resultPayload?.summary || resultPayload?.result || '').trim();
+        }
+        return String(resultPayload?.analysis?.summary || resultPayload?.summary || resultPayload?.result || '').trim();
     }
     const review = resultPayload?.review || resultPayload?.aiReview || resultPayload?.result || null;
     return String(review?.bossSummary || review?.summary || '').trim();
@@ -92,7 +111,11 @@ function extractAiWorkSummary(jobType, resultPayload = {}) {
 function hasAiWorkResult(jobType, resultPayload = {}) {
     const normalizedJobType = normalizeAiWorkJobType(jobType);
     if (normalizedJobType === AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS) {
-        return Boolean(resultPayload?.analysis || resultPayload?.result);
+        const analysisScene = String(resultPayload?.analysisScene || '').trim().toLowerCase();
+        if (analysisScene === 'personality') {
+            return Boolean(resultPayload?.result || resultPayload?.summary);
+        }
+        return Boolean(resultPayload?.analysis || resultPayload?.result || resultPayload?.summary);
     }
     return Boolean(resultPayload?.review || resultPayload?.aiReview || resultPayload?.result);
 }
@@ -363,13 +386,37 @@ async function findReusableCustomerAnalysisAiWorkJob({ userId, targetUserId = ''
     return result.rows[0] ? serializeAdminAiWorkJob(result.rows[0]) : null;
 }
 
-async function getLatestCustomerAnalysisAiWorkJobForUser(userId, targetUserId) {
+async function getLatestCustomerAnalysisAiWorkJobForUser(userId, targetUserId, roomId = '') {
+    const safeRoomId = String(roomId || '').trim();
+    const params = [userId, AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS, String(targetUserId || '')];
+    let roomClause = '';
+    if (safeRoomId) {
+        params.push(safeRoomId);
+        roomClause = ` AND room_id = $${params.length}`;
+    }
+
     const result = await db.pool.query(
         `SELECT *
          FROM ai_work_job
          WHERE user_id = $1
            AND job_type = $2
+           AND COALESCE(request_payload_json::jsonb ->> 'targetUserId', '') = $3${roomClause}
+         ORDER BY created_at DESC, id DESC
+         LIMIT 1`,
+        params
+    );
+    return result.rows[0] ? serializeUserAiWorkJob(result.rows[0]) : null;
+}
+
+async function getLatestPersonalityAiWorkJobForUser(userId, targetUserId) {
+    const result = await db.pool.query(
+        `SELECT *
+         FROM ai_work_job
+         WHERE user_id = $1
+           AND job_type = $2
+           AND room_id = ''
            AND COALESCE(request_payload_json::jsonb ->> 'targetUserId', '') = $3
+           AND COALESCE(request_payload_json::jsonb ->> 'analysisScene', '') = 'personality'
          ORDER BY created_at DESC, id DESC
          LIMIT 1`,
         [userId, AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS, String(targetUserId || '')]
@@ -576,6 +623,7 @@ module.exports = {
     findReusableAiWorkJob,
     findReusableCustomerAnalysisAiWorkJob,
     getLatestCustomerAnalysisAiWorkJobForUser,
+    getLatestPersonalityAiWorkJobForUser,
     getLatestSessionAiWorkJobForUser,
     listAiWorkJobLogs,
     listUserAiWorkJobs,

@@ -14,7 +14,11 @@ var currentSessionRecap = null;
 var sessionAiJobPollTimer = null;
 var sessionAiJobPollTarget = null;
 var sessionRecapExporting = false;
+var roomCustomerAnalysisJobPollTimer = null;
+var currentRoomCustomerAnalysisJobId = 0;
+var currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '' };
 const DEFAULT_SESSION_RECAP_POINTS = 20;
+const DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS = 3;
 const SESSION_RECAP_LOADING_TIPS = [
     '正在抽取礼物高峰与掉人节点',
     '正在筛选高价值弹幕与关键反馈',
@@ -49,12 +53,37 @@ function getMonitorDeepLinkState() {
         section: String(params.get('section') || '').trim(),
         analysisUserId: String(params.get('analysisUserId') || '').trim(),
         analysisNickname: String(params.get('analysisNickname') || '').trim(),
-        analysisUniqueId: String(params.get('analysisUniqueId') || '').trim()
+        analysisUniqueId: String(params.get('analysisUniqueId') || '').trim(),
+        customerAnalysisUserId: String(params.get('customerAnalysisUserId') || '').trim(),
+        customerAnalysisNickname: String(params.get('customerAnalysisNickname') || '').trim(),
+        customerAnalysisUniqueId: String(params.get('customerAnalysisUniqueId') || '').trim()
     };
 }
 
 async function handleMonitorDeepLink() {
     const deepLink = getMonitorDeepLinkState();
+    if (deepLink.customerAnalysisUserId && deepLink.roomId) {
+        switchSection('roomDetail');
+        await loadRoom(deepLink.roomId);
+
+        if (deepLink.sessionId && deepLink.sessionId !== currentSessionId) {
+            await changeSession(deepLink.sessionId);
+        }
+
+        if (deepLink.detailTab) {
+            const tabBtn = document.querySelector(`#section-roomDetail .tab[onclick*="${deepLink.detailTab}"]`);
+            switchDetailTab(deepLink.detailTab, tabBtn || document.querySelector('#section-roomDetail .tab'));
+        }
+
+        await openRoomCustomerAnalysisModal(
+            deepLink.roomId,
+            deepLink.customerAnalysisUserId,
+            deepLink.customerAnalysisNickname || deepLink.customerAnalysisUserId,
+            deepLink.customerAnalysisUniqueId || ''
+        );
+        return;
+    }
+
     if (deepLink.analysisUserId) {
         switchSection(deepLink.section || 'userAnalysis');
         if (typeof showUserDetails === 'function') {
@@ -130,6 +159,13 @@ $(document).ready(async () => {
         const subNavContainer = document.getElementById('sub-nav-container');
         if (subNavContainer) {
             subNavContainer.classList.remove('hidden');
+        }
+        const roomCustomerAnalysisModal = document.getElementById('roomCustomerAnalysisModal');
+        if (roomCustomerAnalysisModal) {
+            roomCustomerAnalysisModal.addEventListener('close', () => {
+                clearRoomCustomerAnalysisJobPolling();
+                currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '' };
+            });
         }
         // Show export button for admins or users with export feature
         if (Auth.isAdmin()) {
@@ -211,6 +247,9 @@ function initSocket() {
 
 // Navigation
 function switchSection(sectionId) {
+    if (sectionId !== 'roomDetail' && currentRoomCustomerAnalysisState.roomId) {
+        closeRoomCustomerAnalysisModal();
+    }
     currentSection = sectionId;
     $('.content-section').hide();
     $(`#section-${sectionId}`).show();
@@ -253,6 +292,9 @@ function switchSection(sectionId) {
 // =======================
 
 async function loadRoom(id) {
+    if (currentRoomCustomerAnalysisState.roomId && currentRoomCustomerAnalysisState.roomId !== String(id || '').trim()) {
+        closeRoomCustomerAnalysisModal();
+    }
     currentDetailRoomId = id;
     $('#detailRoomId').text(id);
     $('#chatContainer').empty();
@@ -735,7 +777,7 @@ function normalizeRecapCustomerIdentity(value) {
     return String(value || '').trim().toLowerCase();
 }
 
-function findAiCustomerNarrativeMatch(systemItem, aiItems = [], usedIndexes = new Set(), fallbackIndex = -1) {
+function findAiCustomerNarrativeMatch(systemItem, aiItems = [], usedIndexes = new Set()) {
     if (!Array.isArray(aiItems) || !aiItems.length) return null;
     const systemUniqueId = normalizeRecapCustomerIdentity(systemItem?.uniqueId);
     const systemNickname = normalizeRecapCustomerIdentity(systemItem?.nickname);
@@ -752,10 +794,6 @@ function findAiCustomerNarrativeMatch(systemItem, aiItems = [], usedIndexes = ne
         });
     }
 
-    if (matchedIndex === -1 && fallbackIndex >= 0 && fallbackIndex < aiItems.length && !usedIndexes.has(fallbackIndex)) {
-        matchedIndex = fallbackIndex;
-    }
-
     if (matchedIndex === -1) return null;
     usedIndexes.add(matchedIndex);
     return aiItems[matchedIndex] || null;
@@ -766,7 +804,7 @@ function mergeSessionRecapCustomerItems(systemItems = [], aiItems = [], segmentT
 
     const usedIndexes = new Set();
     return systemItems.map((item, index) => {
-        const aiItem = findAiCustomerNarrativeMatch(item, aiItems, usedIndexes, index) || {};
+        const aiItem = findAiCustomerNarrativeMatch(item, aiItems, usedIndexes) || {};
         const merged = {
             ...item,
             nickname: item?.nickname || aiItem?.nickname || '匿名',
@@ -1421,7 +1459,12 @@ function renderRecapCustomerSegment(containerId, items = [], emptyText = '暂无
         wrap.innerHTML = `<div class="rounded-box bg-base-200 px-4 py-6 text-sm opacity-60">${escapeRecapHtml(emptyText)}</div>`;
         return;
     }
-    wrap.innerHTML = items.map(item => `
+    wrap.innerHTML = items.map(item => {
+        const metaBadges = [];
+        if (segmentType === 'risk') {
+            metaBadges.push(`<span class="badge badge-ghost badge-sm">${escapeRecapHtml(formatRecapTimeText(item.enterTime || item.firstEnterAt))} → ${escapeRecapHtml(formatRecapTimeText(item.leaveTime || item.lastActiveAt))}</span>`);
+        }
+        return `
         <div class="rounded-box border border-base-300 bg-base-100 p-4 shadow-sm">
             <div class="flex items-start justify-between gap-3">
                 <div class="min-w-0 flex-1">
@@ -1430,20 +1473,14 @@ function renderRecapCustomerSegment(containerId, items = [], emptyText = '暂无
                 </div>
                 <span class="badge badge-outline shrink-0 whitespace-nowrap self-start">${Number(item.totalGiftValue || item.sessionGiftValue || 0) > 0 ? `💎 ${Number(item.totalGiftValue || item.sessionGiftValue || 0).toLocaleString()}` : '本场未出手'}</span>
             </div>
-            <div class="flex flex-wrap gap-2 mt-3 text-xs opacity-70">
-                <span class="badge badge-ghost badge-sm">送礼 ${Number(item.giftCount || 0)}</span>
-                <span class="badge badge-ghost badge-sm">历史 💎${Number(item.historicalValue || 0).toLocaleString()}</span>
-                <span class="badge badge-ghost badge-sm">弹幕 ${Number(item.chatCount || 0)}</span>
-                <span class="badge badge-ghost badge-sm">点赞 ${Number(item.likeCount || 0)}</span>
-                <span class="badge badge-ghost badge-sm">进房 ${Number(item.enterCount || 0)}</span>
-                ${segmentType === 'risk' ? `<span class="badge badge-ghost badge-sm">${escapeRecapHtml(formatRecapTimeText(item.enterTime || item.firstEnterAt))} → ${escapeRecapHtml(formatRecapTimeText(item.leaveTime || item.lastActiveAt))}</span>` : ''}
-            </div>
+            ${metaBadges.length ? `<div class="flex flex-wrap gap-2 mt-3 text-xs opacity-70">${metaBadges.join('')}</div>` : ''}
             <div class="text-xs leading-6 mt-3 opacity-80 break-words">${escapeRecapHtml(item.keyBehavior || item.reason || '')}</div>
             <div class="text-xs leading-6 mt-2 text-primary break-words">${escapeRecapHtml(item.maintenanceSuggestion || item.action || item.recoveryStrategy || '')}</div>
             ${segmentType === 'potential' && item.conversionScript ? `<div class="mt-3 rounded-box session-recap-note-box px-3 py-3 text-xs leading-6">转化话术：${escapeRecapHtml(item.conversionScript)}</div>` : ''}
             ${segmentType === 'risk' && item.riskReason ? `<div class="mt-3 rounded-box session-recap-risk-box px-3 py-3 text-xs leading-6">流失原因：${escapeRecapHtml(item.riskReason)}</div>` : ''}
         </div>
-    `).join('');
+    `;
+    }).join('');
 }
 
 function renderSessionRecapTrendChart(timeline = [], trafficMetricLabel = '在线波动') {
@@ -1805,15 +1842,365 @@ async function generateSessionAiReview(force = false) {
 async function loadAlltimeLeaderboards(roomId) {
     try {
         const data = await $.get(`/api/rooms/${roomId}/alltime-leaderboards`);
-        renderAlltimeTable('#alltimeGiftersTable tbody', data.gifters, '💎', 'value');
-        renderAlltimeTable('#alltimeChattersTable tbody', data.chatters, '💬', 'count');
-        renderAlltimeTable('#alltimeLikersTable tbody', data.likers, '❤️', 'count');
+        renderAlltimeTable('#alltimeGiftersTable tbody', data.gifters, '💎', 'value', roomId);
+        renderAlltimeTable('#alltimeChattersTable tbody', data.chatters, '💬', 'count', roomId);
+        renderAlltimeTable('#alltimeLikersTable tbody', data.likers, '❤️', 'count', roomId);
     } catch (err) {
         console.error('Failed to load all-time leaderboards:', err);
     }
 }
 
-function renderAlltimeTable(selector, data, icon, valueKey) {
+function escapeInlineJsString(value) {
+    return String(value ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'");
+}
+
+function normalizeRoomCustomerAnalysisStringArray(value, limit = 8) {
+    if (!Array.isArray(value)) return [];
+    return value.map(item => String(item || '').trim()).filter(Boolean).slice(0, limit);
+}
+
+function normalizeRoomCustomerAnalysisPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+    return {
+        summary: String(payload.summary || '').trim(),
+        valueLevelCurrentRoom: String(payload.valueLevelCurrentRoom || '').trim(),
+        valueLevelGlobal: String(payload.valueLevelGlobal || '').trim(),
+        loyaltyAssessment: String(payload.loyaltyAssessment || '').trim(),
+        diversionRiskAssessment: String(payload.diversionRiskAssessment || '').trim(),
+        conversionStage: String(payload.conversionStage || '').trim(),
+        keySignals: normalizeRoomCustomerAnalysisStringArray(payload.keySignals, 6),
+        recommendedActions: normalizeRoomCustomerAnalysisStringArray(payload.recommendedActions, 6),
+        outreachScript: normalizeRoomCustomerAnalysisStringArray(payload.outreachScript, 4),
+        forbiddenActions: normalizeRoomCustomerAnalysisStringArray(payload.forbiddenActions, 4),
+        tags: normalizeRoomCustomerAnalysisStringArray(payload.tags, 8),
+        evidence: normalizeRoomCustomerAnalysisStringArray(payload.evidence, 6)
+    };
+}
+
+function renderRoomCustomerAnalysisMetric(label, value) {
+    if (!value) return '';
+    return `
+        <div class="rounded-box border border-base-300 bg-base-100/90 px-3 py-2">
+            <div class="text-[10px] uppercase tracking-wide text-base-content/45">${escapeRecapHtml(label)}</div>
+            <div class="mt-1 text-xs font-semibold leading-5 text-base-content/85">${escapeRecapHtml(value)}</div>
+        </div>
+    `;
+}
+
+function renderRoomCustomerAnalysisListCard(title, items, tone = 'base') {
+    if (!items || !items.length) return '';
+    const toneClassMap = {
+        base: 'border-base-300 bg-base-100/90',
+        primary: 'border-primary/20 bg-primary/5',
+        success: 'border-success/20 bg-success/5',
+        warning: 'border-warning/20 bg-warning/5',
+        error: 'border-error/20 bg-error/5'
+    };
+    const cardClass = toneClassMap[tone] || toneClassMap.base;
+    return `
+        <div class="rounded-box border ${cardClass} p-3">
+            <div class="text-[11px] font-semibold text-base-content/70 mb-2">${escapeRecapHtml(title)}</div>
+            <div class="space-y-2">
+                ${items.map(item => `<div class="leading-6 text-base-content/80">- ${escapeRecapHtml(item)}</div>`).join('')}
+            </div>
+        </div>
+    `;
+}
+
+function renderRoomCustomerAnalysisResult(resultText, analysisPayload = null) {
+    const wrap = document.getElementById('roomCustomerAnalysisResult');
+    if (!wrap) return;
+
+    const analysis = normalizeRoomCustomerAnalysisPayload(analysisPayload);
+    if (!analysis) {
+        wrap.innerHTML = `<div class="whitespace-pre-wrap leading-6 text-base-content/80">${escapeRecapHtml(resultText || '点击分析按钮开始生成客户分析...')}</div>`;
+        return;
+    }
+
+    const overviewItems = [
+        renderRoomCustomerAnalysisMetric('本房价值', analysis.valueLevelCurrentRoom),
+        renderRoomCustomerAnalysisMetric('平台价值', analysis.valueLevelGlobal),
+        renderRoomCustomerAnalysisMetric('忠诚判断', analysis.loyaltyAssessment),
+        renderRoomCustomerAnalysisMetric('分流风险', analysis.diversionRiskAssessment),
+        renderRoomCustomerAnalysisMetric('转化阶段', analysis.conversionStage)
+    ].filter(Boolean).join('');
+
+    wrap.innerHTML = `
+        <div class="space-y-3">
+            ${analysis.summary ? `
+                <div class="rounded-box border border-primary/15 bg-base-100/95 p-3">
+                    <div class="text-[11px] font-semibold text-base-content/60 mb-2">客户总结</div>
+                    <div class="text-sm leading-6 text-base-content/85">${escapeRecapHtml(analysis.summary)}</div>
+                </div>
+            ` : ''}
+            ${overviewItems ? `<div class="grid grid-cols-1 sm:grid-cols-2 gap-2">${overviewItems}</div>` : ''}
+            ${analysis.tags.length ? `
+                <div class="flex flex-wrap gap-2">
+                    ${analysis.tags.map(tag => `<span class="badge badge-outline badge-sm">${escapeRecapHtml(tag)}</span>`).join('')}
+                </div>
+            ` : ''}
+            ${renderRoomCustomerAnalysisListCard('关键信号', analysis.keySignals, 'primary')}
+            ${renderRoomCustomerAnalysisListCard('建议动作', analysis.recommendedActions, 'success')}
+            ${renderRoomCustomerAnalysisListCard('建议话术', analysis.outreachScript, 'warning')}
+            ${renderRoomCustomerAnalysisListCard('不建议动作', analysis.forbiddenActions, 'error')}
+            ${renderRoomCustomerAnalysisListCard('数据证据', analysis.evidence, 'base')}
+        </div>
+    `;
+}
+
+function setRoomCustomerAnalysisButtonsPending(pending, isProcessing = false) {
+    const runBtn = document.getElementById('runRoomCustomerAnalysisBtn');
+    const rerunBtn = document.getElementById('rerunRoomCustomerAnalysisBtn');
+    if (runBtn) {
+        runBtn.disabled = Boolean(pending);
+        runBtn.classList.toggle('loading', Boolean(pending) && Boolean(isProcessing));
+        runBtn.innerHTML = pending
+            ? (isProcessing ? '后台分析中...' : '处理中...')
+            : `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>分析`;
+    }
+    if (rerunBtn) {
+        rerunBtn.disabled = Boolean(pending);
+        rerunBtn.textContent = pending ? '请稍候' : '重新分析';
+    }
+}
+
+function clearRoomCustomerAnalysisJobPolling() {
+    if (roomCustomerAnalysisJobPollTimer) {
+        window.clearInterval(roomCustomerAnalysisJobPollTimer);
+        roomCustomerAnalysisJobPollTimer = null;
+    }
+    currentRoomCustomerAnalysisJobId = 0;
+}
+
+function showRoomCustomerAnalysisPending(job) {
+    const isProcessing = String(job?.status || '').toLowerCase() === 'processing';
+    const progress = Math.max(5, Math.min(99, Number(job?.progressPercent || (isProcessing ? 35 : 10))));
+    const currentStep = job?.currentStep || (isProcessing ? '正在后台处理中' : '等待后台调度');
+    const wrap = document.getElementById('roomCustomerAnalysisResult');
+    if (!wrap) return;
+    wrap.innerHTML = `
+        <div class="rounded-box border border-base-300 bg-base-100/95 p-4 space-y-3">
+            <div class="flex items-center justify-between gap-3">
+                <div class="text-[10px] uppercase tracking-wide text-base-content/45">后台工作状态</div>
+                <span class="badge ${isProcessing ? 'badge-primary' : 'badge-warning'} badge-outline badge-sm">${escapeRecapHtml(isProcessing ? '处理中' : '排队中')}</span>
+            </div>
+            <div class="rounded-box bg-base-200/80 px-4 py-3">
+                <div class="flex items-center justify-between gap-3 text-sm text-base-content/80">
+                    <span>${escapeRecapHtml(currentStep)}</span>
+                    <span class="font-semibold">${progress}%</span>
+                </div>
+                <progress class="progress progress-primary w-full mt-3" value="${progress}" max="100"></progress>
+            </div>
+            <div class="text-sm leading-6 text-base-content/70">已切换为后台分析，完成后会通过消息通知提醒。</div>
+        </div>
+    `;
+    const statusEl = document.getElementById('roomCustomerAnalysisCacheStatus');
+    if (statusEl) statusEl.textContent = isProcessing ? '(后台处理中)' : '(后台排队中)';
+    const metaEl = document.getElementById('roomCustomerAnalysisMeta');
+    if (metaEl) {
+        metaEl.style.display = '';
+        metaEl.textContent = `${isProcessing ? '后台处理中' : '后台排队中'} | ${currentStep}`;
+    }
+    setRoomCustomerAnalysisButtonsPending(true, isProcessing);
+}
+
+async function loadRoomCustomerAnalysis(roomId, userId) {
+    const safeRoomId = String(roomId || '').trim();
+    const safeUserId = String(userId || '').trim();
+    if (!safeRoomId || !safeUserId) return;
+
+    const wrap = document.getElementById('roomCustomerAnalysisResult');
+    const statusEl = document.getElementById('roomCustomerAnalysisCacheStatus');
+    const metaEl = document.getElementById('roomCustomerAnalysisMeta');
+    if (wrap) wrap.innerHTML = '<span class="loading loading-dots loading-sm"></span> 正在加载客户分析...';
+    if (statusEl) statusEl.textContent = '';
+    if (metaEl) {
+        metaEl.style.display = 'none';
+        metaEl.textContent = '';
+    }
+
+    const res = await Auth.apiFetch(`/api/rooms/${encodeURIComponent(safeRoomId)}/customer-analysis/${encodeURIComponent(safeUserId)}`);
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.error || '获取客户分析失败');
+    if (currentRoomCustomerAnalysisState.roomId !== safeRoomId || currentRoomCustomerAnalysisState.userId !== safeUserId) return;
+
+    if (data.aiJob && ['queued', 'processing'].includes(String(data.aiJob.status || '').toLowerCase())) {
+        showRoomCustomerAnalysisPending(data.aiJob);
+        startRoomCustomerAnalysisPolling(data.aiJob.id, safeRoomId, safeUserId);
+        return;
+    }
+
+    clearRoomCustomerAnalysisJobPolling();
+    setRoomCustomerAnalysisButtonsPending(false);
+    renderRoomCustomerAnalysisResult(data.result || '点击分析按钮开始生成客户分析...', data.analysis || null);
+
+    const sourceMap = { member_cache: '当前账号缓存', api: '实时分析' };
+    if (statusEl && data.source) statusEl.textContent = `(${sourceMap[data.source] || data.source})`;
+
+    const metaParts = [];
+    if (data.chatCount) metaParts.push(`语料 ${Number(data.chatCount || 0)} 条`);
+    if (data.analyzedAt) metaParts.push(`分析于 ${new Date(data.analyzedAt).toLocaleString('zh-CN')}`);
+    if (metaParts.length && metaEl) {
+        metaEl.style.display = '';
+        metaEl.textContent = metaParts.join(' | ');
+    }
+}
+
+async function pollRoomCustomerAnalysisJobStatus(jobId, roomId, userId) {
+    if (!jobId || !roomId || !userId) return;
+    if (currentRoomCustomerAnalysisState.roomId !== String(roomId || '').trim() || currentRoomCustomerAnalysisState.userId !== String(userId || '').trim()) {
+        clearRoomCustomerAnalysisJobPolling();
+        return;
+    }
+
+    try {
+        const res = await Auth.apiFetch(`/api/user/ai-work/jobs/${encodeURIComponent(jobId)}`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '获取任务状态失败');
+        const job = data.job || null;
+        if (!job) throw new Error('任务不存在');
+
+        if (['queued', 'processing'].includes(String(job.status || '').toLowerCase())) {
+            showRoomCustomerAnalysisPending(job);
+            return;
+        }
+
+        clearRoomCustomerAnalysisJobPolling();
+        if (String(job.status || '').toLowerCase() === 'completed') {
+            await loadRoomCustomerAnalysis(roomId, userId);
+            return;
+        }
+
+        const metaEl = document.getElementById('roomCustomerAnalysisMeta');
+        const statusEl = document.getElementById('roomCustomerAnalysisCacheStatus');
+        if (statusEl) statusEl.textContent = '(后台失败)';
+        if (metaEl) {
+            metaEl.style.display = '';
+            metaEl.textContent = job.errorMessage || '后台处理失败，请稍后重试';
+        }
+        renderRoomCustomerAnalysisResult(`错误: ${job.errorMessage || '后台处理失败，请稍后重试'}`, null);
+        setRoomCustomerAnalysisButtonsPending(false);
+    } catch (err) {
+        console.error('pollRoomCustomerAnalysisJobStatus error:', err);
+    }
+}
+
+function startRoomCustomerAnalysisPolling(jobId, roomId, userId) {
+    if (!jobId || !roomId || !userId) return;
+    if (currentRoomCustomerAnalysisJobId === Number(jobId) && roomCustomerAnalysisJobPollTimer) return;
+    clearRoomCustomerAnalysisJobPolling();
+    currentRoomCustomerAnalysisJobId = Number(jobId || 0);
+    roomCustomerAnalysisJobPollTimer = window.setInterval(() => {
+        pollRoomCustomerAnalysisJobStatus(jobId, roomId, userId).catch(() => {});
+    }, 10000);
+}
+
+async function openRoomCustomerAnalysisModal(roomId, userId, nickname = '', uniqueId = '') {
+    const safeRoomId = String(roomId || currentDetailRoomId || '').trim();
+    const safeUserId = String(userId || '').trim();
+    if (!safeRoomId || !safeUserId) return;
+
+    currentRoomCustomerAnalysisState = {
+        roomId: safeRoomId,
+        userId: safeUserId,
+        nickname: String(nickname || '').trim(),
+        uniqueId: String(uniqueId || '').trim()
+    };
+
+    const identityEl = document.getElementById('roomCustomerAnalysisIdentity');
+    const tipEl = document.getElementById('roomCustomerAnalysisTip');
+    if (identityEl) {
+        const nicknameLabel = currentRoomCustomerAnalysisState.nickname || '匿名';
+        const uniqueLabel = currentRoomCustomerAnalysisState.uniqueId || currentRoomCustomerAnalysisState.userId;
+        identityEl.textContent = `${nicknameLabel} · ${uniqueLabel} · 房间 ${safeRoomId}`;
+    }
+    if (tipEl) {
+        const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
+        tipEl.textContent = isAdmin
+            ? '管理员发起房间客户分析不扣点。'
+            : `首次生成默认消耗 ${DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS} AI点；命中当前账号 + 当前房间缓存再次查看不重复扣点。`;
+    }
+
+    document.getElementById('roomCustomerAnalysisModal')?.showModal();
+    await loadRoomCustomerAnalysis(safeRoomId, safeUserId);
+}
+
+function closeRoomCustomerAnalysisModal() {
+    clearRoomCustomerAnalysisJobPolling();
+    currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', uniqueId: '' };
+    const modal = document.getElementById('roomCustomerAnalysisModal');
+    if (modal?.open) modal.close();
+}
+
+async function runRoomCustomerAnalysis(force = false) {
+    const roomId = String(currentRoomCustomerAnalysisState.roomId || '').trim();
+    const userId = String(currentRoomCustomerAnalysisState.userId || '').trim();
+    if (!roomId || !userId) return;
+
+    const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
+    if (force && !isAdmin) {
+        const confirmed = window.confirm(`重新分析将重新消耗 ${DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS} AI点，是否继续？`);
+        if (!confirmed) return;
+    }
+
+    const statusEl = document.getElementById('roomCustomerAnalysisCacheStatus');
+    const metaEl = document.getElementById('roomCustomerAnalysisMeta');
+    if (statusEl) statusEl.textContent = '';
+    if (metaEl) {
+        metaEl.style.display = 'none';
+        metaEl.textContent = '';
+    }
+    renderRoomCustomerAnalysisResult('正在提交房间客户分析任务...', null);
+    setRoomCustomerAnalysisButtonsPending(true, false);
+
+    try {
+        const res = await Auth.apiFetch(`/api/rooms/${encodeURIComponent(roomId)}/customer-analysis`, {
+            method: 'POST',
+            body: JSON.stringify({ userId, force })
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+            const error = new Error(data.error || '提交房间客户分析失败');
+            error.code = data.code || '';
+            throw error;
+        }
+
+        if (data.accepted && data.job) {
+            showRoomCustomerAnalysisPending(data.job);
+            startRoomCustomerAnalysisPolling(data.job.id, roomId, userId);
+            return;
+        }
+
+        clearRoomCustomerAnalysisJobPolling();
+        if (data.skipped) {
+            renderRoomCustomerAnalysisResult(data.result, null);
+            if (statusEl) statusEl.textContent = `(语料 ${Number(data.chatCount || 0)} 条)`;
+            setRoomCustomerAnalysisButtonsPending(false);
+            return;
+        }
+
+        renderRoomCustomerAnalysisResult(data.result, data.analysis || null);
+        const sourceMap = { member_cache: '当前账号缓存', api: '实时分析' };
+        if (statusEl) statusEl.textContent = `(${sourceMap[data.source] || (data.cached ? '缓存' : '实时分析')})`;
+        const metaParts = [];
+        if (data.chatCount) metaParts.push(`语料 ${Number(data.chatCount || 0)} 条`);
+        if (data.analyzedAt) metaParts.push(`分析于 ${new Date(data.analyzedAt).toLocaleString('zh-CN')}`);
+        if (metaParts.length && metaEl) {
+            metaEl.style.display = '';
+            metaEl.textContent = metaParts.join(' | ');
+        }
+        setRoomCustomerAnalysisButtonsPending(false);
+    } catch (err) {
+        renderRoomCustomerAnalysisResult(err.code === 'AI_CREDITS_EXHAUSTED'
+            ? (err.message || 'AI 点数不足，请购买点数包或升级套餐')
+            : `错误: ${err.message || '提交房间客户分析失败'}`, null);
+        setRoomCustomerAnalysisButtonsPending(false);
+    }
+}
+
+function renderAlltimeTable(selector, data, icon, valueKey, roomId = currentDetailRoomId) {
     const tbody = $(selector);
     tbody.empty();
     if (!data || data.length === 0) {
@@ -1823,12 +2210,26 @@ function renderAlltimeTable(selector, data, icon, valueKey) {
     data.forEach((row, i) => {
         const val = row[valueKey] || row.value || row.count || 0;
         const rank = i < 3 ? ['🥇', '🥈', '🥉'][i] : `${i + 1}.`;
+        const nickname = row.nickname || '匿名';
         const uniqueId = row.uniqueId || '';
-        // Make user name clickable to search in user analysis
+        const userId = row.userId || '';
         const nameCell = uniqueId
-            ? `<a href="javascript:void(0)" class="link link-hover text-accent" onclick="searchUserExact('${uniqueId.replace(/'/g, "\\'")}')" title="点击精确搜索该用户">${row.nickname || '匿名'}</a>`
-            : `${row.nickname || '匿名'}`;
-        tbody.append(`<tr><td class="truncate max-w-[80px]">${rank} ${nameCell}</td><td class="text-right font-mono">${val.toLocaleString()}</td></tr>`);
+            ? `<a href="javascript:void(0)" class="link link-hover text-accent" onclick="searchUserExact('${escapeInlineJsString(uniqueId)}')" title="点击精确搜索该用户">${escapeRecapHtml(nickname)}</a>`
+            : `${escapeRecapHtml(nickname)}`;
+        const aiButton = userId
+            ? `<button class="btn btn-ghost btn-xs border border-base-300 hover:border-primary/50" onclick="openRoomCustomerAnalysisModal('${escapeInlineJsString(roomId)}', '${escapeInlineJsString(userId)}', '${escapeInlineJsString(nickname)}', '${escapeInlineJsString(uniqueId)}')">AI</button>`
+            : '';
+        tbody.append(`
+            <tr>
+                <td class="max-w-[180px]">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="truncate">${rank} ${nameCell}</div>
+                        ${aiButton}
+                    </div>
+                </td>
+                <td class="text-right font-mono">${Number(val || 0).toLocaleString()}</td>
+            </tr>
+        `);
     });
 }
 
@@ -1940,6 +2341,9 @@ window.switchAlltimeTab = switchAlltimeTab;
 window.switchLeaderboardOuterTab = switchLeaderboardOuterTab;
 window.switchCurrentTab = switchCurrentTab;
 window.loadRoom = loadRoom;
+window.openRoomCustomerAnalysisModal = openRoomCustomerAnalysisModal;
+window.closeRoomCustomerAnalysisModal = closeRoomCustomerAnalysisModal;
+window.runRoomCustomerAnalysis = runRoomCustomerAnalysis;
 window.switchSection = switchSection;
 window.resetSessionRecapState = resetSessionRecapState;
 window.renderSessionRecap = renderSessionRecap;

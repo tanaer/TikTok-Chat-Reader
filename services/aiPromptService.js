@@ -78,6 +78,7 @@ const PROMPT_TEMPLATES = {
             '  "coreCustomers": [',
             '    {',
             '      "nickname": "昵称",',
+            '      "uniqueId": "账号ID",',
             '      "totalGiftValue": 0,',
             '      "giftCount": 0,',
             '      "keyBehavior": "关键行为描述",',
@@ -87,6 +88,7 @@ const PROMPT_TEMPLATES = {
             '  "potentialCustomers": [',
             '    {',
             '      "nickname": "昵称",',
+            '      "uniqueId": "账号ID",',
             '      "totalGiftValue": 0,',
             '      "giftCount": 0,',
             '      "keyBehavior": "关键行为描述",',
@@ -97,6 +99,7 @@ const PROMPT_TEMPLATES = {
             '  "riskCustomers": [',
             '    {',
             '      "nickname": "昵称",',
+            '      "uniqueId": "账号ID",',
             '      "enterTime": "进房时间",',
             '      "leaveTime": "离开时间",',
             '      "keyBehavior": "关键行为/弹幕",',
@@ -130,11 +133,12 @@ const PROMPT_TEMPLATES = {
             '- actions 返回 3-5 条，每条都要包含“怎么做 + 预期效果 + 资源准备”。',
             '- coreCustomers / potentialCustomers / riskCustomers 各返回 5-8 条；如果数据不够，可以少于 5 条，但不要凑数。',
             '- coreCustomers 优先选择“本场送礼高 + 历史总价值高”的用户，maintenanceSuggestion 要写清楚怎么维护、谁来维护。',
-            '- potentialCustomers 优先选择“互动高但送礼低 / 首次送礼 / 明显有兴趣”的用户，conversionScript 要给 1-2 句主播或场控可直接使用的话术。',
+            '- potentialCustomers 优先选择“互动高但送礼低 / 首次送礼 / 明显有兴趣”的用户，conversionScript 要给 1-2 句主播或场控可直接使用的话术，而且话术对象必须与该用户本人一致，不能串到别的用户身上。',
             '- riskCustomers 优先选择“历史高价值但本场明显变弱、只来不出手、早退、互动降温”的用户，riskReason 和 recoveryStrategy 不能空泛。',
             '- valuableComments 返回 5-10 条高价值弹幕；如果输入里没有，就返回空数组，不要凑数。',
             '- 同一用户默认不要重复出现在 coreCustomers / potentialCustomers / riskCustomers 三个数组里。',
-            '- nickname、totalGiftValue、giftCount、enterTime、leaveTime 等字段优先沿用输入，不要编造。',
+            '- nickname、uniqueId、totalGiftValue、giftCount、enterTime、leaveTime 等字段优先沿用输入，不要编造。',
+            '- 每个客户对象都必须与输入里的同一条客户记录保持一致，uniqueId 如有提供必须原样保留；不要把 A 用户的话术、原因、动作写到 B 用户上。',
             '- tags 返回 3-5 个，必须以 # 开头，一针见血。',
             '- score.total 必须是 0-100 的整数。',
             '- score.contentAttraction 范围 0-20。',
@@ -147,6 +151,33 @@ const PROMPT_TEMPLATES = {
             '',
             '输入数据如下：',
             '{{sessionDataJson}}'
+        ].join('\n')
+    },
+    user_personality_analysis: {
+        key: 'user_personality_analysis',
+        title: 'AI用户分析 · 性格分析流程',
+        description: '根据用户历史弹幕，输出旧版性格分析结果，供用户分析页直接展示。',
+        variables: ['chatCorpusText'],
+        defaultContent: [
+            '你是一个数十年经验的专业娱乐主播运营总监，并且你的情商非常高。',
+            '请根据用户的历史弹幕内容，做一份简洁、接地气、可运营落地的性格分析。',
+            '',
+            '请只围绕以下 5 项输出：',
+            '1. 常用语种',
+            '2. 掌握语种',
+            '3. 感兴趣的话题',
+            '4. 聊天风格',
+            '5. 建议破冰方式',
+            '',
+            '要求：',
+            '1. 只根据输入弹幕判断，不要编造用户没有表现出来的身份、职业、地区或消费能力。',
+            '2. 如果某项证据不足，请直接写“当前语料不足以判断”。',
+            '3. 输出必须是中文，简洁、自然、像运营同事写给主播的观察结论。',
+            '4. 不要输出 JSON，不要输出 Markdown 表格，不要加前言或结尾。',
+            '5. 按 1-5 顺序直接输出，每项 1-2 句即可。',
+            '',
+            '用户历史弹幕如下：',
+            '{{chatCorpusText}}'
         ].join('\n')
     },
     customer_analysis_review: {
@@ -304,6 +335,38 @@ async function resetPromptTemplate(key) {
     return savePromptTemplate(key, definition.defaultContent);
 }
 
+function shouldRepairSessionRecapReviewTemplate(content = '') {
+    const normalized = String(content || '');
+    if (!normalized) return false;
+    const requiredMarkers = [
+        'coreCustomers',
+        'potentialCustomers',
+        'riskCustomers',
+        '"uniqueId": "账号ID"',
+        '不要把 A 用户的话术'
+    ];
+    return requiredMarkers.some(marker => !normalized.includes(marker));
+}
+
+async function repairCriticalPromptTemplates() {
+    const sessionRecapDefinition = getPromptTemplateDefinition('session_recap_review');
+    if (!sessionRecapDefinition) return { repairedKeys: [] };
+
+    const current = await db.pool.query(
+        'SELECT value FROM settings WHERE key = $1 LIMIT 1',
+        [getPromptTemplateSettingKey('session_recap_review')]
+    );
+    const currentValue = current.rows[0]?.value || '';
+    const repairedKeys = [];
+
+    if (currentValue && shouldRepairSessionRecapReviewTemplate(currentValue)) {
+        await savePromptTemplate('session_recap_review', sessionRecapDefinition.defaultContent);
+        repairedKeys.push('session_recap_review');
+    }
+
+    return { repairedKeys };
+}
+
 function escapeRegExp(value) {
     return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -324,6 +387,7 @@ module.exports = {
     getPromptTemplate,
     savePromptTemplate,
     resetPromptTemplate,
+    repairCriticalPromptTemplates,
     getPromptTemplateDefinition,
     listPromptTemplateDefinitions,
     getPromptTemplateSettingKey,

@@ -1411,17 +1411,17 @@
     <!-- Batch AI Analysis Modal -->
     <dialog id="batchAIModal" class="modal">
         <div class="modal-box w-11/12 max-w-md">
-            <h3 class="font-bold text-lg mb-4">🤖 批量AI客户分析</h3>
+            <h3 class="font-bold text-lg mb-4">🤖 批量AI性格分析</h3>
 
             <div id="batchAIOptions">
                 <p class="text-sm opacity-70 mb-4">选择分析模式：</p>
                 <div class="grid grid-cols-1 gap-3">
                     <button class="btn btn-primary" onclick="startBatchAI(false)">
-                        📨 普通提交
+                        📊 普通分析
                         <span class="badge badge-sm">前100个未分析的</span>
                     </button>
                     <button class="btn btn-warning" onclick="startBatchAI(true)">
-                        🔄 强制重提
+                        🔄 强制分析
                         <span class="badge badge-sm">重新分析全部</span>
                     </button>
                 </div>
@@ -1429,7 +1429,7 @@
 
             <div id="batchAIProgress" style="display:none;">
                 <div class="flex justify-between items-center mb-2">
-                    <span class="text-sm">提交进度</span>
+                    <span class="text-sm">分析进度</span>
                     <span id="batchAICount" class="text-sm font-mono">0/0</span>
                 </div>
                 <progress id="batchAIBar" class="progress progress-primary w-full" value="0" max="100"></progress>
@@ -1445,6 +1445,37 @@
         </div>
         <form method="dialog" class="modal-backdrop">
             <button>关闭</button>
+        </form>
+    </dialog>
+
+
+    <dialog id="roomCustomerAnalysisModal" class="modal">
+        <div class="modal-box w-11/12 max-w-2xl">
+            <div class="flex items-start justify-between gap-3 mb-4">
+                <div>
+                    <h3 class="font-bold text-lg">🤖 AI客户分析</h3>
+                    <p id="roomCustomerAnalysisIdentity" class="text-sm opacity-60 mt-1">请选择历史榜用户后开始分析</p>
+                </div>
+                <span id="roomCustomerAnalysisCacheStatus" class="text-[10px] opacity-40"></span>
+            </div>
+            <div id="roomCustomerAnalysisMeta" class="text-[10px] opacity-40 mb-3" style="display:none;"></div>
+            <div id="roomCustomerAnalysisResult" class="min-h-[180px] rounded-box border border-base-300 bg-base-200 p-4 text-sm leading-6 text-base-content/80">
+                请选择历史榜用户后开始分析。
+            </div>
+            <div id="roomCustomerAnalysisTip" class="text-[10px] opacity-50 mt-3">首次生成默认消耗 3 AI点；命中当前账号 + 当前房间缓存再次查看不重复扣点。</div>
+            <div class="modal-action">
+                <button id="runRoomCustomerAnalysisBtn" class="btn btn-primary btn-sm gap-2" onclick="runRoomCustomerAnalysis(false)">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                    分析
+                </button>
+                <button id="rerunRoomCustomerAnalysisBtn" class="btn btn-sm btn-ghost btn-outline text-error" onclick="runRoomCustomerAnalysis(true)">重新分析</button>
+                <form method="dialog">
+                    <button class="btn btn-sm" onclick="closeRoomCustomerAnalysisModal()">关闭</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button onclick="closeRoomCustomerAnalysisModal()">关闭</button>
         </form>
     </dialog>
 

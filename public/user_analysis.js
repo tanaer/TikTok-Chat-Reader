@@ -8,7 +8,7 @@ let userListPageSize = 50;  // Now mutable for dynamic page size
 let currentDetailAiUserId = '';
 let currentDetailAiJobId = 0;
 let aiAnalysisJobPollTimer = null;
-const DEFAULT_CUSTOMER_ANALYSIS_POINTS = 3;
+const DEFAULT_PERSONALITY_ANALYSIS_POINTS = 1;
 
 function setUserPageSize(size) {
     userListPageSize = parseInt(size) || 50;
@@ -335,10 +335,10 @@ function showUserDetails(userId, nickname, uniqueId) {
         <div class="card bg-base-100 shadow-sm border border-base-200" ${typeof Auth !== 'undefined' && Auth.isLoggedIn() ? '' : 'style="display:none"'}>
             <div class="card-body p-4">
                 <div class="flex justify-between items-center mb-2">
-                    <h4 class="card-title text-sm m-0">🤖 AI 客户分析</h4>
+                    <h4 class="card-title text-sm m-0">🤖 AI 性格分析</h4>
                     <span id="aiCacheStatus" class="text-[10px] opacity-40"></span>
                 </div>
-                <div id="aiResult" class="text-xs leading-relaxed opacity-80 min-h-[100px] bg-base-200 rounded p-3">
+                <div id="aiResult" class="text-xs leading-relaxed opacity-80 min-h-[100px] bg-base-200 rounded p-3 whitespace-pre-wrap">
                     点击下方按钮进行分析...
                 </div>
                 <div id="aiMeta" class="text-[10px] opacity-40 mt-1" style="display:none;"></div>
@@ -351,7 +351,7 @@ function showUserDetails(userId, nickname, uniqueId) {
                         重新分析
                      </button>
                 </div>
-                <div class="text-[10px] opacity-50 mt-2">${typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin() ? '管理员发起客户分析不扣点。' : `首次生成默认消耗 ${DEFAULT_CUSTOMER_ANALYSIS_POINTS} AI点；命中个人缓存再次查看不重复扣点。`}</div>
+                <div class="text-[10px] opacity-50 mt-2">${typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin() ? '管理员发起性格分析不扣点。' : `首次生成默认消耗 ${DEFAULT_PERSONALITY_ANALYSIS_POINTS} AI点；命中个人缓存再次查看不重复扣点。`}</div>
             </div>
         </div>
     `);
@@ -428,13 +428,13 @@ function showUserDetails(userId, nickname, uniqueId) {
         }
 
         // Display existing AI analysis if available
-        if (data.aiJob && isPendingAiWorkJob(data.aiJob)) {
+        if (data.aiAnalysis) {
+            renderAiAnalysisResult(data.aiAnalysis, null);
+            $('#aiCacheStatus').text('(个人缓存)');
+            setAiAnalysisButtonsPending(false);
+        } else if (data.aiJob && isPendingAiWorkJob(data.aiJob)) {
             showAiAnalysisJobPending(data.aiJob);
             startAiAnalysisJobPolling(data.aiJob.id, userId);
-        } else if (data.aiAnalysis) {
-            renderAiAnalysisResult(data.aiAnalysis, data.aiAnalysisJson || null);
-            $('#aiCacheStatus').text('(本地缓存)');
-            setAiAnalysisButtonsPending(false);
         } else {
             setAiAnalysisButtonsPending(false);
         }
@@ -467,12 +467,12 @@ function setAiAnalysisButtonsPending(pending, isProcessing = false) {
         runBtn.disabled = Boolean(pending);
         runBtn.classList.toggle('loading', Boolean(pending) && Boolean(isProcessing));
         runBtn.innerHTML = pending
-            ? (isProcessing ? '后台分析中...' : '后台排队中...')
+            ? '分析中...'
             : `<svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>分析`;
     }
     if (rerunBtn) {
         rerunBtn.disabled = Boolean(pending);
-        rerunBtn.textContent = pending ? '请等待完成' : '重新分析';
+        rerunBtn.textContent = pending ? '请稍候' : '重新分析';
     }
 }
 
@@ -706,13 +706,14 @@ function runAiAnalysis(userId, force = false) {
     currentDetailAiUserId = String(userId || '').trim();
     const isAdminUser = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
     if (force && !isAdminUser) {
-        const confirmed = window.confirm(`重新分析将重新消耗 ${DEFAULT_CUSTOMER_ANALYSIS_POINTS} AI点，是否继续？`);
+        const confirmed = window.confirm(`重新分析将重新消耗 ${DEFAULT_PERSONALITY_ANALYSIS_POINTS} AI点，是否继续？`);
         if (!confirmed) return;
     }
-    $('#aiResult').html('<span class="loading loading-dots loading-sm"></span> 正在提交后台客户分析任务...');
+
+    $('#aiResult').html('<span class="loading loading-dots loading-sm"></span> 正在分析弹幕记录...');
     $('#aiCacheStatus').text('');
     $('#aiMeta').hide().text('');
-    setAiAnalysisButtonsPending(true, false);
+    setAiAnalysisButtonsPending(true, true);
 
     Auth.apiFetch('/api/analysis/ai', {
         method: 'POST',
@@ -724,22 +725,17 @@ function runAiAnalysis(userId, force = false) {
         return r.json();
     })
     .then(res => {
-        if (res.accepted && res.job) {
-            showAiAnalysisJobPending(res.job);
-            startAiAnalysisJobPolling(res.job.id, userId);
-            return;
-        }
-        clearAiAnalysisJobPolling();
         if (res.skipped) {
             renderAiAnalysisResult(res.result, null);
             $('#aiCacheStatus').text(`(语料 ${res.chatCount} 条)`);
-            setAiAnalysisButtonsPending(false);
             return;
         }
-        renderAiAnalysisResult(res.result, res.analysis || null);
-        const sourceMap = { member_cache: '个人缓存', system_cache: '系统缓存', api: '实时分析' };
+
+        renderAiAnalysisResult(res.result, null);
+        const sourceMap = { member_cache: '个人缓存', api: '实时分析' };
         const sourceLabel = sourceMap[res.source] || (res.cached ? '缓存' : '实时分析');
         $('#aiCacheStatus').text(`(${sourceLabel})`);
+
         const metaParts = [];
         if (res.chatCount) metaParts.push(`语料 ${res.chatCount} 条`);
         if (res.latency) metaParts.push(`耗时 ${(res.latency / 1000).toFixed(1)}s`);
@@ -748,16 +744,16 @@ function runAiAnalysis(userId, force = false) {
         if (metaParts.length > 0) {
             $('#aiMeta').show().text(metaParts.join(' | '));
         }
-        setAiAnalysisButtonsPending(false);
     })
     .catch(err => {
-        clearAiAnalysisJobPolling();
         const msg = err.error || err.message || '分析失败';
         if (err.code === 'AI_CREDITS_EXHAUSTED') {
             $('#aiResult').html(`<span class="text-warning">${escapeAiHtml(msg)}</span>`);
         } else {
             renderAiAnalysisResult('错误: ' + msg, null);
         }
+    })
+    .finally(() => {
         setAiAnalysisButtonsPending(false);
     });
 }
@@ -1013,8 +1009,6 @@ async function startBatchAI(forceReanalyze) {
         let completed = 0;
         let errors = 0;
         let skipped = 0;
-        let queued = 0;
-        let instant = 0;
         const CONCURRENCY = 3;
         const DELAY_MS = 500;
 
@@ -1026,8 +1020,7 @@ async function startBatchAI(forceReanalyze) {
             const parts = [];
             if (skipped > 0) parts.push(`${skipped} 语料不足`);
             if (errors > 0) parts.push(`${errors} 失败`);
-            if (queued > 0) parts.unshift(`${queued} 已入队`);
-            $('#batchAIStatus').text(`正在提交后台任务... ${parts.length ? '(' + parts.join(', ') + ')' : ''}`);
+            $('#batchAIStatus').text(`正在生成 AI性格分析... ${parts.length ? '(' + parts.join(', ') + ')' : ''}`);
         };
 
         const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -1058,9 +1051,7 @@ async function startBatchAI(forceReanalyze) {
                             errors++;
                         } else {
                             const data = await res.json();
-                            if (data.accepted) queued++;
-                            else if (data.skipped) skipped++;
-                            else instant++;
+                            if (data.skipped) skipped++;
                         }
                     } catch (e) {
                         errors++;
@@ -1075,12 +1066,11 @@ async function startBatchAI(forceReanalyze) {
 
         await Promise.all(workers);
 
-        const parts = [];
-        if (queued > 0) parts.push(`已入队 ${queued}`);
-        if (instant > 0) parts.push(`即时返回 ${instant}`);
+        const successCount = completed - errors - skipped;
+        const parts = [`成功 ${successCount}`];
         if (skipped > 0) parts.push(`语料不足跳过 ${skipped}`);
         if (errors > 0) parts.push(`失败 ${errors}`);
-        $('#batchAIStatus').text(`提交完成！${parts.join('，')}，共 ${total} 个用户`);
+        $('#batchAIStatus').text(`完成！${parts.join('，')}，共 ${total} 个用户`);
         if (errors > 0) {
             $('#batchAIErrors').show().text(`${errors} 个用户分析失败`);
         }
