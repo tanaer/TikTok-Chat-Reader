@@ -34,6 +34,44 @@ function toIsoString(value) {
     return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+function formatSessionOffsetPoint(value, sessionStartAt = null) {
+    if (!value) return '';
+    const normalized = safeTrimString(value, 60);
+    if (!normalized) return '';
+    if (normalized.startsWith('开播后')) return normalized;
+    const sessionStartMs = sessionStartAt ? new Date(sessionStartAt).getTime() : NaN;
+    if (!Number.isFinite(sessionStartMs)) return normalized;
+
+    const valueDate = new Date(normalized);
+    if (Number.isFinite(valueDate.getTime())) {
+        const diffMinutes = Math.max(0, Math.floor((valueDate.getTime() - sessionStartMs) / 60000));
+        const hours = Math.floor(diffMinutes / 60);
+        const minutes = diffMinutes % 60;
+        return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    }
+
+    const hhmmMatch = /^(\d{2}):(\d{2})$/.exec(normalized);
+    if (!hhmmMatch) return normalized;
+    const point = new Date(sessionStartMs);
+    point.setSeconds(0, 0);
+    point.setHours(Number(hhmmMatch[1]), Number(hhmmMatch[2]), 0, 0);
+    if (point.getTime() < sessionStartMs) point.setDate(point.getDate() + 1);
+    const diffMinutes = Math.max(0, Math.floor((point.getTime() - sessionStartMs) / 60000));
+    const hours = Math.floor(diffMinutes / 60);
+    const minutes = diffMinutes % 60;
+    return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function buildSessionOffsetRange(sessionStartAt = null, durationSeconds = 0) {
+    const safeDurationSeconds = Math.max(0, Number(durationSeconds || 0));
+    const durationMinutes = Math.max(0, Math.floor(safeDurationSeconds / 60));
+    const endHours = Math.floor(durationMinutes / 60);
+    const endMinutes = durationMinutes % 60;
+    const hasStart = Boolean(sessionStartAt);
+    if (!hasStart && !safeDurationSeconds) return '';
+    return `开播后00:00-开播后${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
+}
+
 function safeDivide(numerator, denominator) {
     const left = Number(numerator || 0);
     const right = Number(denominator || 0);
@@ -150,11 +188,32 @@ function serializeValueCustomer(item = {}) {
     };
 }
 
+function serializeSessionPromptValueCustomer(item = {}, sessionStartAt = null) {
+    const base = serializeValueCustomer(item);
+    return {
+        nickname: base.nickname,
+        uniqueId: base.uniqueId,
+        totalGiftValue: base.totalGiftValue,
+        sessionGiftValue: base.sessionGiftValue,
+        giftCount: base.giftCount,
+        historicalValue: base.historicalValue,
+        chatCount: base.chatCount,
+        likeCount: base.likeCount,
+        enterCount: base.enterCount,
+        enterTime: formatSessionOffsetPoint(base.firstEnterAt, sessionStartAt),
+        leaveTime: formatSessionOffsetPoint(base.lastActiveAt, sessionStartAt),
+        reason: base.reason,
+        action: base.action
+    };
+}
+
 function buildSessionRecapPromptPayload(roomId, sessionId, recap, valuableComments = []) {
+    const sessionStartAt = toIsoString(recap?.overview?.startTime);
     return {
         roomId,
         sessionId,
         metrics: {
+            sessionTimeRange: buildSessionOffsetRange(sessionStartAt, recap?.overview?.duration || 0),
             durationSeconds: Number(recap?.overview?.duration || 0),
             totalVisits: Number(recap?.overview?.totalVisits || 0),
             peakOnline: Number(recap?.traffic?.peakOnline || 0),
@@ -187,9 +246,9 @@ function buildSessionRecapPromptPayload(roomId, sessionId, recap, valuableCommen
         actions: normalizeStringList(recap?.insights?.actions, 5, 240),
         highFrequencyComments: Array.isArray(recap?.commentSignals?.topComments) ? recap.commentSignals.topComments.slice(0, 50) : [],
         valuableComments: normalizeValuableComments(valuableComments, 15),
-        coreCustomers: Array.isArray(recap?.valueCustomers?.core) ? recap.valueCustomers.core.slice(0, 8).map(serializeValueCustomer) : [],
-        potentialCustomers: Array.isArray(recap?.valueCustomers?.potential) ? recap.valueCustomers.potential.slice(0, 8).map(serializeValueCustomer) : [],
-        riskCustomers: Array.isArray(recap?.valueCustomers?.risk) ? recap.valueCustomers.risk.slice(0, 8).map(serializeValueCustomer) : [],
+        coreCustomers: Array.isArray(recap?.valueCustomers?.core) ? recap.valueCustomers.core.slice(0, 8).map(item => serializeSessionPromptValueCustomer(item, sessionStartAt)) : [],
+        potentialCustomers: Array.isArray(recap?.valueCustomers?.potential) ? recap.valueCustomers.potential.slice(0, 8).map(item => serializeSessionPromptValueCustomer(item, sessionStartAt)) : [],
+        riskCustomers: Array.isArray(recap?.valueCustomers?.risk) ? recap.valueCustomers.risk.slice(0, 8).map(item => serializeSessionPromptValueCustomer(item, sessionStartAt)) : [],
         topGifters: Array.isArray(recap?.giftSignals?.topGifters) ? recap.giftSignals.topGifters.slice(0, 20) : [],
         topGiftDetails: Array.isArray(recap?.giftSignals?.topGiftDetails) ? recap.giftSignals.topGiftDetails.slice(0, 20) : [],
         dataNotes: [

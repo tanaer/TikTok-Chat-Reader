@@ -131,14 +131,33 @@ function replaceValueDisplay(text) {
         .trim();
 }
 
-function convertRankFractionToTopPercent(text) {
-    return String(text || '').replace(/排名\s*([0-9][0-9,]*)\s*\/\s*([0-9][0-9,]*)/g, (_match, rankText, totalText) => {
-        const rank = Number(String(rankText || '').replace(/,/g, ''));
-        const total = Number(String(totalText || '').replace(/,/g, ''));
-        if (!rank || !total || total <= 0) return _match;
-        const topPercent = Math.max(1, Math.min(100, Math.ceil((rank / total) * 100)));
+function formatRankFractionTopPercent(label, rank, total) {
+    if (!rank || !total || total <= 0) return '';
+    const topPercent = Math.max(1, Math.min(100, Math.ceil((rank / total) * 100)));
+    const normalizedLabel = String(label || '').trim();
+    if (!normalizedLabel || normalizedLabel === '排名') {
         return `位于前${topPercent}%`;
-    });
+    }
+    if (normalizedLabel === '本房排名' || normalizedLabel === '平台排名') {
+        return `${normalizedLabel.replace(/排名$/, '')}位于前${topPercent}%`;
+    }
+    return `${normalizedLabel}位于前${topPercent}%`;
+}
+
+function convertRankFractionToTopPercent(text) {
+    return String(text || '')
+        .replace(/(本房近30天送礼排名|平台近30天送礼排名|本房排名|平台排名|排名)\s*([0-9][0-9,]*)\s*\/\s*([0-9][0-9,]*)(?:\s*人)?/g, (_match, label, rankText, totalText) => {
+            const rank = Number(String(rankText || '').replace(/,/g, ''));
+            const total = Number(String(totalText || '').replace(/,/g, ''));
+            const formatted = formatRankFractionTopPercent(label, rank, total);
+            return formatted || _match;
+        })
+        .replace(/([（(：:]\s*)第?\s*([0-9][0-9,]*)\s*\/\s*([0-9][0-9,]*)(?:\s*人)?/g, (_match, prefix, rankText, totalText) => {
+            const rank = Number(String(rankText || '').replace(/,/g, ''));
+            const total = Number(String(totalText || '').replace(/,/g, ''));
+            const formatted = formatRankFractionTopPercent('', rank, total);
+            return `${prefix}${formatted || _match.replace(prefix, '')}`;
+        });
 }
 
 function localizeCustomerAnalysisText(value) {

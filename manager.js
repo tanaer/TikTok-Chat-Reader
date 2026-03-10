@@ -987,8 +987,9 @@ class Manager {
     }
 
     // Time Statistics (30-min intervals) - supports full history or a specific session
-    async getTimeStats(roomId, sessionId = null, sinceTime = null) {
+    async getTimeStats(roomId, sessionId = null, sinceTime = null, options = {}) {
         await this.ensureDb();
+        const includeBucketBounds = Boolean(options?.includeBucketBounds);
 
         if (roomId && !sessionId && sinceTime && isIncrementalStatsReadEnabled()) {
             const minuteParams = [roomId];
@@ -1013,6 +1014,8 @@ class Manager {
                     GROUP BY bucket_start
                 )
                 SELECT
+                    bucket_start as bucket_start_at,
+                    bucket_start + interval '30 minute' as bucket_end_at,
                     to_char(bucket_start, 'HH24:MI') || '-' ||
                     to_char(bucket_start + interval '30 minute', 'HH24:MI') as time_range,
                     comments,
@@ -1026,6 +1029,10 @@ class Manager {
 
             if (minuteStats.length > 0) {
                 return minuteStats.map(s => ({
+                    ...(includeBucketBounds ? {
+                        bucket_start_at: s.bucketStartAt || s.bucket_start_at || null,
+                        bucket_end_at: s.bucketEndAt || s.bucket_end_at || null
+                    } : {}),
                     time_range: s.timeRange,
                     income: parseInt(s.income) || 0,
                     comments: parseInt(s.comments) || 0,
@@ -1065,6 +1072,8 @@ class Manager {
                 ${whereClause}
             )
             SELECT
+                bucket_start as bucket_start_at,
+                bucket_start + interval '30 minute' as bucket_end_at,
                 to_char(bucket_start, 'HH24:MI') || '-' ||
                 to_char(bucket_start + interval '30 minute', 'HH24:MI') as time_range,
                 SUM(CASE WHEN type = 'chat' THEN 1 ELSE 0 END) as comments,
@@ -1084,6 +1093,10 @@ class Manager {
         `, params);
 
         return stats.map(s => ({
+            ...(includeBucketBounds ? {
+                bucket_start_at: s.bucketStartAt || s.bucket_start_at || null,
+                bucket_end_at: s.bucketEndAt || s.bucket_end_at || null
+            } : {}),
             time_range: s.timeRange,
             income: parseInt(s.income) || 0,
             comments: parseInt(s.comments) || 0,
@@ -1274,8 +1287,44 @@ class Manager {
         await this.ensureDb();
 
         const detail = await this.getRoomDetailStats(roomId, sessionId);
-        const timeline = await this.getTimeStats(roomId, sessionId);
+        const rawTimeline = await this.getTimeStats(roomId, sessionId, null, { includeBucketBounds: true });
         const valueCustomers = await this.getSessionValueCustomers(roomId, sessionId, roomFilter);
+        const sessionStartTime = detail?.summary?.startTime || null;
+        const sessionEndTime = detail?.summary?.endTime || null;
+        const sessionStartMs = sessionStartTime ? new Date(sessionStartTime).getTime() : NaN;
+
+        const formatOffsetLabel = (pointMs) => {
+            const diffMinutes = Math.max(0, Math.floor((pointMs - sessionStartMs) / 60000));
+            const hours = Math.floor(diffMinutes / 60);
+            const minutes = diffMinutes % 60;
+            return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+        };
+
+        const buildOffsetRangeLabel = (item = {}) => {
+            const fallback = String(item?.time_range || '').trim();
+            if (!Number.isFinite(sessionStartMs)) return fallback;
+
+            const rawStartMs = item?.bucket_start_at ? new Date(item.bucket_start_at).getTime() : NaN;
+            const rawEndMs = item?.bucket_end_at ? new Date(item.bucket_end_at).getTime() : NaN;
+            if (!Number.isFinite(rawStartMs) || !Number.isFinite(rawEndMs) || rawEndMs <= rawStartMs) return fallback;
+
+            const sessionEndMs = sessionEndTime ? new Date(sessionEndTime).getTime() : NaN;
+            const effectiveStartMs = Math.max(rawStartMs, sessionStartMs);
+            const effectiveEndMs = Number.isFinite(sessionEndMs)
+                ? Math.min(rawEndMs, sessionEndMs)
+                : rawEndMs;
+
+            if (!Number.isFinite(effectiveEndMs) || effectiveEndMs <= effectiveStartMs) return fallback;
+            return `${formatOffsetLabel(effectiveStartMs)}-${formatOffsetLabel(effectiveEndMs)}`;
+        };
+
+        const timeline = Array.isArray(rawTimeline)
+            ? rawTimeline.map(item => ({
+                ...item,
+                absolute_time_range: item?.time_range || '',
+                time_range: buildOffsetRangeLabel(item)
+            }))
+            : [];
 
         let commentWhereClause = `WHERE room_id = ? AND type = 'chat' AND comment IS NOT NULL AND LENGTH(TRIM(comment)) > 0`;
         const commentParams = [roomId];
@@ -2935,6 +2984,7 @@ class Manager {
             summary: {
                 duration,
                 startTime: timeRange.start || null,  // Actual start time from database
+                endTime: timeRange.end || null,
                 totalVisits: summary.totalVisits || 0,
                 totalComments: summary.totalComments || 0,
                 totalLikes: summary.maxLikes || 0, // Using max global likes as "Room Likes"

@@ -67,6 +67,7 @@ const {
     prepareCustomerAnalysis,
     runCustomerAnalysis,
     normalizeAnalysisPayload,
+    localizeCustomerAnalysisText,
 } = require('./services/customerAiAnalysisService');
 const {
     resolveAiStructuredDataVariables,
@@ -78,6 +79,10 @@ const {
     runUserStatsRefreshJob,
     runGlobalStatsRefreshJob,
 } = require('./services/statsRefreshService');
+const {
+    getAiPointCost,
+    AI_POINT_SCENES,
+} = require('./services/aiPricingService');
 const { runExpiredRoomCleanupJob } = require('./services/maintenanceJobService');
 const {
     enqueueSessionMaintenanceJob,
@@ -1091,7 +1096,8 @@ const SENSITIVE_SETTING_KEYS = [
     'session_id', 'port',
     'smtp_host', 'smtp_port', 'smtp_secure', 'smtp_user', 'smtp_pass',
     'smtp_from', 'smtp_from_name', 'smtp_legacy_migrated', 'email_verification_enabled',
-    'single_session_login_enabled'
+    'single_session_login_enabled',
+    'session_recap_ai_points'
 ];
 
 function filterSensitiveSettings(settings) {
@@ -1530,6 +1536,7 @@ app.get('/api/rooms/:id/session-recap', optionalAuth, async (req, res) => {
         if (!featureAccess.allowed) return res.status(featureAccess.status).json(featureAccess.payload);
 
         const sessionId = req.query.sessionId || 'live';
+        const sessionRecapPointCost = await getAiPointCost(AI_POINT_SCENES.SESSION_RECAP);
         const roomFilter = await getUserRoomFilter(req);
         const recap = await getCachedSessionRecap(roomId, sessionId, req, roomFilter);
         const cachedReview = req.user && sessionId !== 'live'
@@ -1541,7 +1548,7 @@ app.get('/api/rooms/:id/session-recap', optionalAuth, async (req, res) => {
 
         res.json({
             sessionId,
-            pointCost: SESSION_RECAP_AI_POINTS,
+            pointCost: sessionRecapPointCost,
             overview: {
                 score: recap?.overview?.score || 0,
                 grade: recap?.overview?.grade || '-',
@@ -1613,6 +1620,7 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
         if (!featureAccess.allowed) return res.status(featureAccess.status).json(featureAccess.payload);
 
         const sessionId = String(req.body?.sessionId || '').trim();
+        const sessionRecapPointCost = await getAiPointCost(AI_POINT_SCENES.SESSION_RECAP);
         const force = parseRequestBoolean(req.body?.force);
         if (!sessionId) return res.status(400).json({ error: '请选择场次' });
         if (sessionId === 'live') return res.status(400).json({ error: '请先切到已归档场次，再生成 AI 直播复盘' });
@@ -1630,7 +1638,7 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
                 return res.json({
                     review: serializeSessionAiReview(cachedReview),
                     cached: true,
-                    pointCost: SESSION_RECAP_AI_POINTS,
+                    pointCost: sessionRecapPointCost,
                     chargedPoints: 0
                 });
             }
@@ -1648,7 +1656,7 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
                 queued: existingJob.status === 'queued',
                 processing: existingJob.status === 'processing',
                 reused: true,
-                pointCost: SESSION_RECAP_AI_POINTS,
+                pointCost: sessionRecapPointCost,
                 job: serializeSessionAiWorkJobForClient(existingJob),
                 message: 'AI 已启动，正在后台工作中，无需一直等待，完成后会主动通知。'
             });
@@ -1657,13 +1665,13 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
         const isAdmin = req.user.role === 'admin';
         if (!isAdmin && !hasConfirmedAiConsumption(req)) {
             return res.status(409).json(
-                buildAiConsumptionConfirmationPayload(force ? '重新生成 AI直播复盘' : '生成 AI直播复盘', SESSION_RECAP_AI_POINTS)
+                buildAiConsumptionConfirmationPayload(force ? '重新生成 AI直播复盘' : '生成 AI直播复盘', sessionRecapPointCost)
             );
         }
         if (!isAdmin) {
             const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [req.user.id]);
             const remaining = Number(credits?.aiCreditsRemaining || 0);
-            if (remaining < SESSION_RECAP_AI_POINTS) {
+            if (remaining < sessionRecapPointCost) {
                 return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
             }
         }
@@ -1682,7 +1690,7 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
                 jobType: AI_WORK_JOB_TYPE_SESSION_RECAP,
                 roomId,
                 sessionId,
-                pointCost: SESSION_RECAP_AI_POINTS,
+                pointCost: sessionRecapPointCost,
                 forceRegenerate: force,
                 isAdmin,
                 requestPayload: {
@@ -1690,7 +1698,7 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
                     roomId,
                     sessionId,
                     force,
-                    pointCost: SESSION_RECAP_AI_POINTS
+                    pointCost: sessionRecapPointCost
                 },
                 client
             })
@@ -1702,7 +1710,7 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
                 queued: job.status === 'queued',
                 processing: job.status === 'processing',
                 reused: true,
-                pointCost: SESSION_RECAP_AI_POINTS,
+                pointCost: sessionRecapPointCost,
                 job: serializeSessionAiWorkJobForClient(job),
                 message: 'AI 已启动，正在后台工作中，无需一直等待，完成后会主动通知。'
             });
@@ -1712,14 +1720,14 @@ app.post('/api/rooms/:id/session-recap/ai', optionalAuth, async (req, res) => {
             phase: 'queued',
             level: 'info',
             message: '任务已入队，等待后台调度',
-            payload: { roomId, sessionId, force, pointCost: SESSION_RECAP_AI_POINTS }
+            payload: { roomId, sessionId, force, pointCost: sessionRecapPointCost }
         });
 
         res.status(202).json({
             accepted: true,
             queued: true,
             cached: false,
-            pointCost: SESSION_RECAP_AI_POINTS,
+            pointCost: sessionRecapPointCost,
             job: serializeSessionAiWorkJobForClient(job),
             message: 'AI 已启动，正在后台工作中，无需一直等待，完成后会主动通知。'
         });
@@ -1825,6 +1833,7 @@ app.get('/api/history', optionalAuth, async (req, res) => {
 // User Analysis API
 app.get('/api/analysis/users', optionalAuth, async (req, res) => {
     try {
+        const personalityPointCost = await getAiPointCost(AI_POINT_SCENES.USER_PERSONALITY);
         const filters = {
             lang: req.query.lang || '',
             languageFilter: req.query.languageFilter || '',
@@ -1854,6 +1863,7 @@ app.get('/api/analysis/users', optionalAuth, async (req, res) => {
             giftPreference: filters.giftPreference
         });
         const result = await getCachedAnalysisPayload(cacheKey, () => manager.getTopGifters(page, pageSize, filters));
+        result.pointCost = personalityPointCost;
         res.json(result);
     } catch (err) {
         res.status(500).json({ error: err.message });
@@ -1863,6 +1873,7 @@ app.get('/api/analysis/users', optionalAuth, async (req, res) => {
 app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
     try {
         if (!req.user) return res.status(401).json({ error: '请先登录' });
+        const personalityPointCost = await getAiPointCost(AI_POINT_SCENES.USER_PERSONALITY);
         const roomFilter = await getUserRoomFilter(req);
         const [data, memberAnalysis, latestAiJob] = await Promise.all([
             getCachedUserAnalysisBase(req, req.params.userId, roomFilter),
@@ -1871,6 +1882,7 @@ app.get('/api/analysis/user/:userId', optionalAuth, async (req, res) => {
         ]);
 
         const response = serializeUserAnalysisDetail(data);
+        response.pointCost = personalityPointCost;
         response.aiAnalysis = memberAnalysis?.result || null;
         response.aiAnalysisJson = safeParseJsonObject(memberAnalysis?.resultJson);
         if (latestAiJob && ['queued', 'processing'].includes(String(latestAiJob.status || '').toLowerCase())) {
@@ -2184,9 +2196,6 @@ function isCustomerAnalysisCacheReusable(cacheRecord, cacheSignature) {
     return true;
 }
 
-const SESSION_RECAP_AI_POINTS = 20;
-const USER_PERSONALITY_AI_POINTS = 1;
-const CUSTOMER_ANALYSIS_AI_POINTS = 3;
 const USER_PERSONALITY_ANALYSIS_PROMPT_KEY = 'user_personality_analysis';
 const USER_PERSONALITY_ANALYSIS_CONTEXT_VERSION = 'user-personality.v1';
 const AI_CONSUMPTION_CONFIRM_REQUIRED = 'AI_CONSUMPTION_CONFIRM_REQUIRED';
@@ -2242,7 +2251,7 @@ async function createAiWorkJobWithLock({
     }
 }
 
-async function consumeCustomerAnalysisCredits(memberId, targetUserId, points = CUSTOMER_ANALYSIS_AI_POINTS) {
+async function consumeCustomerAnalysisCredits(memberId, targetUserId, points = 0) {
     const safePoints = Math.max(0, Number(points || 0));
     if (safePoints <= 0) {
         return { success: true, chargedPoints: 0 };
@@ -3464,6 +3473,7 @@ async function sendAiWorkJobNotification(job, { success = true, errorMessage = '
 
 async function processSessionRecapAiWorkJob(job) {
     const isAdmin = Boolean(job.isAdmin);
+    const sessionRecapPointCost = await getAiPointCost(AI_POINT_SCENES.SESSION_RECAP);
     const trace = async ({ phase = '', level = 'info', message = '', payload = null } = {}) => {
         await appendAiWorkTrace(job.id, { phase, level, message, payload });
     };
@@ -3503,7 +3513,7 @@ async function processSessionRecapAiWorkJob(job) {
                 trigger: 'async_worker',
                 roomId: job.roomId,
                 sessionId: job.sessionId,
-                pointCost: Number(job.pointCost || SESSION_RECAP_AI_POINTS),
+                pointCost: Number(job.pointCost || sessionRecapPointCost),
                 forceRegenerate: Boolean(job.forceRegenerate),
                 recapMetrics: {
                     score: Number(recap?.overview?.score || 0),
@@ -3520,7 +3530,7 @@ async function processSessionRecapAiWorkJob(job) {
 
         const generated = await generateSessionAiReviewFromRecap(job.roomId, job.sessionId, recap, { trace });
         const review = parseSessionAiReview(generated, recap) || buildFallbackSessionAiReview(recap);
-        const chargedPoints = isAdmin || generated.usedFallback ? 0 : Number(job.pointCost || SESSION_RECAP_AI_POINTS);
+        const chargedPoints = isAdmin || generated.usedFallback ? 0 : Number(job.pointCost || sessionRecapPointCost);
         const resultPayload = {
             review,
             usedFallback: Boolean(generated.usedFallback),
@@ -3577,6 +3587,7 @@ async function processSessionRecapAiWorkJob(job) {
 
 async function processCustomerAnalysisAiWorkJob(job) {
     const isAdmin = Boolean(job.isAdmin);
+    const customerAnalysisPointCost = await getAiPointCost(AI_POINT_SCENES.CUSTOMER_ANALYSIS);
     const requestPayload = job.requestPayload || {};
     const targetUserId = String(requestPayload.targetUserId || '').trim();
     const requestedRoomId = String(requestPayload.requestedRoomId || job.roomId || '').trim();
@@ -3733,7 +3744,7 @@ async function processCustomerAnalysisAiWorkJob(job) {
             source: 'api',
             latencyMs: Number(generated.latencyMs || 0),
             modelName: generated.modelName || '',
-            chargedPoints: isAdmin ? 0 : Number(job.pointCost || CUSTOMER_ANALYSIS_AI_POINTS)
+            chargedPoints: isAdmin ? 0 : Number(job.pointCost || customerAnalysisPointCost)
         };
         const finalizeResult = await finalizeMemberAnalysisJob({
             jobId: job.id,
@@ -3750,7 +3761,7 @@ async function processCustomerAnalysisAiWorkJob(job) {
             currentRoomId: preparedAnalysis.currentRoomId,
             latencyMs: generated.latencyMs,
             source: 'api',
-            chargedPoints: isAdmin ? 0 : Number(job.pointCost || CUSTOMER_ANALYSIS_AI_POINTS),
+            chargedPoints: isAdmin ? 0 : Number(job.pointCost || customerAnalysisPointCost),
             usageType: 'analysis',
             usageTargetId: targetUserId,
             resultPayload
@@ -3881,6 +3892,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
         if (!req.user) return res.status(401).json({ error: '请先登录' });
 
         const userId = req.body?.userId;
+        const personalityPointCost = await getAiPointCost(AI_POINT_SCENES.USER_PERSONALITY);
         const force = parseRequestBoolean(req.body?.force);
         const memberId = req.user.id;
         const isAdmin = req.user?.role === 'admin';
@@ -3910,6 +3922,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
             })) {
                 return res.json({
                     result: memberCache.result,
+                    pointCost: personalityPointCost,
                     cached: true,
                     chatCount: memberCache.chatCount || chatCount,
                     analyzedAt: memberCache.createdAt,
@@ -3926,7 +3939,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
                 processing: existingAiJob.status === 'processing',
                 reused: true,
                 cached: false,
-                pointCost: USER_PERSONALITY_AI_POINTS,
+                pointCost: personalityPointCost,
                 job: serializeSessionAiWorkJobForClient(existingAiJob),
                 message: 'AI 已启动，正在后台生成性格分析，完成后会自动刷新。'
             });
@@ -3934,14 +3947,14 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
 
         if (!isAdmin && !hasConfirmedAiConsumption(req)) {
             return res.status(409).json(
-                buildAiConsumptionConfirmationPayload(force ? '重新分析' : '生成 AI性格分析', USER_PERSONALITY_AI_POINTS)
+                buildAiConsumptionConfirmationPayload(force ? '重新分析' : '生成 AI性格分析', personalityPointCost)
             );
         }
 
         if (!isAdmin) {
             const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
             const remaining = Number(credits?.aiCreditsRemaining || 0);
-            if (remaining < USER_PERSONALITY_AI_POINTS) {
+            if (remaining < personalityPointCost) {
                 return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
             }
         }
@@ -3963,7 +3976,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
                 roomId: '',
                 sessionId: '',
                 title: `AI性格分析 · 用户 ${targetNickname ? `${targetNickname} (${userId})` : userId}`,
-                pointCost: USER_PERSONALITY_AI_POINTS,
+                pointCost: personalityPointCost,
                 forceRegenerate: force,
                 isAdmin,
                 requestPayload: {
@@ -3973,7 +3986,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
                     targetUniqueId,
                     force,
                     chatCount,
-                    pointCost: USER_PERSONALITY_AI_POINTS,
+                    pointCost: personalityPointCost,
                     promptKey: USER_PERSONALITY_ANALYSIS_PROMPT_KEY,
                     promptUpdatedAt,
                     contextVersion: USER_PERSONALITY_ANALYSIS_CONTEXT_VERSION
@@ -3989,7 +4002,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
                 processing: job.status === 'processing',
                 reused: true,
                 cached: false,
-                pointCost: USER_PERSONALITY_AI_POINTS,
+                pointCost: personalityPointCost,
                 job: serializeSessionAiWorkJobForClient(job),
                 message: 'AI 已启动，正在后台生成性格分析，完成后会自动刷新。'
             });
@@ -4039,7 +4052,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
                 source: 'api',
                 latencyMs: Number(aiLatency || 0),
                 modelName: modelName || '',
-                chargedPoints: isAdmin ? 0 : USER_PERSONALITY_AI_POINTS
+                chargedPoints: isAdmin ? 0 : personalityPointCost
             };
             const finalizeResult = await finalizeMemberAnalysisJob({
                 jobId: job.id,
@@ -4056,7 +4069,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
                 currentRoomId: null,
                 latencyMs: aiLatency,
                 source: 'api',
-                chargedPoints: isAdmin ? 0 : USER_PERSONALITY_AI_POINTS,
+                chargedPoints: isAdmin ? 0 : personalityPointCost,
                 usageType: 'analysis',
                 usageTargetId: userId,
                 resultPayload
@@ -4068,7 +4081,7 @@ app.post('/api/analysis/ai', optionalAuth, async (req, res) => {
                 throw new Error(finalizeResult.error || '保存性格分析结果失败');
             }
 
-            return res.json({ result, cached: false, chatCount, latency: aiLatency, model: modelName, source: 'api' });
+            return res.json({ result, pointCost: personalityPointCost, cached: false, chatCount, latency: aiLatency, model: modelName, source: 'api' });
         } catch (analysisErr) {
             await markAiWorkJobFailed(job.id, {
                 errorMessage: analysisErr?.message || '性格分析失败',
@@ -4088,6 +4101,7 @@ app.get('/api/rooms/:id/customer-analysis/:userId', optionalAuth, async (req, re
 
         const roomId = String(req.params.id || '').trim();
         const targetUserId = String(req.params.userId || '').trim();
+        const customerAnalysisPointCost = await getAiPointCost(AI_POINT_SCENES.CUSTOMER_ANALYSIS);
         if (!roomId || !targetUserId) return res.status(400).json({ error: '参数无效' });
 
         const access = await canAccessRoom(req, roomId);
@@ -4097,8 +4111,9 @@ app.get('/api/rooms/:id/customer-analysis/:userId', optionalAuth, async (req, re
         const latestAiJob = await getLatestCustomerAnalysisAiWorkJobForUser(req.user.id, targetUserId, roomId);
 
         res.json({
-            result: memberAnalysis?.result || null,
+            result: memberAnalysis?.result ? localizeCustomerAnalysisText(memberAnalysis.result) : null,
             analysis: memberAnalysis?.resultJson ? normalizeAnalysisPayload(safeParseJsonObject(memberAnalysis.resultJson) || {}) : null,
+            pointCost: customerAnalysisPointCost,
             chatCount: Number(memberAnalysis?.chatCount || 0),
             analyzedAt: memberAnalysis?.createdAt || null,
             source: memberAnalysis?.source || null,
@@ -4118,6 +4133,7 @@ app.post('/api/rooms/:id/customer-analysis', optionalAuth, async (req, res) => {
 
         const roomId = String(req.params.id || '').trim();
         const targetUserId = String(req.body?.userId || '').trim();
+        const customerAnalysisPointCost = await getAiPointCost(AI_POINT_SCENES.CUSTOMER_ANALYSIS);
         const force = parseRequestBoolean(req.body?.force);
         if (!roomId) return res.status(400).json({ error: '房间ID不能为空' });
         if (!targetUserId) return res.status(400).json({ error: 'userId 不能为空' });
@@ -4140,7 +4156,7 @@ app.post('/api/rooms/:id/customer-analysis', optionalAuth, async (req, res) => {
                 processing: existingJob.status === 'processing',
                 reused: true,
                 cached: false,
-                pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+                pointCost: customerAnalysisPointCost,
                 job: serializeSessionAiWorkJobForClient(existingJob),
                 message: 'AI 已启动，正在后台分析客户，完成后会主动通知。'
             });
@@ -4148,14 +4164,14 @@ app.post('/api/rooms/:id/customer-analysis', optionalAuth, async (req, res) => {
 
         if (!isAdmin && !hasConfirmedAiConsumption(req)) {
             return res.status(409).json(
-                buildAiConsumptionConfirmationPayload(force ? '重新挖掘客户价值' : '开始客户价值深度挖掘', CUSTOMER_ANALYSIS_AI_POINTS)
+                buildAiConsumptionConfirmationPayload(force ? '重新挖掘客户价值' : '开始客户价值深度挖掘', customerAnalysisPointCost)
             );
         }
 
         if (!isAdmin) {
             const credits = await db.get('SELECT ai_credits_remaining FROM users WHERE id = ?', [memberId]);
             const remaining = Number(credits?.aiCreditsRemaining || 0);
-            if (remaining < CUSTOMER_ANALYSIS_AI_POINTS) {
+            if (remaining < customerAnalysisPointCost) {
                 return res.status(403).json({ error: 'AI 点数不足，请购买点数包或升级套餐', code: 'AI_CREDITS_EXHAUSTED' });
             }
         }
@@ -4181,7 +4197,7 @@ app.post('/api/rooms/:id/customer-analysis', optionalAuth, async (req, res) => {
                     targetUserId,
                     targetNickname
                 }),
-                pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+                pointCost: customerAnalysisPointCost,
                 forceRegenerate: force,
                 isAdmin,
                 requestPayload: {
@@ -4193,7 +4209,7 @@ app.post('/api/rooms/:id/customer-analysis', optionalAuth, async (req, res) => {
                     requestedRoomId: roomId,
                     currentRoomId: roomId,
                     force,
-                    pointCost: CUSTOMER_ANALYSIS_AI_POINTS
+                    pointCost: customerAnalysisPointCost
                 },
                 client
             })
@@ -4206,7 +4222,7 @@ app.post('/api/rooms/:id/customer-analysis', optionalAuth, async (req, res) => {
                 processing: job.status === 'processing',
                 reused: true,
                 cached: false,
-                pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+                pointCost: customerAnalysisPointCost,
                 job: serializeSessionAiWorkJobForClient(job),
                 message: 'AI 已启动，正在后台分析客户，完成后会主动通知。'
             });
@@ -4220,7 +4236,7 @@ app.post('/api/rooms/:id/customer-analysis', optionalAuth, async (req, res) => {
                 targetUserId,
                 currentRoomId: roomId,
                 force,
-                pointCost: CUSTOMER_ANALYSIS_AI_POINTS
+                pointCost: customerAnalysisPointCost
             }
         });
         kickAiWorkQueue('room-customer-analysis-submit');
@@ -4229,7 +4245,7 @@ app.post('/api/rooms/:id/customer-analysis', optionalAuth, async (req, res) => {
             accepted: true,
             queued: true,
             cached: false,
-            pointCost: CUSTOMER_ANALYSIS_AI_POINTS,
+            pointCost: customerAnalysisPointCost,
             job: serializeSessionAiWorkJobForClient(job),
             message: 'AI 已启动，正在后台分析客户，完成后会主动通知。'
         });

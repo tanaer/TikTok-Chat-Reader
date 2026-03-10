@@ -44,6 +44,7 @@
 - 必须包含 `coreCustomers / potentialCustomers / riskCustomers`
 - 客户对象要求带 `uniqueId`
 - 严禁把 A 用户的话术、理由、动作错写到 B 用户
+- 复盘里的时间表达优先使用“开播后XX:XX-开播后XX:XX”的相对时间范围，不直接展示北京时间，方便团队跨场次复盘时按流程节奏联想
 
 ### 3. `user_personality_analysis`
 

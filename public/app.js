@@ -22,7 +22,7 @@ var currentRoomCustomerAnalysisState = { roomId: '', userId: '', nickname: '', u
 var currentRoomLoadRequestId = 0;
 var globalLoadingVariant = 'default';
 var globalLoadingMessage = '加载中...';
-const DEFAULT_SESSION_RECAP_POINTS = 20;
+const DEFAULT_SESSION_RECAP_POINTS = 10;
 const DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS = 3;
 const SESSION_RECAP_LOADING_TIPS = [
     '正在抽取礼物高峰与掉人节点',
@@ -1069,6 +1069,47 @@ function formatBeijingDateTime(value, fallback = '--') {
     });
 }
 
+function formatSessionOffsetPoint(value, sessionStartAt = null, fallback = '-') {
+    if (!value) return fallback;
+    const normalized = String(value || '').trim();
+    if (!normalized) return fallback;
+    if (normalized.startsWith('开播后')) return normalized;
+
+    const sessionStartMs = sessionStartAt ? new Date(sessionStartAt).getTime() : NaN;
+    if (!Number.isFinite(sessionStartMs)) {
+        const date = new Date(normalized);
+        if (Number.isFinite(date.getTime())) {
+            return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+        }
+        return normalized || fallback;
+    }
+
+    const date = new Date(normalized);
+    let pointMs = Number.isFinite(date.getTime()) ? date.getTime() : NaN;
+    if (!Number.isFinite(pointMs)) {
+        const hhmmMatch = /^(\d{2}):(\d{2})$/.exec(normalized);
+        if (!hhmmMatch) return normalized || fallback;
+        const point = new Date(sessionStartMs);
+        point.setSeconds(0, 0);
+        point.setHours(Number(hhmmMatch[1]), Number(hhmmMatch[2]), 0, 0);
+        if (point.getTime() < sessionStartMs) point.setDate(point.getDate() + 1);
+        pointMs = point.getTime();
+    }
+
+    const diffMinutes = Math.max(0, Math.floor((pointMs - sessionStartMs) / 60000));
+    const hours = Math.floor(diffMinutes / 60);
+    const minutes = diffMinutes % 60;
+    return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+}
+
+function buildSessionOffsetRangeLabel(startTime, durationSeconds, fallback = '') {
+    const durationMinutes = Math.max(0, Math.floor(Number(durationSeconds || 0) / 60));
+    const endHours = Math.floor(durationMinutes / 60);
+    const endMinutes = durationMinutes % 60;
+    if (!startTime && !durationMinutes) return fallback;
+    return `开播后00:00-开播后${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
+}
+
 // Update tab switching for DaisyUI
 function switchDetailTab(tabId, btnElement) {
     $('#section-roomDetail .tab').removeClass('tab-active');
@@ -1613,7 +1654,7 @@ function showSessionRecapTeaser(recap = {}) {
     const pointCost = Number(recap?.pointCost || DEFAULT_SESSION_RECAP_POINTS);
     const overview = recap?.overview || {};
     const isLive = overview.sessionMode === 'live' || currentSessionId === 'live';
-    const startTime = overview.startTime ? formatBeijingDateTime(overview.startTime, '') : '';
+    const sessionRangeLabel = buildSessionOffsetRangeLabel(overview.startTime, overview.duration, '');
 
     const rightPanel = isLive
         ? `
@@ -1643,7 +1684,7 @@ function showSessionRecapTeaser(recap = {}) {
             : 'AI整理本场结果、关键节点、价值客户、高价值弹幕和下一步动作。',
         chips: isLive
             ? ['归档后生成更稳', '老板摘要', '价值客户', '关键时刻']
-            : [startTime ? `场次时间 ${startTime}` : '单场归档复盘', '老板摘要', '关键时刻', '价值客户'],
+            : [sessionRangeLabel ? `开播时间范围 ${sessionRangeLabel}` : '单场归档复盘', '老板摘要', '关键时刻', '价值客户'],
         rightPanel,
         tone: isLive ? 'neutral' : 'primary'
     }));
@@ -1918,10 +1959,7 @@ function renderRecapTags(tags = []) {
 }
 
 function formatRecapTimeText(value) {
-    if (!value) return '-';
-    const parsed = new Date(value);
-    if (Number.isNaN(parsed.getTime())) return escapeRecapHtml(String(value));
-    return `${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}`;
+    return formatSessionOffsetPoint(value, currentSessionRecap?.overview?.startTime || null, '-');
 }
 
 function renderRecapScoreBreakdown(score = {}, overview = {}) {
@@ -2624,7 +2662,7 @@ function renderRoomCustomerAnalysisResult(resultText, analysisPayload = null) {
 
     const analysis = normalizeRoomCustomerAnalysisPayload(analysisPayload);
     if (!analysis) {
-        wrap.innerHTML = `<div class="whitespace-pre-wrap leading-6 text-base-content/80">${escapeRecapHtml(resultText || '点击开始客户价值深度挖掘...')}</div>`;
+        wrap.innerHTML = `<div class="whitespace-pre-wrap leading-6 text-base-content/80">${escapeRecapHtml(localizeRoomCustomerAnalysisText(resultText || '点击开始客户价值深度挖掘...'))}</div>`;
         return;
     }
 
@@ -2745,6 +2783,14 @@ async function loadRoomCustomerAnalysis(roomId, userId) {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || '获取客户价值深度挖掘结果失败');
     if (currentRoomCustomerAnalysisState.roomId !== safeRoomId || currentRoomCustomerAnalysisState.userId !== safeUserId) return;
+    currentRoomCustomerAnalysisState.pointCost = Number(data.pointCost || currentRoomCustomerAnalysisState.pointCost || DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS);
+    const tipEl = document.getElementById('roomCustomerAnalysisTip');
+    if (tipEl) {
+        const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
+        tipEl.textContent = isAdmin
+            ? '管理员发起客户价值深度挖掘不扣点。'
+            : `首次深挖默认消耗 ${currentRoomCustomerAnalysisState.pointCost} AI点；命中当前账号 + 当前房间缓存再次查看不重复扣点。`;
+    }
 
     if (data.aiJob && ['queued', 'processing'].includes(String(data.aiJob.status || '').toLowerCase())) {
         showRoomCustomerAnalysisPending(data.aiJob);
@@ -2833,6 +2879,7 @@ async function openRoomCustomerAnalysisModal(roomId, userId, nickname = '', uniq
         userId: safeUserId,
         nickname: String(nickname || '').trim(),
         uniqueId: String(uniqueId || '').trim(),
+        pointCost: DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS,
         hasAnalysisResult: false
     };
 
@@ -2847,7 +2894,7 @@ async function openRoomCustomerAnalysisModal(roomId, userId, nickname = '', uniq
         const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
         tipEl.textContent = isAdmin
             ? '管理员发起客户价值深度挖掘不扣点。'
-            : `首次深挖默认消耗 ${DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS} AI点；命中当前账号 + 当前房间缓存再次查看不重复扣点。`;
+            : '首次深挖会消耗 AI点；命中当前账号 + 当前房间缓存再次查看不重复扣点。';
     }
 
     document.getElementById('roomCustomerAnalysisModal')?.showModal();
@@ -2870,9 +2917,10 @@ async function runRoomCustomerAnalysis(force = null) {
     if (!roomId || !userId) return;
 
     const resolvedForce = typeof force === 'boolean' ? force : Boolean(currentRoomCustomerAnalysisState.hasAnalysisResult);
+    const pointCost = Number(currentRoomCustomerAnalysisState.pointCost || DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS);
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
     if (!isAdmin) {
-        const confirmed = confirmRoomCustomerAnalysisConsumption(DEFAULT_ROOM_CUSTOMER_ANALYSIS_POINTS, { force: resolvedForce });
+        const confirmed = confirmRoomCustomerAnalysisConsumption(pointCost, { force: resolvedForce });
         if (!confirmed) return;
     }
 

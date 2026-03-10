@@ -9,6 +9,7 @@ let currentDetailAiUserId = '';
 let currentDetailAiJobId = 0;
 let aiAnalysisJobPollTimer = null;
 const DEFAULT_PERSONALITY_ANALYSIS_POINTS = 1;
+let currentDetailAiPointCost = DEFAULT_PERSONALITY_ANALYSIS_POINTS;
 
 function confirmPersonalityAnalysisConsumption(pointCost = DEFAULT_PERSONALITY_ANALYSIS_POINTS, { force = false, batchSize = 0 } = {}) {
     const safePointCost = Math.max(0, Number(pointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS));
@@ -171,6 +172,7 @@ function fetchUserAnalysis() {
 
             // Handle new response format { users, totalCount, page, pageSize }
             const users = data.users || data;
+            const pagePointCost = Number(data.pointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS);
             userListTotalCount = data.totalCount || users.length;
             const totalPages = Math.ceil(userListTotalCount / userListPageSize) || 1;
 
@@ -184,6 +186,7 @@ function fetchUserAnalysis() {
             }
 
             users.forEach((u, index) => {
+                u.pointCost = Number(u?.pointCost || pagePointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS);
                 const val = u.totalValue || 0;
                 const chats = u.chatCount || 0;
                 const score = Math.floor((val / 100) + chats); // Contribution Index
@@ -288,6 +291,7 @@ function showUserDetails(userId, nickname, uniqueId) {
     // DaisyUI Slide-over
     $('#userDetailPanel').removeClass('translate-x-full');
     currentDetailAiUserId = String(userId || '').trim();
+    currentDetailAiPointCost = DEFAULT_PERSONALITY_ANALYSIS_POINTS;
 
     const safeNickname = nickname || userId || '匿名';
     const displayAccount = uniqueId || userId;
@@ -369,14 +373,22 @@ function showUserDetails(userId, nickname, uniqueId) {
                         重新分析
                      </button>
                 </div>
-                <div class="text-[10px] opacity-50 mt-2">${typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin() ? '管理员发起性格分析不扣点。' : `首次生成默认消耗 ${DEFAULT_PERSONALITY_ANALYSIS_POINTS} AI点；命中个人缓存再次查看不重复扣点。`}</div>
+                <div id="aiPointHint" class="text-[10px] opacity-50 mt-2">${typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin() ? '管理员发起性格分析不扣点。' : '首次生成会消耗 AI点；命中个人缓存再次查看不重复扣点。'}</div>
             </div>
         </div>
     `);
 
     $.get('/api/analysis/user/' + userId, (data) => {
+        currentDetailAiPointCost = Number(data.pointCost || currentDetailAiPointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS);
         $('#detailTotalValue').text('💎 ' + (data.totalValue || 0).toLocaleString());
         $('#detailDailyAvg').text('💎 ' + Math.round(data.dailyAvg || 0).toLocaleString());
+        const aiPointHint = document.getElementById('aiPointHint');
+        if (aiPointHint) {
+            const isAdminUser = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
+            aiPointHint.textContent = isAdminUser
+                ? '管理员发起性格分析不扣点。'
+                : `首次生成默认消耗 ${currentDetailAiPointCost} AI点；命中个人缓存再次查看不重复扣点。`;
+        }
 
         // Render gift rooms (db.js converts room_id to roomId)
         if (data.giftRooms && data.giftRooms.length > 0) {
@@ -725,7 +737,7 @@ function runAiAnalysis(userId, force = false) {
     const isAdminUser = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
     let keepPendingState = false;
     if (!isAdminUser) {
-        const confirmed = confirmPersonalityAnalysisConsumption(DEFAULT_PERSONALITY_ANALYSIS_POINTS, { force });
+        const confirmed = confirmPersonalityAnalysisConsumption(currentDetailAiPointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS, { force });
         if (!confirmed) return;
     }
 
@@ -1039,8 +1051,14 @@ async function startBatchAI(forceReanalyze) {
             return;
         }
 
+        const effectivePointCost = Number(
+            users.find(user => Number(user?.pointCost || 0) > 0)?.pointCost
+            || currentDetailAiPointCost
+            || DEFAULT_PERSONALITY_ANALYSIS_POINTS
+        );
+
         if (!isAdminUser) {
-            const confirmed = confirmPersonalityAnalysisConsumption(DEFAULT_PERSONALITY_ANALYSIS_POINTS, {
+            const confirmed = confirmPersonalityAnalysisConsumption(effectivePointCost, {
                 force: forceReanalyze,
                 batchSize: users.length
             });

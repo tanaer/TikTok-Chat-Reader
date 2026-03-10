@@ -4,6 +4,11 @@ const {
     getSchemeAConfig,
     getRecordingAccessConfig,
 } = require('./featureFlagService');
+const {
+    DEFAULT_AI_POINT_COSTS,
+    AI_POINT_SETTING_KEYS,
+    AI_POINT_SCENES,
+} = require('./aiPricingService');
 
 const ADMIN_SETTINGS_GROUPS = [
     {
@@ -31,6 +36,34 @@ const ADMIN_SETTINGS_GROUPS = [
         description: '账号会话安全与登录行为控制。',
         fields: [
             { key: 'single_session_login_enabled', label: '单点登录（新登录踢掉旧登录）', type: 'toggle', hint: '限制同一账号只保留一个有效会话。', tooltip: '开启后同一账号仅保留一个有效登录会话，新设备登录会让旧会话失效，适合防共享账号；关闭后允许多端同时在线。' },
+        ],
+    },
+    {
+        key: 'aiPricing',
+        title: 'AI 定价',
+        description: '配置各类 AI 功能的默认扣点。保存后立即作用于新发起任务；已完成历史任务不会回写。',
+        fields: [
+            {
+                key: AI_POINT_SETTING_KEYS[AI_POINT_SCENES.SESSION_RECAP],
+                label: 'AI直播复盘扣点',
+                type: 'number',
+                hint: '单场 AI直播复盘默认消耗点数。',
+                tooltip: '用于房间详情中的 AI直播复盘。修改后会影响前台展示、二次确认提示、余额校验和实际扣点；历史任务记录保持原值。',
+            },
+            {
+                key: AI_POINT_SETTING_KEYS[AI_POINT_SCENES.CUSTOMER_ANALYSIS],
+                label: 'AI客户分析扣点',
+                type: 'number',
+                hint: '单次房间客户分析默认消耗点数。',
+                tooltip: '用于历史排行榜中的 AI客户分析。修改后会影响前台展示、二次确认提示、余额校验和实际扣点；历史任务记录保持原值。',
+            },
+            {
+                key: AI_POINT_SETTING_KEYS[AI_POINT_SCENES.USER_PERSONALITY],
+                label: 'AI性格分析扣点',
+                type: 'number',
+                hint: '单次用户性格分析默认消耗点数。',
+                tooltip: '用于用户详情里的 AI性格分析。修改后会影响前台展示、二次确认提示、余额校验和实际扣点；历史任务记录保持原值。',
+            },
         ],
     },
     {
@@ -150,6 +183,9 @@ function getEffectiveRuntimeDefaults() {
         ENABLE_INCREMENTAL_STATS: schemeAConfig.event.enableIncrementalStats,
         RECORDING_ACCESS_TOKEN_SECRET: recordingAccess.tokenSecret,
         RECORDING_ACCESS_TOKEN_TTL_SECS: recordingAccess.ttlSecs,
+        [AI_POINT_SETTING_KEYS[AI_POINT_SCENES.SESSION_RECAP]]: DEFAULT_AI_POINT_COSTS[AI_POINT_SCENES.SESSION_RECAP],
+        [AI_POINT_SETTING_KEYS[AI_POINT_SCENES.CUSTOMER_ANALYSIS]]: DEFAULT_AI_POINT_COSTS[AI_POINT_SCENES.CUSTOMER_ANALYSIS],
+        [AI_POINT_SETTING_KEYS[AI_POINT_SCENES.USER_PERSONALITY]]: DEFAULT_AI_POINT_COSTS[AI_POINT_SCENES.USER_PERSONALITY],
     };
 }
 
