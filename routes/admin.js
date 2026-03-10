@@ -931,6 +931,9 @@ router.post('/plans', [
 
     try {
         const { name, code, roomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, dailyRoomCreateLimit, aiCreditsMonthly } = req.body;
+        if (![priceMonthly, priceQuarterly, priceAnnual].some(price => Number(price) > 0)) {
+            return res.status(400).json({ error: '套餐至少要保留一个大于 0 的价格周期' });
+        }
 
         const existing = await db.get('SELECT id FROM subscription_plans WHERE code = ?', [code]);
         if (existing) return res.status(409).json({ error: '套餐代码已存在' });
@@ -954,6 +957,22 @@ router.put('/plans/:id', async (req, res) => {
     try {
         const { name, roomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, isActive, dailyRoomCreateLimit } = req.body;
         const planId = req.params.id;
+        const existingPlan = await db.get(
+            'SELECT id, name, price_monthly, price_quarterly, price_annual FROM subscription_plans WHERE id = ?',
+            [planId]
+        );
+        if (!existingPlan) {
+            return res.status(404).json({ error: '套餐不存在' });
+        }
+
+        const nextPrices = {
+            monthly: priceMonthly !== undefined ? Math.round(priceMonthly) : Math.round(Number(existingPlan.priceMonthly || 0)),
+            quarterly: priceQuarterly !== undefined ? Math.round(priceQuarterly) : Math.round(Number(existingPlan.priceQuarterly || 0)),
+            yearly: priceAnnual !== undefined ? Math.round(priceAnnual) : Math.round(Number(existingPlan.priceAnnual || 0)),
+        };
+        if (!Object.values(nextPrices).some(price => Number(price) > 0)) {
+            return res.status(400).json({ error: '套餐至少要保留一个大于 0 的价格周期' });
+        }
 
         const updates = [];
         const params = [];
@@ -1026,6 +1045,9 @@ router.post('/addons', [
 
     try {
         const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual } = req.body;
+        if (![priceMonthly, priceQuarterly, priceAnnual].some(price => Number(price) > 0)) {
+            return res.status(400).json({ error: '扩容包至少要保留一个大于 0 的基准价格' });
+        }
         await db.run(
             'INSERT INTO room_addon_packages (name, room_count, price_monthly, price_quarterly, price_annual) VALUES (?, ?, ?, ?, ?)',
             [name, roomCount, Math.round(priceMonthly), Math.round(priceQuarterly || 0), Math.round(priceAnnual || 0)]
@@ -1042,6 +1064,23 @@ router.post('/addons', [
 router.put('/addons/:id', async (req, res) => {
     try {
         const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual, isActive } = req.body;
+        const existingAddon = await db.get(
+            'SELECT id, price_monthly, price_quarterly, price_annual FROM room_addon_packages WHERE id = ?',
+            [req.params.id]
+        );
+        if (!existingAddon) {
+            return res.status(404).json({ error: '扩容包不存在' });
+        }
+
+        const nextPrices = {
+            monthly: priceMonthly !== undefined ? Math.round(priceMonthly) : Math.round(Number(existingAddon.priceMonthly || 0)),
+            quarterly: priceQuarterly !== undefined ? Math.round(priceQuarterly) : Math.round(Number(existingAddon.priceQuarterly || 0)),
+            yearly: priceAnnual !== undefined ? Math.round(priceAnnual) : Math.round(Number(existingAddon.priceAnnual || 0)),
+        };
+        if (!Object.values(nextPrices).some(price => Number(price) > 0)) {
+            return res.status(400).json({ error: '扩容包至少要保留一个大于 0 的基准价格' });
+        }
+
         const updates = [];
         const params = [];
         let idx = 0;

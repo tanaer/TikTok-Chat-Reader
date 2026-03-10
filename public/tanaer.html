@@ -1526,13 +1526,29 @@
                 </div>
             </div>
             <div class="grid grid-cols-3 gap-2 mt-2">
-                <div class="form-control"><label class="label"><span class="label-text">月价</span></label><input
-                        type="number" id="pf-pm" class="input input-bordered input-sm" step="0.01"></div>
-                <div class="form-control"><label class="label"><span class="label-text">季价</span></label><input
-                        type="number" id="pf-pq" class="input input-bordered input-sm" step="0.01"></div>
-                <div class="form-control"><label class="label"><span class="label-text">年价</span></label><input
-                        type="number" id="pf-py" class="input input-bordered input-sm" step="0.01"></div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">月价</span></label>
+                    <div class="join">
+                        <input type="number" id="pf-pm" class="input input-bordered input-sm join-item w-full" step="0.01">
+                        <button type="button" class="btn btn-sm btn-outline join-item" onclick="confirmDeletePlanPrice('monthly')">删除</button>
+                    </div>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">季价</span></label>
+                    <div class="join">
+                        <input type="number" id="pf-pq" class="input input-bordered input-sm join-item w-full" step="0.01">
+                        <button type="button" class="btn btn-sm btn-outline join-item" onclick="confirmDeletePlanPrice('quarterly')">删除</button>
+                    </div>
+                </div>
+                <div class="form-control">
+                    <label class="label"><span class="label-text">年价</span></label>
+                    <div class="join">
+                        <input type="number" id="pf-py" class="input input-bordered input-sm join-item w-full" step="0.01">
+                        <button type="button" class="btn btn-sm btn-outline join-item" onclick="confirmDeletePlanPrice('yearly')">删除</button>
+                    </div>
+                </div>
             </div>
+            <p class="text-xs text-base-content/60 mt-2">删除价格后，该计费周期前台将不再显示，也不能被购买。</p>
             <div class="form-control mt-2"><label class="label"><span class="label-text">排序</span></label><input
                     type="number" id="pf-sort" class="input input-bordered" value="0"></div>
             <div class="modal-action">
@@ -1551,8 +1567,15 @@
                     type="text" id="af-name" class="input input-bordered"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">房间数</span></label><input
                     type="number" id="af-count" class="input input-bordered" min="1"></div>
-            <div class="form-control mt-2"><label class="label"><span class="label-text">价格</span></label><input
-                    type="number" id="af-price" class="input input-bordered" step="0.01"></div>
+            <div class="grid grid-cols-3 gap-2 mt-2">
+                <div class="form-control"><label class="label"><span class="label-text">月价</span></label><input
+                        type="number" id="af-price-monthly" class="input input-bordered input-sm" step="0.01"></div>
+                <div class="form-control"><label class="label"><span class="label-text">季价</span></label><input
+                        type="number" id="af-price-quarterly" class="input input-bordered input-sm" step="0.01"></div>
+                <div class="form-control"><label class="label"><span class="label-text">年价</span></label><input
+                        type="number" id="af-price-annual" class="input input-bordered input-sm" step="0.01"></div>
+            </div>
+            <p class="text-xs text-base-content/60 mt-2">扩容包不再独立计时，用户购买时会跟随当前企业版会员有效期，并按剩余天数折算本期价格。</p>
             <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input
                     type="text" id="af-desc" class="input input-bordered"></div>
             <div class="modal-action">

@@ -277,6 +277,12 @@ let adminRoleEditorId = null;
 let structuredSourcesCache = [];
 let currentStructuredSourceKey = '';
 
+const PLAN_PRICE_FIELD_META = Object.freeze({
+    monthly: { inputId: 'pf-pm', label: '月价' },
+    quarterly: { inputId: 'pf-pq', label: '季价' },
+    yearly: { inputId: 'pf-py', label: '年价' },
+});
+
 function getDefaultMenuPermissions() {
     return [...new Set(Object.values(ADMIN_SECTION_META).map((item) => item.permission).filter(Boolean))];
 }
@@ -912,13 +918,18 @@ async function loadPlans() {
     container.innerHTML = data.plans.map(p => {
         const roomText = p.roomLimit === -1 ? '无限' : p.roomLimit;
         const dailyText = p.dailyRoomCreateLimit === -1 ? '无限' : (p.dailyRoomCreateLimit || '无限');
+        const priceBadges = [
+            Number(p.priceMonthly || 0) > 0 ? `月¥${p.priceMonthly}` : '月已删',
+            Number(p.priceQuarterly || 0) > 0 ? `季¥${p.priceQuarterly}` : '季已删',
+            Number(p.priceAnnual || 0) > 0 ? `年¥${p.priceAnnual}` : '年已删',
+        ].join(' / ');
         return `
         <div class="card bg-base-100 border ${p.isActive ? 'border-base-300' : 'border-error opacity-60'}">
             <div class="card-body p-4">
                 <div class="flex justify-between items-start">
                     <div>
                         <h4 class="font-bold">${p.name} <span class="text-xs text-base-content/60">(${p.code})</span></h4>
-                        <p class="text-sm">房间: ${roomText} | 每日新建: ${dailyText} | AI: ${p.aiCreditsMonthly || 0}点/月 | 月¥${p.priceMonthly} / 季¥${p.priceQuarterly} / 年¥${p.priceAnnual}</p>
+                        <p class="text-sm">房间: ${roomText} | 每日新建: ${dailyText} | AI: ${p.aiCreditsMonthly || 0}点/月 | ${priceBadges}</p>
                         ${!p.isActive ? '<span class="badge badge-error badge-sm">已下架</span>' : ''}
                     </div>
                     <div class="flex gap-1">
@@ -967,6 +978,37 @@ function showPlanForm(plan) {
 
 function editPlan(plan) { showPlanForm(plan); }
 
+function confirmDeletePlanPrice(periodKey) {
+    const meta = PLAN_PRICE_FIELD_META[periodKey];
+    if (!meta) return;
+
+    const input = document.getElementById(meta.inputId);
+    if (!input) return;
+
+    const otherPeriods = Object.entries(PLAN_PRICE_FIELD_META).filter(([key]) => key !== periodKey);
+    const hasOtherActivePrice = otherPeriods.some(([, item]) => {
+        const otherInput = document.getElementById(item.inputId);
+        return Number.parseFloat(otherInput?.value || '0') > 0;
+    });
+
+    if (!hasOtherActivePrice) {
+        alert('套餐至少要保留一个大于 0 的价格周期，不能把最后一个价格也删除。');
+        return;
+    }
+
+    const planName = document.getElementById('pf-name').value.trim() || '当前套餐';
+    const currentValue = Number.parseFloat(input.value || '0');
+    if (currentValue <= 0) {
+        alert(`${meta.label}当前已经是 0，无需重复删除。`);
+        return;
+    }
+
+    const confirmed = confirm(`确认删除「${planName}」的${meta.label}吗？\n\n删除后该计费周期会从前台下线，用户将无法再购买这个周期。`);
+    if (!confirmed) return;
+
+    input.value = '0';
+}
+
 async function submitPlanForm() {
     const id = document.getElementById('pf-id').value;
     const parseIntOr = (elementId, fallback) => {
@@ -1000,6 +1042,11 @@ async function submitPlanForm() {
         featureFlags,
     };
 
+    if (![body.priceMonthly, body.priceQuarterly, body.priceAnnual].some(price => Number(price) > 0)) {
+        alert('套餐至少要保留一个大于 0 的价格周期。');
+        return;
+    }
+
     const url = id ? `/api/admin/plans/${id}` : '/api/admin/plans';
     const method = id ? 'PUT' : 'POST';
     const res = await Auth.apiFetch(url, { method, body: JSON.stringify(body) });
@@ -1031,7 +1078,8 @@ async function loadAddons() {
                 <div class="flex justify-between items-center">
                     <div>
                         <h4 class="font-bold">${a.name}</h4>
-                        <p class="text-sm">+${a.roomCount}房间 | ¥${a.price}</p>
+                        <p class="text-sm">+${a.roomCount}房间 | 月¥${a.priceMonthly || 0} / 季¥${a.priceQuarterly || 0} / 年¥${a.priceAnnual || 0}</p>
+                        <p class="text-xs text-base-content/60 mt-1">购买时会跟随当前企业版会员有效期，并按剩余天数折算本期价格。</p>
                     </div>
                     <div class="flex gap-1">
                         <button class="btn btn-xs btn-ghost" onclick="editAddon(${JSON.stringify(a).replace(/"/g, '&quot;')})">编辑</button>
@@ -1047,7 +1095,9 @@ function showAddonForm(addon) {
     document.getElementById('af-id').value = addon?.id || '';
     document.getElementById('af-name').value = addon?.name || '';
     document.getElementById('af-count').value = addon?.roomCount || '';
-    document.getElementById('af-price').value = addon?.price || '';
+    document.getElementById('af-price-monthly').value = addon?.priceMonthly ?? '';
+    document.getElementById('af-price-quarterly').value = addon?.priceQuarterly ?? '';
+    document.getElementById('af-price-annual').value = addon?.priceAnnual ?? '';
     document.getElementById('af-desc').value = addon?.description || '';
     document.getElementById('addonFormModal').showModal();
 }
@@ -1059,9 +1109,16 @@ async function submitAddonForm() {
     const body = {
         name: document.getElementById('af-name').value,
         roomCount: parseInt(document.getElementById('af-count').value),
-        price: parseFloat(document.getElementById('af-price').value),
+        priceMonthly: parseFloat(document.getElementById('af-price-monthly').value || '0'),
+        priceQuarterly: parseFloat(document.getElementById('af-price-quarterly').value || '0'),
+        priceAnnual: parseFloat(document.getElementById('af-price-annual').value || '0'),
         description: document.getElementById('af-desc').value,
     };
+
+    if (body.priceMonthly <= 0 && body.priceQuarterly <= 0 && body.priceAnnual <= 0) {
+        alert('扩容包至少要保留一个大于 0 的基准价格。');
+        return;
+    }
 
     const url = id ? `/api/admin/addons/${id}` : '/api/admin/addons';
     const method = id ? 'PUT' : 'POST';

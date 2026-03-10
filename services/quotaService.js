@@ -56,7 +56,10 @@ async function getActiveSubscription(userId) {
                 p.sort_order AS plan_sort_order
          FROM user_subscriptions us
          JOIN subscription_plans p ON us.plan_id = p.id
-         WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
+         WHERE us.user_id = ?
+           AND us.status = 'active'
+           AND us.start_date <= NOW()
+           AND us.end_date > NOW()
          ORDER BY us.end_date DESC LIMIT 1`,
         [userId]
     );

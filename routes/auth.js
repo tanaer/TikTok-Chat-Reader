@@ -375,7 +375,7 @@ router.post('/register', [
             if (giftRoomLimit > 0 && giftDurationDays > 0) {
                 const giftPlanResult = await client.query(
                     `INSERT INTO subscription_plans (name, code, room_limit, daily_room_create_limit, price_monthly, price_quarterly, price_annual, is_active, sort_order)
-                     VALUES ('注册赠送', 'gift', $1, $2, 0, 0, 0, true, 0)
+                     VALUES ('注册赠送', 'gift', $1, $2, 0, 0, 0, false, 0)
                      ON CONFLICT (code) DO UPDATE
                      SET name = EXCLUDED.name,
                          room_limit = EXCLUDED.room_limit,
@@ -383,7 +383,6 @@ router.post('/register', [
                          price_monthly = EXCLUDED.price_monthly,
                          price_quarterly = EXCLUDED.price_quarterly,
                          price_annual = EXCLUDED.price_annual,
-                         is_active = EXCLUDED.is_active,
                          sort_order = EXCLUDED.sort_order
                      RETURNING id`,
                     [giftRoomLimit, giftDailyRoomCreateLimit]

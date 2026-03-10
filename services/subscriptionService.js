@@ -2,6 +2,90 @@ const db = require('../db');
 const balanceService = require('./balanceService');
 const quotaService = require('./quotaService');
 
+const ADDON_ALLOWED_PLAN_CODES = new Set(['enterprise']);
+const BILLING_CYCLE_DAYS = Object.freeze({
+    monthly: 30,
+    quarterly: 90,
+    yearly: 365,
+});
+const BILLING_CYCLE_LABELS = Object.freeze({
+    monthly: '月付',
+    quarterly: '季付',
+    yearly: '年付',
+});
+
+function getBillingCycleDays(billingCycle) {
+    return BILLING_CYCLE_DAYS[billingCycle] || 0;
+}
+
+function getAddonPriceByBillingCycle(addon, billingCycle) {
+    switch (billingCycle) {
+        case 'monthly':
+            return Number(addon.priceMonthly);
+        case 'quarterly':
+            return Number(addon.priceQuarterly);
+        case 'yearly':
+            return Number(addon.priceAnnual);
+        default:
+            return NaN;
+    }
+}
+
+function getRemainingDays(endDate, now = new Date()) {
+    const target = new Date(endDate);
+    const endTime = target.getTime();
+    if (!Number.isFinite(endTime)) return 0;
+    const diff = endTime - now.getTime();
+    if (diff <= 0) return 0;
+    return Math.max(1, Math.ceil(diff / (24 * 3600 * 1000)));
+}
+
+function isAddonPlanEligible(subscription) {
+    const planCode = String(subscription?.planCode || '').trim().toLowerCase();
+    return ADDON_ALLOWED_PLAN_CODES.has(planCode);
+}
+
+function previewAddonPurchase(addon, subscription, now = new Date()) {
+    if (!subscription) {
+        return { ok: false, error: '请先开通企业版会员后再购买扩容包' };
+    }
+
+    if (!isAddonPlanEligible(subscription)) {
+        return { ok: false, error: '仅企业版会员可购买扩容包' };
+    }
+
+    const billingCycle = String(subscription.billingCycle || '').trim().toLowerCase();
+    const cycleDays = getBillingCycleDays(billingCycle);
+    if (!cycleDays) {
+        return { ok: false, error: '当前会员周期暂不支持购买扩容包' };
+    }
+
+    const referencePrice = getAddonPriceByBillingCycle(addon, billingCycle);
+    if (!Number.isFinite(referencePrice) || referencePrice <= 0) {
+        return { ok: false, error: '当前扩容包未配置对应会员周期价格' };
+    }
+
+    const remainingDays = getRemainingDays(subscription.endDate, now);
+    if (remainingDays <= 0) {
+        return { ok: false, error: '当前会员已到期，无法购买扩容包' };
+    }
+
+    const price = Math.max(1, Math.round(referencePrice * (remainingDays / cycleDays)));
+    const subscriptionEndDate = new Date(subscription.endDate);
+
+    return {
+        ok: true,
+        billingCycle,
+        billingCycleLabel: BILLING_CYCLE_LABELS[billingCycle] || billingCycle,
+        referencePrice,
+        cycleDays,
+        remainingDays,
+        price,
+        startDate: now.toISOString(),
+        endDate: subscriptionEndDate.toISOString(),
+    };
+}
+
 /**
  * Get user's active subscription with plan info
  */
@@ -12,7 +96,10 @@ async function getActiveSubscription(userId) {
                 p.feature_flags AS plan_feature_flags, p.sort_order AS plan_sort_order
          FROM user_subscriptions us
          JOIN subscription_plans p ON us.plan_id = p.id
-         WHERE us.user_id = ? AND us.status = 'active' AND us.end_date > NOW()
+         WHERE us.user_id = ?
+           AND us.status = 'active'
+           AND us.start_date <= NOW()
+           AND us.end_date > NOW()
          ORDER BY us.end_date DESC LIMIT 1`,
         [userId]
     );
@@ -52,6 +139,9 @@ async function purchasePlan(userId, planId, billingCycle) {
             break;
         default:
             return { success: false, error: '无效的计费周期' };
+    }
+    if (!Number.isFinite(newPrice) || newPrice <= 0) {
+        return { success: false, error: '该套餐周期暂不可购买' };
     }
 
     const cycleNames = { monthly: '月付', quarterly: '季付', yearly: '年付' };
@@ -207,45 +297,51 @@ async function purchaseAddon(userId, addonId, billingCycle = 'monthly') {
         return { success: false, error: '扩容包不存在或已下架' };
     }
 
-    let price, durationDays;
-    switch (billingCycle) {
-        case 'monthly':
-            price = Number(addon.priceMonthly);
-            durationDays = 30;
-            break;
-        case 'quarterly':
-            price = Number(addon.priceQuarterly);
-            durationDays = 90;
-            break;
-        case 'yearly':
-            price = Number(addon.priceAnnual);
-            durationDays = 365;
-            break;
-        default:
-            return { success: false, error: '无效的计费周期' };
+    await db.run(
+        `UPDATE user_room_addons
+         SET status = 'expired'
+         WHERE user_id = ?
+           AND status = 'active'
+           AND end_date <= NOW()`,
+        [userId]
+    );
+
+    const subscription = await getActiveSubscription(userId);
+    const addonPreview = previewAddonPurchase(addon, subscription);
+    if (!addonPreview.ok) {
+        return { success: false, error: addonPreview.error };
     }
 
     const itemName = addon.name;
 
     const purchase = await balanceService.purchaseWithBalance(
-        userId, price, 'addon', itemName, `扩容包: ${addon.name}, +${addon.roomCount}房间, ${billingCycle}`
+        userId,
+        addonPreview.price,
+        'addon',
+        itemName,
+        `扩容包: ${addon.name}, +${addon.roomCount}房间, 跟随当前会员至 ${new Date(addonPreview.endDate).toLocaleDateString('zh-CN')}, 剩余${addonPreview.remainingDays}天`
     );
     if (!purchase.success) {
         return purchase;
     }
 
-    const startDate = new Date();
-    const endDate = new Date(startDate.getTime() + durationDays * 24 * 3600 * 1000);
-
     await db.run(
         `INSERT INTO user_room_addons (user_id, package_id, order_no, billing_cycle, start_date, end_date, status)
          VALUES (?, ?, ?, ?, ?, ?, 'active')`,
-        [userId, addonId, purchase.order.orderNo, billingCycle, startDate.toISOString(), endDate.toISOString()]
+        [userId, addonId, purchase.order.orderNo, addonPreview.billingCycle, addonPreview.startDate, addonPreview.endDate]
     );
 
     return {
         success: true,
-        addon: { name: addon.name, roomCount: addon.roomCount, price, billingCycle },
+        addon: {
+            name: addon.name,
+            roomCount: addon.roomCount,
+            price: addonPreview.price,
+            billingCycle: addonPreview.billingCycle,
+            remainingDays: addonPreview.remainingDays,
+            endDate: addonPreview.endDate,
+            followsSubscription: true,
+        },
         order: purchase.order
     };
 }
@@ -266,5 +362,7 @@ module.exports = {
     getUserQuota,
     purchasePlan,
     purchaseAddon,
-    expireOverdueSubscriptions
+    expireOverdueSubscriptions,
+    previewAddonPurchase,
+    isAddonPlanEligible,
 };
