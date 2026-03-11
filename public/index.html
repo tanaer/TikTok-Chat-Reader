@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="zh-CN" data-theme="dark" style="scroll-behavior: smooth;">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,23 +12,48 @@
     <style>
         .hero-bg {
             background: radial-gradient(ellipse at 30% 0%, rgba(120, 80, 255, 0.25) 0%, transparent 60%),
-                        radial-gradient(ellipse at 70% 100%, rgba(255, 80, 150, 0.15) 0%, transparent 50%);
+                radial-gradient(ellipse at 70% 100%, rgba(255, 80, 150, 0.15) 0%, transparent 50%);
         }
-        .plan-card { transition: transform 0.2s, box-shadow 0.2s; }
-        .plan-card:hover { transform: translateY(-4px); box-shadow: 0 12px 32px rgba(0,0,0,0.25); }
-        .plan-popular { border: 2px solid hsl(var(--p)); }
-        .feature-icon { width: 48px; height: 48px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 24px; }
-        .stat-num { font-variant-numeric: tabular-nums; }
+
+        .plan-card {
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .plan-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 12px 32px rgba(0, 0, 0, 0.25);
+        }
+
+        .plan-popular {
+            border: 2px solid hsl(var(--p));
+        }
+
+        .feature-icon {
+            width: 48px;
+            height: 48px;
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+        }
+
+        .stat-num {
+            font-variant-numeric: tabular-nums;
+        }
+
         .feature-showcase-grid {
             display: grid;
             grid-template-columns: repeat(1, minmax(0, 1fr));
             gap: 1.5rem;
         }
+
         @media (min-width: 1024px) {
             .feature-showcase-grid {
                 grid-template-columns: repeat(2, minmax(0, 1fr));
             }
         }
+
         .feature-showcase-card {
             position: relative;
             overflow: hidden;
@@ -40,11 +66,13 @@
             box-shadow: 0 24px 60px rgba(2, 8, 23, 0.34);
             transition: transform 0.24s ease, box-shadow 0.24s ease, border-color 0.24s ease;
         }
+
         .feature-showcase-card:hover {
             transform: translateY(-6px);
             border-color: rgba(129, 140, 248, 0.35);
             box-shadow: 0 30px 70px rgba(2, 8, 23, 0.46);
         }
+
         .feature-showcase-card::after {
             content: '';
             position: absolute;
@@ -52,12 +80,14 @@
             background: linear-gradient(135deg, rgba(255, 255, 255, 0.06), transparent 30%, transparent 70%, rgba(255, 255, 255, 0.02));
             pointer-events: none;
         }
+
         .feature-showcase-head {
             display: flex;
             align-items: flex-start;
             justify-content: space-between;
             gap: 1rem;
         }
+
         .feature-showcase-index {
             display: inline-flex;
             align-items: center;
@@ -72,8 +102,9 @@
             font-weight: 800;
             letter-spacing: 0.08em;
             flex-shrink: 0;
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.08);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
         }
+
         .feature-showcase-kicker {
             display: inline-flex;
             align-items: center;
@@ -88,6 +119,7 @@
             text-transform: uppercase;
             white-space: nowrap;
         }
+
         .feature-showcase-title {
             font-size: 1.35rem;
             font-weight: 800;
@@ -95,20 +127,23 @@
             color: rgba(248, 250, 252, 0.98);
             margin-top: 0.85rem;
         }
+
         .feature-showcase-desc {
             margin-top: 0.6rem;
             color: rgba(191, 219, 254, 0.72);
             line-height: 1.72;
             font-size: 0.96rem;
         }
+
         .feature-showcase-frame {
             margin-top: 1.2rem;
             padding: 0.8rem;
             border-radius: 24px;
             border: 1px solid rgba(148, 163, 184, 0.12);
             background: linear-gradient(180deg, rgba(15, 23, 42, 0.74), rgba(2, 6, 23, 0.82));
-            box-shadow: inset 0 1px 0 rgba(255,255,255,0.05);
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
         }
+
         .feature-showcase-window {
             overflow: hidden;
             border-radius: 18px;
@@ -116,21 +151,25 @@
             background: #050816;
             box-shadow: 0 16px 40px rgba(2, 8, 23, 0.34);
         }
+
         .feature-showcase-window svg {
             display: block;
             width: 100%;
             height: auto;
             transition: transform 0.24s ease;
         }
+
         .feature-showcase-card:hover .feature-showcase-window svg {
             transform: scale(1.015);
         }
+
         .feature-showcase-tags {
             display: flex;
             flex-wrap: wrap;
             gap: 0.55rem;
             margin-top: 1rem;
         }
+
         .feature-showcase-tag {
             display: inline-flex;
             align-items: center;
@@ -143,6 +182,7 @@
             font-size: 0.78rem;
             line-height: 1;
         }
+
         .feature-showcase-tag::before {
             content: '';
             width: 6px;
@@ -151,9 +191,9 @@
             background: linear-gradient(135deg, #60a5fa, #34d399);
             box-shadow: 0 0 10px rgba(96, 165, 250, 0.6);
         }
-        
     </style>
 </head>
+
 <body class="bg-base-300 min-h-screen">
     <!-- Navbar -->
     <div class="navbar bg-base-100/80 backdrop-blur-md shadow-sm sticky top-0 z-50 flex-wrap gap-2 px-3 py-2">
@@ -177,13 +217,13 @@
     <section class="hero-bg min-h-[80vh] flex items-center">
         <div class="max-w-5xl mx-auto px-6 py-20 text-center">
             <div class="inline-block px-4 py-1.5 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
-                TikTok 直播数据监控平台
+                TikTok 直播数据监控分析平台
             </div>
             <h1 class="text-4xl md:text-6xl font-extrabold leading-tight mb-6">
                 实时掌握<span class="text-primary">直播间</span>每一刻
             </h1>
             <p class="text-lg md:text-xl text-base-content/60 max-w-2xl mx-auto mb-10 leading-relaxed">
-                自动监控多个 TikTok 直播间，实时采集礼物、弹幕、进场等全量数据，助你深度了解主播与用户行为。
+                监控多个 TikTok 直播间，实时显示礼物、弹幕、进场等全量数据，AI复盘&客户情报深度挖掘，助你深度了解直播间用户行为。
             </p>
             <div class="flex flex-col sm:flex-row gap-4 justify-center">
                 <a href="/register.html" class="btn btn-primary btn-lg px-10 shadow-lg shadow-primary/20">免费注册</a>
@@ -203,33 +243,36 @@
                         <div class="feature-showcase-index">01</div>
                         <span class="feature-showcase-kicker">房间监控</span>
                     </div>
-                    <h3 class="feature-showcase-title">多房间工作台总览</h3>
-                    <p class="feature-showcase-desc">把排序、筛选、状态开关与快捷操作集中在一张监控台里，方便同时管理多个直播间。</p>
+                    <h3 class="feature-showcase-title">竞品监听</h3>
+                    <p class="feature-showcase-desc">一屏洞察指定直播间数据，场观，收入，大哥粉丝联系方式</p>
                     <div class="feature-showcase-frame">
                         <div class="feature-showcase-window">
-                            <svg viewBox="0 0 640 390" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="多房间监控结构示意图">
+                            <svg viewBox="0 0 640 390" xmlns="http://www.w3.org/2000/svg" role="img"
+                                aria-label="多房间监控结构示意图">
                                 <defs>
                                     <linearGradient id="featureGridBgA2" x1="0" y1="0" x2="1" y2="1">
-                                        <stop offset="0%" stop-color="#09111f"/>
-                                        <stop offset="100%" stop-color="#030712"/>
+                                        <stop offset="0%" stop-color="#09111f" />
+                                        <stop offset="100%" stop-color="#030712" />
                                     </linearGradient>
-                                    <filter id="blurA2"><feGaussianBlur stdDeviation="1.8"/></filter>
+                                    <filter id="blurA2">
+                                        <feGaussianBlur stdDeviation="1.8" />
+                                    </filter>
                                 </defs>
-                                <rect width="640" height="390" fill="url(#featureGridBgA2)"/>
-                                <rect x="0" y="0" width="640" height="58" fill="#0b1324"/>
+                                <rect width="640" height="390" fill="url(#featureGridBgA2)" />
+                                <rect x="0" y="0" width="640" height="58" fill="#0b1324" />
                                 <text x="18" y="35" fill="#f8fafc" font-size="18" font-weight="800">监控房间列表</text>
-                                <rect x="132" y="14" width="48" height="28" rx="10" fill="#7c83ff"/>
+                                <rect x="132" y="14" width="48" height="28" rx="10" fill="#7c83ff" />
                                 <text x="145" y="32" fill="#0f172a" font-size="12" font-weight="800">默认</text>
                                 <text x="194" y="32" fill="#cbd5e1" font-size="12" font-weight="700">优先级</text>
                                 <text x="252" y="32" fill="#cbd5e1" font-size="12" font-weight="700">本场</text>
                                 <text x="302" y="32" fill="#cbd5e1" font-size="12" font-weight="700">总💎</text>
-                                <rect x="548" y="10" width="76" height="36" rx="12" fill="#7c83ff"/>
+                                <rect x="548" y="10" width="76" height="36" rx="12" fill="#7c83ff" />
                                 <text x="564" y="33" fill="#09111f" font-size="12" font-weight="800">添加房间</text>
-                                <rect x="18" y="72" width="236" height="34" rx="10" fill="#111827" stroke="#334155"/>
+                                <rect x="18" y="72" width="236" height="34" rx="10" fill="#111827" stroke="#334155" />
                                 <text x="34" y="93" fill="#94a3b8" font-size="12">搜索房间名或账号...</text>
-                                <rect x="262" y="72" width="44" height="34" rx="10" fill="#7c83ff"/>
+                                <rect x="262" y="72" width="44" height="34" rx="10" fill="#7c83ff" />
                                 <text x="274" y="93" fill="#09111f" font-size="12" font-weight="800">搜索</text>
-                                <rect x="0" y="118" width="640" height="34" fill="#0a1220"/>
+                                <rect x="0" y="118" width="640" height="34" fill="#0a1220" />
                                 <g fill="#7f8ea3" font-size="11" font-weight="700">
                                     <text x="18" y="140">#</text>
                                     <text x="42" y="140">房间</text>
@@ -242,60 +285,80 @@
                                     <text x="562" y="140">操作</text>
                                 </g>
                                 <g>
-                                    <rect x="0" y="152" width="640" height="50" fill="#0b1220"/>
-                                    <circle cx="48" cy="177" r="8" fill="#22c55e"/>
+                                    <rect x="0" y="152" width="640" height="50" fill="#0b1220" />
+                                    <circle cx="48" cy="177" r="8" fill="#22c55e" />
                                     <text x="66" y="173" fill="#dbeafe" font-size="13" font-weight="800">房间 A</text>
                                     <text x="66" y="189" fill="#64748b" font-size="11">账号占位</text>
-                                    <rect x="176" y="172" width="42" height="8" rx="4" fill="#94a3b8" filter="url(#blurA2)"/>
-                                    <rect x="240" y="172" width="30" height="8" rx="4" fill="#cbd5e1" filter="url(#blurA2)"/>
-                                    <rect x="296" y="172" width="26" height="8" rx="4" fill="#cbd5e1" filter="url(#blurA2)"/>
-                                    <rect x="350" y="170" width="52" height="12" rx="6" fill="#facc15" opacity="0.95" filter="url(#blurA2)"/>
-                                    <rect x="428" y="170" width="58" height="12" rx="6" fill="#14f195" opacity="0.95" filter="url(#blurA2)"/>
-                                    <rect x="498" y="164" width="54" height="20" rx="10" fill="#facc15"/>
-                                    <rect x="568" y="166" width="10" height="10" rx="2" fill="#60a5fa"/>
-                                    <rect x="586" y="166" width="10" height="10" rx="2" fill="#f59e0b"/>
+                                    <rect x="176" y="172" width="42" height="8" rx="4" fill="#94a3b8"
+                                        filter="url(#blurA2)" />
+                                    <rect x="240" y="172" width="30" height="8" rx="4" fill="#cbd5e1"
+                                        filter="url(#blurA2)" />
+                                    <rect x="296" y="172" width="26" height="8" rx="4" fill="#cbd5e1"
+                                        filter="url(#blurA2)" />
+                                    <rect x="350" y="170" width="52" height="12" rx="6" fill="#facc15" opacity="0.95"
+                                        filter="url(#blurA2)" />
+                                    <rect x="428" y="170" width="58" height="12" rx="6" fill="#14f195" opacity="0.95"
+                                        filter="url(#blurA2)" />
+                                    <rect x="498" y="164" width="54" height="20" rx="10" fill="#facc15" />
+                                    <rect x="568" y="166" width="10" height="10" rx="2" fill="#60a5fa" />
+                                    <rect x="586" y="166" width="10" height="10" rx="2" fill="#f59e0b" />
                                 </g>
                                 <g>
-                                    <rect x="0" y="202" width="640" height="50" fill="#0a101d"/>
-                                    <circle cx="48" cy="227" r="8" fill="#22c55e"/>
+                                    <rect x="0" y="202" width="640" height="50" fill="#0a101d" />
+                                    <circle cx="48" cy="227" r="8" fill="#22c55e" />
                                     <text x="66" y="223" fill="#dbeafe" font-size="13" font-weight="800">房间 B</text>
                                     <text x="66" y="239" fill="#64748b" font-size="11">账号占位</text>
-                                    <rect x="176" y="222" width="48" height="8" rx="4" fill="#94a3b8" filter="url(#blurA2)"/>
-                                    <rect x="240" y="222" width="34" height="8" rx="4" fill="#cbd5e1" filter="url(#blurA2)"/>
-                                    <rect x="296" y="222" width="28" height="8" rx="4" fill="#cbd5e1" filter="url(#blurA2)"/>
-                                    <rect x="350" y="220" width="48" height="12" rx="6" fill="#facc15" opacity="0.95" filter="url(#blurA2)"/>
-                                    <rect x="428" y="220" width="54" height="12" rx="6" fill="#14f195" opacity="0.95" filter="url(#blurA2)"/>
-                                    <rect x="498" y="214" width="50" height="20" rx="10" fill="#facc15"/>
-                                    <rect x="568" y="216" width="10" height="10" rx="2" fill="#60a5fa"/>
-                                    <rect x="586" y="216" width="10" height="10" rx="2" fill="#f59e0b"/>
+                                    <rect x="176" y="222" width="48" height="8" rx="4" fill="#94a3b8"
+                                        filter="url(#blurA2)" />
+                                    <rect x="240" y="222" width="34" height="8" rx="4" fill="#cbd5e1"
+                                        filter="url(#blurA2)" />
+                                    <rect x="296" y="222" width="28" height="8" rx="4" fill="#cbd5e1"
+                                        filter="url(#blurA2)" />
+                                    <rect x="350" y="220" width="48" height="12" rx="6" fill="#facc15" opacity="0.95"
+                                        filter="url(#blurA2)" />
+                                    <rect x="428" y="220" width="54" height="12" rx="6" fill="#14f195" opacity="0.95"
+                                        filter="url(#blurA2)" />
+                                    <rect x="498" y="214" width="50" height="20" rx="10" fill="#facc15" />
+                                    <rect x="568" y="216" width="10" height="10" rx="2" fill="#60a5fa" />
+                                    <rect x="586" y="216" width="10" height="10" rx="2" fill="#f59e0b" />
                                 </g>
                                 <g>
-                                    <rect x="0" y="252" width="640" height="50" fill="#0b1220"/>
-                                    <circle cx="48" cy="277" r="8" fill="#22c55e"/>
+                                    <rect x="0" y="252" width="640" height="50" fill="#0b1220" />
+                                    <circle cx="48" cy="277" r="8" fill="#22c55e" />
                                     <text x="66" y="273" fill="#dbeafe" font-size="13" font-weight="800">房间 C</text>
                                     <text x="66" y="289" fill="#64748b" font-size="11">账号占位</text>
-                                    <rect x="176" y="272" width="44" height="8" rx="4" fill="#94a3b8" filter="url(#blurA2)"/>
-                                    <rect x="240" y="272" width="32" height="8" rx="4" fill="#cbd5e1" filter="url(#blurA2)"/>
-                                    <rect x="296" y="272" width="36" height="8" rx="4" fill="#cbd5e1" filter="url(#blurA2)"/>
-                                    <rect x="350" y="270" width="60" height="12" rx="6" fill="#facc15" opacity="0.95" filter="url(#blurA2)"/>
-                                    <rect x="428" y="270" width="64" height="12" rx="6" fill="#14f195" opacity="0.95" filter="url(#blurA2)"/>
-                                    <rect x="498" y="264" width="58" height="20" rx="10" fill="#facc15"/>
-                                    <rect x="568" y="266" width="10" height="10" rx="2" fill="#60a5fa"/>
-                                    <rect x="586" y="266" width="10" height="10" rx="2" fill="#f59e0b"/>
+                                    <rect x="176" y="272" width="44" height="8" rx="4" fill="#94a3b8"
+                                        filter="url(#blurA2)" />
+                                    <rect x="240" y="272" width="32" height="8" rx="4" fill="#cbd5e1"
+                                        filter="url(#blurA2)" />
+                                    <rect x="296" y="272" width="36" height="8" rx="4" fill="#cbd5e1"
+                                        filter="url(#blurA2)" />
+                                    <rect x="350" y="270" width="60" height="12" rx="6" fill="#facc15" opacity="0.95"
+                                        filter="url(#blurA2)" />
+                                    <rect x="428" y="270" width="64" height="12" rx="6" fill="#14f195" opacity="0.95"
+                                        filter="url(#blurA2)" />
+                                    <rect x="498" y="264" width="58" height="20" rx="10" fill="#facc15" />
+                                    <rect x="568" y="266" width="10" height="10" rx="2" fill="#60a5fa" />
+                                    <rect x="586" y="266" width="10" height="10" rx="2" fill="#f59e0b" />
                                 </g>
                                 <g>
-                                    <rect x="0" y="302" width="640" height="48" fill="#0a101d"/>
-                                    <circle cx="48" cy="326" r="8" fill="#22c55e"/>
+                                    <rect x="0" y="302" width="640" height="48" fill="#0a101d" />
+                                    <circle cx="48" cy="326" r="8" fill="#22c55e" />
                                     <text x="66" y="322" fill="#dbeafe" font-size="13" font-weight="800">房间 D</text>
                                     <text x="66" y="338" fill="#64748b" font-size="11">账号占位</text>
-                                    <rect x="176" y="322" width="40" height="8" rx="4" fill="#94a3b8" filter="url(#blurA2)"/>
-                                    <rect x="240" y="322" width="28" height="8" rx="4" fill="#cbd5e1" filter="url(#blurA2)"/>
-                                    <rect x="296" y="322" width="24" height="8" rx="4" fill="#cbd5e1" filter="url(#blurA2)"/>
-                                    <rect x="350" y="320" width="42" height="12" rx="6" fill="#facc15" opacity="0.95" filter="url(#blurA2)"/>
-                                    <rect x="428" y="320" width="72" height="12" rx="6" fill="#14f195" opacity="0.95" filter="url(#blurA2)"/>
-                                    <rect x="498" y="314" width="62" height="20" rx="10" fill="#facc15"/>
-                                    <rect x="568" y="316" width="10" height="10" rx="2" fill="#60a5fa"/>
-                                    <rect x="586" y="316" width="10" height="10" rx="2" fill="#f59e0b"/>
+                                    <rect x="176" y="322" width="40" height="8" rx="4" fill="#94a3b8"
+                                        filter="url(#blurA2)" />
+                                    <rect x="240" y="322" width="28" height="8" rx="4" fill="#cbd5e1"
+                                        filter="url(#blurA2)" />
+                                    <rect x="296" y="322" width="24" height="8" rx="4" fill="#cbd5e1"
+                                        filter="url(#blurA2)" />
+                                    <rect x="350" y="320" width="42" height="12" rx="6" fill="#facc15" opacity="0.95"
+                                        filter="url(#blurA2)" />
+                                    <rect x="428" y="320" width="72" height="12" rx="6" fill="#14f195" opacity="0.95"
+                                        filter="url(#blurA2)" />
+                                    <rect x="498" y="314" width="62" height="20" rx="10" fill="#facc15" />
+                                    <rect x="568" y="316" width="10" height="10" rx="2" fill="#60a5fa" />
+                                    <rect x="586" y="316" width="10" height="10" rx="2" fill="#f59e0b" />
                                 </g>
                             </svg>
                         </div>
@@ -314,38 +377,48 @@
                         <div class="feature-showcase-index">02</div>
                         <span class="feature-showcase-kicker">互动详情</span>
                     </div>
-                    <h3 class="feature-showcase-title">单房互动榜单与主播面板</h3>
-                    <p class="feature-showcase-desc">将互动排行、顶部场次摘要、主播信息和历史榜单整合到同一页面，便于盯盘与快速判断。</p>
+                    <h3 class="feature-showcase-title">直播间互动榜单面板</h3>
+                    <p class="feature-showcase-desc">互动排行、场次摘要、主播信息和历史粉丝数据榜单，实时盯盘。</p>
                     <div class="feature-showcase-frame">
                         <div class="feature-showcase-window">
-                            <svg viewBox="0 0 640 390" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="互动详情结构示意图">
-                                <defs><filter id="blurB2"><feGaussianBlur stdDeviation="1.8"/></filter></defs>
-                                <rect width="640" height="390" fill="#07101d"/>
-                                <rect x="0" y="0" width="640" height="70" fill="#101a2c"/>
+                            <svg viewBox="0 0 640 390" xmlns="http://www.w3.org/2000/svg" role="img"
+                                aria-label="互动详情结构示意图">
+                                <defs>
+                                    <filter id="blurB2">
+                                        <feGaussianBlur stdDeviation="1.8" />
+                                    </filter>
+                                </defs>
+                                <rect width="640" height="390" fill="#07101d" />
+                                <rect x="0" y="0" width="640" height="70" fill="#101a2c" />
                                 <text x="18" y="30" fill="#f8fafc" font-size="20" font-weight="800">房间详情</text>
-                                <rect x="18" y="42" width="86" height="18" rx="9" fill="#132238" stroke="#5b6b85"/>
-                                <rect x="110" y="42" width="70" height="18" rx="9" fill="#250b16" stroke="#ef4444"/>
+                                <rect x="18" y="42" width="86" height="18" rx="9" fill="#132238" stroke="#5b6b85" />
+                                <rect x="110" y="42" width="70" height="18" rx="9" fill="#250b16" stroke="#ef4444" />
                                 <g fill="#64748b" font-size="11" font-weight="700">
                                     <text x="452" y="26">时长</text>
                                     <text x="524" y="26">进房</text>
                                     <text x="580" y="26">总礼物</text>
                                 </g>
                                 <g>
-                                    <rect x="450" y="34" width="68" height="12" rx="6" fill="#e2e8f0" filter="url(#blurB2)"/>
-                                    <rect x="522" y="34" width="44" height="12" rx="6" fill="#f472b6" filter="url(#blurB2)"/>
-                                    <rect x="578" y="34" width="44" height="12" rx="6" fill="#facc15" filter="url(#blurB2)"/>
+                                    <rect x="450" y="34" width="68" height="12" rx="6" fill="#e2e8f0"
+                                        filter="url(#blurB2)" />
+                                    <rect x="522" y="34" width="44" height="12" rx="6" fill="#f472b6"
+                                        filter="url(#blurB2)" />
+                                    <rect x="578" y="34" width="44" height="12" rx="6" fill="#facc15"
+                                        filter="url(#blurB2)" />
                                 </g>
-                                <rect x="18" y="84" width="384" height="26" rx="12" fill="#0d1525"/>
+                                <rect x="18" y="84" width="384" height="26" rx="12" fill="#0d1525" />
                                 <text x="48" y="101" fill="#d1d5db" font-size="12" font-weight="700">实时弹幕</text>
                                 <text x="148" y="101" fill="#d1d5db" font-size="12" font-weight="700">礼物明细</text>
-                                <rect x="205" y="87" width="146" height="20" rx="10" fill="#7c83ff"/>
+                                <rect x="205" y="87" width="146" height="20" rx="10" fill="#7c83ff" />
                                 <text x="250" y="101" fill="#0f172a" font-size="12" font-weight="800">互动榜单</text>
                                 <text x="364" y="101" fill="#d1d5db" font-size="12" font-weight="700">AI直播复盘</text>
-                                <rect x="18" y="126" width="386" height="240" rx="18" fill="#111827"/>
-                                <rect x="416" y="112" width="206" height="254" rx="18" fill="#111827"/>
+                                <rect x="18" y="126" width="386" height="240" rx="18" fill="#111827" />
+                                <rect x="416" y="112" width="206" height="254" rx="18" fill="#111827" />
                                 <text x="32" y="150" fill="#facc15" font-size="17" font-weight="800">送礼榜 (Top 20)</text>
-                                <text x="164" y="150" fill="#38bdf8" font-size="17" font-weight="800">发言榜 (Top 20)</text>
-                                <text x="298" y="150" fill="#fb7185" font-size="17" font-weight="800">点赞榜 (Top 20)</text>
+                                <text x="164" y="150" fill="#38bdf8" font-size="17" font-weight="800">发言榜 (Top
+                                    20)</text>
+                                <text x="298" y="150" fill="#fb7185" font-size="17" font-weight="800">点赞榜 (Top
+                                    20)</text>
                                 <g fill="#cbd5e1" font-size="12">
                                     <text x="32" y="180">用户 A</text>
                                     <text x="164" y="180">用户 A</text>
@@ -358,41 +431,56 @@
                                     <text x="298" y="224">用户 C</text>
                                 </g>
                                 <g>
-                                    <rect x="120" y="176" width="28" height="8" rx="4" fill="#60a5fa" filter="url(#blurB2)"/>
-                                    <rect x="244" y="176" width="20" height="8" rx="4" fill="#e5e7eb" filter="url(#blurB2)"/>
-                                    <rect x="382" y="176" width="24" height="8" rx="4" fill="#fb7185" filter="url(#blurB2)"/>
-                                    <rect x="120" y="198" width="28" height="8" rx="4" fill="#60a5fa" filter="url(#blurB2)"/>
-                                    <rect x="244" y="198" width="24" height="8" rx="4" fill="#e5e7eb" filter="url(#blurB2)"/>
-                                    <rect x="382" y="198" width="20" height="8" rx="4" fill="#fb7185" filter="url(#blurB2)"/>
-                                    <rect x="120" y="220" width="24" height="8" rx="4" fill="#60a5fa" filter="url(#blurB2)"/>
-                                    <rect x="244" y="220" width="20" height="8" rx="4" fill="#e5e7eb" filter="url(#blurB2)"/>
-                                    <rect x="382" y="220" width="18" height="8" rx="4" fill="#fb7185" filter="url(#blurB2)"/>
+                                    <rect x="120" y="176" width="28" height="8" rx="4" fill="#60a5fa"
+                                        filter="url(#blurB2)" />
+                                    <rect x="244" y="176" width="20" height="8" rx="4" fill="#e5e7eb"
+                                        filter="url(#blurB2)" />
+                                    <rect x="382" y="176" width="24" height="8" rx="4" fill="#fb7185"
+                                        filter="url(#blurB2)" />
+                                    <rect x="120" y="198" width="28" height="8" rx="4" fill="#60a5fa"
+                                        filter="url(#blurB2)" />
+                                    <rect x="244" y="198" width="24" height="8" rx="4" fill="#e5e7eb"
+                                        filter="url(#blurB2)" />
+                                    <rect x="382" y="198" width="20" height="8" rx="4" fill="#fb7185"
+                                        filter="url(#blurB2)" />
+                                    <rect x="120" y="220" width="24" height="8" rx="4" fill="#60a5fa"
+                                        filter="url(#blurB2)" />
+                                    <rect x="244" y="220" width="20" height="8" rx="4" fill="#e5e7eb"
+                                        filter="url(#blurB2)" />
+                                    <rect x="382" y="220" width="18" height="8" rx="4" fill="#fb7185"
+                                        filter="url(#blurB2)" />
                                 </g>
                                 <g stroke="#263142" stroke-width="1">
-                                    <line x1="28" y1="238" x2="390" y2="238"/>
-                                    <line x1="28" y1="264" x2="390" y2="264"/>
-                                    <line x1="28" y1="290" x2="390" y2="290"/>
-                                    <line x1="28" y1="316" x2="390" y2="316"/>
+                                    <line x1="28" y1="238" x2="390" y2="238" />
+                                    <line x1="28" y1="264" x2="390" y2="264" />
+                                    <line x1="28" y1="290" x2="390" y2="290" />
+                                    <line x1="28" y1="316" x2="390" y2="316" />
                                 </g>
                                 <text x="430" y="145" fill="#f8fafc" font-size="18" font-weight="800">主播信息</text>
                                 <text x="430" y="172" fill="#94a3b8" font-size="12">开始时间</text>
                                 <text x="430" y="194" fill="#94a3b8" font-size="12">最高在线</text>
                                 <text x="430" y="216" fill="#94a3b8" font-size="12">收到点赞</text>
                                 <text x="430" y="238" fill="#94a3b8" font-size="12">收到评论</text>
-                                <rect x="538" y="168" width="54" height="8" rx="4" fill="#cbd5e1" filter="url(#blurB2)"/>
-                                <rect x="564" y="190" width="28" height="8" rx="4" fill="#f472b6" filter="url(#blurB2)"/>
-                                <rect x="564" y="212" width="28" height="8" rx="4" fill="#fb7185" filter="url(#blurB2)"/>
-                                <rect x="564" y="234" width="28" height="8" rx="4" fill="#cbd5e1" filter="url(#blurB2)"/>
+                                <rect x="538" y="168" width="54" height="8" rx="4" fill="#cbd5e1"
+                                    filter="url(#blurB2)" />
+                                <rect x="564" y="190" width="28" height="8" rx="4" fill="#f472b6"
+                                    filter="url(#blurB2)" />
+                                <rect x="564" y="212" width="28" height="8" rx="4" fill="#fb7185"
+                                    filter="url(#blurB2)" />
+                                <rect x="564" y="234" width="28" height="8" rx="4" fill="#cbd5e1"
+                                    filter="url(#blurB2)" />
                                 <text x="430" y="274" fill="#f8fafc" font-size="18" font-weight="800">历史排行榜</text>
-                                <rect x="430" y="286" width="176" height="22" rx="11" fill="#0b1525"/>
-                                <rect x="438" y="289" width="76" height="16" rx="8" fill="#7c83ff"/>
+                                <rect x="430" y="286" width="176" height="22" rx="11" fill="#0b1525" />
+                                <rect x="438" y="289" width="76" height="16" rx="8" fill="#7c83ff" />
                                 <text x="463" y="301" fill="#0f172a" font-size="11" font-weight="800">送礼</text>
                                 <g fill="#14f195" font-size="12" font-weight="800">
                                     <text x="438" y="327">用户 A</text>
                                     <text x="438" y="349">用户 B</text>
                                 </g>
-                                <rect x="564" y="323" width="28" height="8" rx="4" fill="#93c5fd" filter="url(#blurB2)"/>
-                                <rect x="564" y="345" width="28" height="8" rx="4" fill="#93c5fd" filter="url(#blurB2)"/>
+                                <rect x="564" y="323" width="28" height="8" rx="4" fill="#93c5fd"
+                                    filter="url(#blurB2)" />
+                                <rect x="564" y="345" width="28" height="8" rx="4" fill="#93c5fd"
+                                    filter="url(#blurB2)" />
                             </svg>
                         </div>
                     </div>
@@ -411,32 +499,42 @@
                         <span class="feature-showcase-kicker">AI 客户分析</span>
                     </div>
                     <h3 class="feature-showcase-title">AI 洞察与建议动作</h3>
-                    <p class="feature-showcase-desc">用结构化面板呈现客户总结、价值标签、关键风险与建议动作，让运营信息一眼可读、结论一眼可用。</p>
+                    <p class="feature-showcase-desc">用结构化面板呈现客户总结、价值标签、关键风险与建议动作，让运营信息一眼可读、结论一眼可用</p>
                     <div class="feature-showcase-frame">
                         <div class="feature-showcase-window">
-                            <svg viewBox="0 0 640 390" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AI客户分析结构示意图">
+                            <svg viewBox="0 0 640 390" xmlns="http://www.w3.org/2000/svg" role="img"
+                                aria-label="AI客户分析结构示意图">
                                 <defs>
                                     <linearGradient id="featureGridBgC2" x1="0" y1="0" x2="1" y2="1">
-                                        <stop offset="0%" stop-color="#09111f"/>
-                                        <stop offset="100%" stop-color="#030712"/>
+                                        <stop offset="0%" stop-color="#09111f" />
+                                        <stop offset="100%" stop-color="#030712" />
                                     </linearGradient>
                                     <linearGradient id="featureCardMintC2" x1="0" y1="0" x2="1" y2="1">
-                                        <stop offset="0%" stop-color="#052e2b"/>
-                                        <stop offset="100%" stop-color="#0b1120"/>
+                                        <stop offset="0%" stop-color="#052e2b" />
+                                        <stop offset="100%" stop-color="#0b1120" />
                                     </linearGradient>
-                                    <filter id="blurC2"><feGaussianBlur stdDeviation="1.6"/></filter>
+                                    <filter id="blurC2">
+                                        <feGaussianBlur stdDeviation="1.6" />
+                                    </filter>
                                 </defs>
-                                <rect width="640" height="390" fill="url(#featureGridBgC2)"/>
-                                <rect x="26" y="18" width="588" height="82" rx="18" fill="#10192a" stroke="#233044"/>
+                                <rect width="640" height="390" fill="url(#featureGridBgC2)" />
+                                <rect x="26" y="18" width="588" height="82" rx="18" fill="#10192a" stroke="#233044" />
                                 <text x="42" y="42" fill="#cbd5e1" font-size="13" font-weight="700">客户总结</text>
-                                <rect x="42" y="58" width="484" height="8" rx="4" fill="#94a3b8" opacity="0.9" filter="url(#blurC2)"/>
-                                <rect x="42" y="74" width="436" height="8" rx="4" fill="#94a3b8" opacity="0.7" filter="url(#blurC2)"/>
+                                <rect x="42" y="58" width="484" height="8" rx="4" fill="#94a3b8" opacity="0.9"
+                                    filter="url(#blurC2)" />
+                                <rect x="42" y="74" width="436" height="8" rx="4" fill="#94a3b8" opacity="0.7"
+                                    filter="url(#blurC2)" />
                                 <g>
-                                    <rect x="26" y="116" width="100" height="58" rx="16" fill="#111827" stroke="#2d3748"/>
-                                    <rect x="138" y="116" width="100" height="58" rx="16" fill="#0b1120" stroke="#1f7a66"/>
-                                    <rect x="250" y="116" width="100" height="58" rx="16" fill="#111827" stroke="#374151"/>
-                                    <rect x="362" y="116" width="100" height="58" rx="16" fill="#111827" stroke="#8b6d1f"/>
-                                    <rect x="474" y="116" width="100" height="58" rx="16" fill="#111827" stroke="#7f1d1d"/>
+                                    <rect x="26" y="116" width="100" height="58" rx="16" fill="#111827"
+                                        stroke="#2d3748" />
+                                    <rect x="138" y="116" width="100" height="58" rx="16" fill="#0b1120"
+                                        stroke="#1f7a66" />
+                                    <rect x="250" y="116" width="100" height="58" rx="16" fill="#111827"
+                                        stroke="#374151" />
+                                    <rect x="362" y="116" width="100" height="58" rx="16" fill="#111827"
+                                        stroke="#8b6d1f" />
+                                    <rect x="474" y="116" width="100" height="58" rx="16" fill="#111827"
+                                        stroke="#7f1d1d" />
                                     <text x="40" y="136" fill="#64748b" font-size="11" font-weight="700">本房价值定位</text>
                                     <text x="40" y="160" fill="#f8fafc" font-size="16" font-weight="800">重点维护</text>
                                     <text x="152" y="136" fill="#64748b" font-size="11" font-weight="700">平台价值定位</text>
@@ -448,31 +546,37 @@
                                     <text x="488" y="136" fill="#64748b" font-size="11" font-weight="700">转化阶段</text>
                                     <text x="488" y="160" fill="#f8fafc" font-size="16" font-weight="800">待转化</text>
                                 </g>
-                                <rect x="26" y="190" width="588" height="42" rx="16" fill="#111827"/>
+                                <rect x="26" y="190" width="588" height="42" rx="16" fill="#111827" />
                                 <text x="42" y="216" fill="#cbd5e1" font-size="12" font-weight="700">运营标签</text>
                                 <g fill="#cbd5e1" font-size="10">
-                                    <rect x="116" y="202" width="84" height="18" rx="9" fill="#111827" stroke="#475569"/>
-                                    <rect x="208" y="202" width="92" height="18" rx="9" fill="#111827" stroke="#475569"/>
-                                    <rect x="308" y="202" width="74" height="18" rx="9" fill="#111827" stroke="#475569"/>
-                                    <rect x="390" y="202" width="90" height="18" rx="9" fill="#111827" stroke="#475569"/>
-                                    <rect x="488" y="202" width="88" height="18" rx="9" fill="#111827" stroke="#475569"/>
+                                    <rect x="116" y="202" width="84" height="18" rx="9" fill="#111827"
+                                        stroke="#475569" />
+                                    <rect x="208" y="202" width="92" height="18" rx="9" fill="#111827"
+                                        stroke="#475569" />
+                                    <rect x="308" y="202" width="74" height="18" rx="9" fill="#111827"
+                                        stroke="#475569" />
+                                    <rect x="390" y="202" width="90" height="18" rx="9" fill="#111827"
+                                        stroke="#475569" />
+                                    <rect x="488" y="202" width="88" height="18" rx="9" fill="#111827"
+                                        stroke="#475569" />
                                     <text x="128" y="214">#高价值</text>
                                     <text x="220" y="214">#多房间活跃</text>
                                     <text x="322" y="214">#分流风险</text>
                                     <text x="402" y="214">#平台核心</text>
                                     <text x="500" y="214">#互动型</text>
                                 </g>
-                                <rect x="26" y="246" width="272" height="120" rx="22" fill="#101827" stroke="#233044"/>
-                                <rect x="316" y="246" width="298" height="120" rx="22" fill="url(#featureCardMintC2)" stroke="#1f7a66"/>
+                                <rect x="26" y="246" width="272" height="120" rx="22" fill="#101827" stroke="#233044" />
+                                <rect x="316" y="246" width="298" height="120" rx="22" fill="url(#featureCardMintC2)"
+                                    stroke="#1f7a66" />
                                 <text x="42" y="272" fill="#f8fafc" font-size="15" font-weight="800">关键信号</text>
                                 <text x="332" y="272" fill="#f8fafc" font-size="15" font-weight="800">建议动作</text>
                                 <g fill="#9fb0c6" filter="url(#blurC2)">
-                                    <rect x="42" y="292" width="220" height="10" rx="5"/>
-                                    <rect x="42" y="314" width="202" height="10" rx="5"/>
-                                    <rect x="42" y="336" width="210" height="10" rx="5"/>
-                                    <rect x="332" y="292" width="246" height="10" rx="5"/>
-                                    <rect x="332" y="314" width="230" height="10" rx="5"/>
-                                    <rect x="332" y="336" width="218" height="10" rx="5"/>
+                                    <rect x="42" y="292" width="220" height="10" rx="5" />
+                                    <rect x="42" y="314" width="202" height="10" rx="5" />
+                                    <rect x="42" y="336" width="210" height="10" rx="5" />
+                                    <rect x="332" y="292" width="246" height="10" rx="5" />
+                                    <rect x="332" y="314" width="230" height="10" rx="5" />
+                                    <rect x="332" y="336" width="218" height="10" rx="5" />
                                 </g>
                             </svg>
                         </div>
@@ -492,37 +596,47 @@
                         <span class="feature-showcase-kicker">场次复盘</span>
                     </div>
                     <h3 class="feature-showcase-title">回放、榜单与历史对比</h3>
-                    <p class="feature-showcase-desc">下播后快速回看单场结构、互动榜和历史榜单变化，用统一面板完成复盘与追踪。</p>
+                    <p class="feature-showcase-desc">下播后快速回看单场结构、互动榜和历史榜单变化，完成复盘与追踪</p>
                     <div class="feature-showcase-frame">
                         <div class="feature-showcase-window">
-                            <svg viewBox="0 0 640 390" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="场次复盘结构示意图">
-                                <defs><filter id="blurD2"><feGaussianBlur stdDeviation="1.8"/></filter></defs>
-                                <rect width="640" height="390" fill="#07101d"/>
-                                <rect x="0" y="0" width="640" height="72" fill="#101a2c"/>
+                            <svg viewBox="0 0 640 390" xmlns="http://www.w3.org/2000/svg" role="img"
+                                aria-label="场次复盘结构示意图">
+                                <defs>
+                                    <filter id="blurD2">
+                                        <feGaussianBlur stdDeviation="1.8" />
+                                    </filter>
+                                </defs>
+                                <rect width="640" height="390" fill="#07101d" />
+                                <rect x="0" y="0" width="640" height="72" fill="#101a2c" />
                                 <text x="20" y="30" fill="#f8fafc" font-size="20" font-weight="800">场次详情</text>
-                                <rect x="18" y="42" width="86" height="18" rx="9" fill="#132238" stroke="#5b6b85"/>
-                                <rect x="112" y="42" width="70" height="18" rx="9" fill="#250b16" stroke="#ef4444"/>
+                                <rect x="18" y="42" width="86" height="18" rx="9" fill="#132238" stroke="#5b6b85" />
+                                <rect x="112" y="42" width="70" height="18" rx="9" fill="#250b16" stroke="#ef4444" />
                                 <g fill="#64748b" font-size="11" font-weight="700">
                                     <text x="444" y="26">时长</text>
                                     <text x="514" y="26">总进房</text>
                                     <text x="576" y="26">总礼物</text>
                                 </g>
                                 <g>
-                                    <rect x="440" y="36" width="72" height="12" rx="6" fill="#e2e8f0" filter="url(#blurD2)"/>
-                                    <rect x="516" y="36" width="44" height="12" rx="6" fill="#f472b6" filter="url(#blurD2)"/>
-                                    <rect x="574" y="36" width="48" height="12" rx="6" fill="#facc15" filter="url(#blurD2)"/>
+                                    <rect x="440" y="36" width="72" height="12" rx="6" fill="#e2e8f0"
+                                        filter="url(#blurD2)" />
+                                    <rect x="516" y="36" width="44" height="12" rx="6" fill="#f472b6"
+                                        filter="url(#blurD2)" />
+                                    <rect x="574" y="36" width="48" height="12" rx="6" fill="#facc15"
+                                        filter="url(#blurD2)" />
                                 </g>
-                                <rect x="18" y="92" width="392" height="26" rx="12" fill="#0d1525"/>
+                                <rect x="18" y="92" width="392" height="26" rx="12" fill="#0d1525" />
                                 <text x="60" y="109" fill="#d1d5db" font-size="12" font-weight="700">实时弹幕</text>
                                 <text x="160" y="109" fill="#d1d5db" font-size="12" font-weight="700">礼物明细</text>
-                                <rect x="206" y="95" width="142" height="20" rx="10" fill="#7c83ff"/>
+                                <rect x="206" y="95" width="142" height="20" rx="10" fill="#7c83ff" />
                                 <text x="249" y="109" fill="#0f172a" font-size="12" font-weight="800">互动榜单</text>
                                 <text x="364" y="109" fill="#d1d5db" font-size="12" font-weight="700">AI直播复盘</text>
-                                <rect x="18" y="132" width="408" height="236" rx="18" fill="#111827"/>
-                                <rect x="436" y="132" width="186" height="236" rx="18" fill="#111827"/>
+                                <rect x="18" y="132" width="408" height="236" rx="18" fill="#111827" />
+                                <rect x="436" y="132" width="186" height="236" rx="18" fill="#111827" />
                                 <text x="34" y="160" fill="#facc15" font-size="17" font-weight="800">送礼榜 (Top 20)</text>
-                                <text x="176" y="160" fill="#38bdf8" font-size="17" font-weight="800">发言榜 (Top 20)</text>
-                                <text x="314" y="160" fill="#fb7185" font-size="17" font-weight="800">点赞榜 (Top 20)</text>
+                                <text x="176" y="160" fill="#38bdf8" font-size="17" font-weight="800">发言榜 (Top
+                                    20)</text>
+                                <text x="314" y="160" fill="#fb7185" font-size="17" font-weight="800">点赞榜 (Top
+                                    20)</text>
                                 <g fill="#cbd5e1" font-size="12">
                                     <text x="34" y="184">用户 A</text>
                                     <text x="176" y="184">用户 A</text>
@@ -535,26 +649,35 @@
                                     <text x="314" y="228">用户 C</text>
                                 </g>
                                 <g>
-                                    <rect x="132" y="184" width="28" height="8" rx="4" fill="#93c5fd" filter="url(#blurD2)"/>
-                                    <rect x="258" y="184" width="20" height="8" rx="4" fill="#e5e7eb" filter="url(#blurD2)"/>
-                                    <rect x="394" y="184" width="22" height="8" rx="4" fill="#fb7185" filter="url(#blurD2)"/>
-                                    <rect x="132" y="206" width="28" height="8" rx="4" fill="#93c5fd" filter="url(#blurD2)"/>
-                                    <rect x="258" y="206" width="24" height="8" rx="4" fill="#e5e7eb" filter="url(#blurD2)"/>
-                                    <rect x="394" y="206" width="22" height="8" rx="4" fill="#fb7185" filter="url(#blurD2)"/>
-                                    <rect x="132" y="228" width="24" height="8" rx="4" fill="#93c5fd" filter="url(#blurD2)"/>
-                                    <rect x="258" y="228" width="20" height="8" rx="4" fill="#e5e7eb" filter="url(#blurD2)"/>
-                                    <rect x="394" y="228" width="18" height="8" rx="4" fill="#fb7185" filter="url(#blurD2)"/>
+                                    <rect x="132" y="184" width="28" height="8" rx="4" fill="#93c5fd"
+                                        filter="url(#blurD2)" />
+                                    <rect x="258" y="184" width="20" height="8" rx="4" fill="#e5e7eb"
+                                        filter="url(#blurD2)" />
+                                    <rect x="394" y="184" width="22" height="8" rx="4" fill="#fb7185"
+                                        filter="url(#blurD2)" />
+                                    <rect x="132" y="206" width="28" height="8" rx="4" fill="#93c5fd"
+                                        filter="url(#blurD2)" />
+                                    <rect x="258" y="206" width="24" height="8" rx="4" fill="#e5e7eb"
+                                        filter="url(#blurD2)" />
+                                    <rect x="394" y="206" width="22" height="8" rx="4" fill="#fb7185"
+                                        filter="url(#blurD2)" />
+                                    <rect x="132" y="228" width="24" height="8" rx="4" fill="#93c5fd"
+                                        filter="url(#blurD2)" />
+                                    <rect x="258" y="228" width="20" height="8" rx="4" fill="#e5e7eb"
+                                        filter="url(#blurD2)" />
+                                    <rect x="394" y="228" width="18" height="8" rx="4" fill="#fb7185"
+                                        filter="url(#blurD2)" />
                                 </g>
                                 <g stroke="#263142" stroke-width="1">
-                                    <line x1="30" y1="246" x2="412" y2="246"/>
-                                    <line x1="30" y1="272" x2="412" y2="272"/>
-                                    <line x1="30" y1="298" x2="412" y2="298"/>
-                                    <line x1="30" y1="324" x2="412" y2="324"/>
-                                    <line x1="30" y1="350" x2="412" y2="350"/>
+                                    <line x1="30" y1="246" x2="412" y2="246" />
+                                    <line x1="30" y1="272" x2="412" y2="272" />
+                                    <line x1="30" y1="298" x2="412" y2="298" />
+                                    <line x1="30" y1="324" x2="412" y2="324" />
+                                    <line x1="30" y1="350" x2="412" y2="350" />
                                 </g>
                                 <text x="452" y="160" fill="#f8fafc" font-size="18" font-weight="800">历史排行榜</text>
-                                <rect x="452" y="174" width="146" height="20" rx="10" fill="#0b1525"/>
-                                <rect x="458" y="177" width="64" height="14" rx="7" fill="#7c83ff"/>
+                                <rect x="452" y="174" width="146" height="20" rx="10" fill="#0b1525" />
+                                <rect x="458" y="177" width="64" height="14" rx="7" fill="#7c83ff" />
                                 <text x="479" y="188" fill="#0f172a" font-size="10" font-weight="800">送礼</text>
                                 <g fill="#14f195" font-size="12" font-weight="800">
                                     <text x="452" y="216">用户 A</text>
@@ -562,12 +685,17 @@
                                     <text x="452" y="260">用户 C</text>
                                     <text x="452" y="282">用户 D</text>
                                 </g>
-                                <rect x="560" y="212" width="28" height="8" rx="4" fill="#93c5fd" filter="url(#blurD2)"/>
-                                <rect x="560" y="234" width="28" height="8" rx="4" fill="#93c5fd" filter="url(#blurD2)"/>
-                                <rect x="560" y="256" width="28" height="8" rx="4" fill="#93c5fd" filter="url(#blurD2)"/>
-                                <rect x="560" y="278" width="28" height="8" rx="4" fill="#93c5fd" filter="url(#blurD2)"/>
-                                <rect x="452" y="324" width="146" height="28" rx="12" fill="#0f172a" stroke="#233044"/>
-                                <rect x="468" y="336" width="114" height="8" rx="4" fill="#94a3b8" filter="url(#blurD2)"/>
+                                <rect x="560" y="212" width="28" height="8" rx="4" fill="#93c5fd"
+                                    filter="url(#blurD2)" />
+                                <rect x="560" y="234" width="28" height="8" rx="4" fill="#93c5fd"
+                                    filter="url(#blurD2)" />
+                                <rect x="560" y="256" width="28" height="8" rx="4" fill="#93c5fd"
+                                    filter="url(#blurD2)" />
+                                <rect x="560" y="278" width="28" height="8" rx="4" fill="#93c5fd"
+                                    filter="url(#blurD2)" />
+                                <rect x="452" y="324" width="146" height="28" rx="12" fill="#0f172a" stroke="#233044" />
+                                <rect x="468" y="336" width="114" height="8" rx="4" fill="#94a3b8"
+                                    filter="url(#blurD2)" />
                             </svg>
                         </div>
                     </div>
@@ -608,7 +736,8 @@
                             <span class="text-4xl font-extrabold">免费</span>
                         </div>
                         <ul class="text-left text-sm space-y-2 mb-6">
-                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> <span id="free-rooms">1</span> 个监控房间</li>
+                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> <span
+                                    id="free-rooms">1</span> 个监控房间</li>
                             <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 基础数据查看</li>
                             <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 实时弹幕监控</li>
                             <li class="flex items-center gap-2 text-base-content/40"><span>&#10007;</span> 数据导出</li>
@@ -637,7 +766,7 @@
     </footer>
 
     <script>
-        document.addEventListener('DOMContentLoaded', async function() {
+        document.addEventListener('DOMContentLoaded', async function () {
             // Redirect logged-in users to monitor center
             if (typeof Auth !== 'undefined') {
                 if (Auth.isLoggedIn()) {
@@ -661,7 +790,7 @@
                     const cfg = await cfgRes.json();
                     const freeRooms = cfg.gift_room_limit || cfg.default_room_limit || 1;
                     document.getElementById('free-rooms').textContent = freeRooms;
-                } catch(e) {}
+                } catch (e) { }
 
                 function renderPlans() {
                     const grid = document.getElementById('pricing-grid');
@@ -671,14 +800,14 @@
                     grid.appendChild(freeCard);
 
                     const priceKey = currentPeriod === 'monthly' ? 'priceMonthly'
-                                   : currentPeriod === 'quarterly' ? 'priceQuarterly'
-                                   : 'priceAnnual';
+                        : currentPeriod === 'quarterly' ? 'priceQuarterly'
+                            : 'priceAnnual';
                     const periodLabel = currentPeriod === 'monthly' ? '/月'
-                                      : currentPeriod === 'quarterly' ? '/季'
-                                      : '/年';
+                        : currentPeriod === 'quarterly' ? '/季'
+                            : '/年';
                     const monthCount = currentPeriod === 'monthly' ? 1
-                                     : currentPeriod === 'quarterly' ? 3
-                                     : 12;
+                        : currentPeriod === 'quarterly' ? 3
+                            : 12;
 
                     plans.forEach((plan, idx) => {
                         const price = plan[priceKey];
@@ -717,7 +846,7 @@
 
                 // Period tab switching
                 document.querySelectorAll('.period-btn').forEach(btn => {
-                    btn.addEventListener('click', function() {
+                    btn.addEventListener('click', function () {
                         document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('btn-active'));
                         this.classList.add('btn-active');
                         currentPeriod = this.dataset.period;
@@ -725,10 +854,11 @@
                     });
                 });
 
-            } catch(e) {
+            } catch (e) {
                 console.error('Failed to load plans:', e);
             }
         });
     </script>
 </body>
+
 </html>
