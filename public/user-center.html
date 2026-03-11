@@ -2253,7 +2253,7 @@
 
         function getPlanPeriods(plan) {
             return [
-                { key: 'monthly', label: '月付', price: Number(plan.priceMonthly || 0), months: 1, cycle: 'monthly' },
+                Number(plan.priceMonthly || 0) > 0 ? { key: 'monthly', label: '月付', price: Number(plan.priceMonthly || 0), months: 1, cycle: 'monthly' } : null,
                 Number(plan.priceQuarterly || 0) > 0 ? { key: 'quarterly', label: '季付', price: Number(plan.priceQuarterly || 0), months: 3, cycle: 'quarterly' } : null,
                 Number(plan.priceAnnual || 0) > 0 ? { key: 'yearly', label: '年付', price: Number(plan.priceAnnual || 0), months: 12, cycle: 'yearly' } : null
             ].filter(Boolean).map(period => ({
@@ -2375,12 +2375,14 @@
                 const lore = getPlanLore(plan, index);
                 const isCurrent = Number(plan.id) === Number(currentPlanId);
                 const isActive = index === selectedPlanIndex;
+                const firstPeriod = getPlanPeriods(plan)[0];
+                const headPrice = firstPeriod ? `¥${formatMoney(firstPeriod.monthlyEquivalent)}/月` : '暂不可购';
                 return `
                 <div class="plan-selector-item ${isActive ? 'plan-sel-active' : ''}" onclick="selectPlanTab(${index})">
                     ${isCurrent ? '<span class="plan-sel-badge"><span class="badge badge-primary badge-sm">当前</span></span>' : ''}
                     <div class="plan-selector-top">
                         <div class="plan-selector-crest">${lore.icon}</div>
-                        <div class="plan-sel-price">¥${formatMoney(plan.priceMonthly)}/月</div>
+                        <div class="plan-sel-price">${headPrice}</div>
                     </div>
                     <div class="plan-selector-name">${escapeHtml(plan.name)}</div>
                     <div class="plan-selector-note">${escapeHtml(lore.tagline)}</div>
@@ -2423,10 +2425,22 @@
                     : Number(addon.roomCount || 0) >= 10
                         ? '适合常规扩容。'
                         : '适合小幅补充。';
-                const altPrices = [
-                    Number(addon.priceQuarterly || 0) > 0 ? `<span class="offer-chip">季付 ¥${formatMoney(addon.priceQuarterly)}</span>` : '',
-                    Number(addon.priceAnnual || 0) > 0 ? `<span class="offer-chip">年付 ¥${formatMoney(addon.priceAnnual)}</span>` : ''
-                ].filter(Boolean).join('');
+                const preview = addon.purchasePreview || null;
+                const previewAvailable = Boolean(preview?.available);
+                const purchaseLimit = Number(addon.perUserPurchaseLimit || preview?.purchaseLimit || 0);
+                const purchaseCount = Number(preview?.purchaseCount || 0);
+                const previewMessage = previewAvailable
+                    ? `随当前会员周期生效，剩余 ${Number(preview.remainingDays || 0)} 天`
+                    : (preview?.message || '仅企业版会员可购买');
+                const previewPrice = previewAvailable ? Number(preview.price || 0) : null;
+                const previewEndDate = previewAvailable && preview.endDate
+                    ? new Date(preview.endDate).toLocaleDateString('zh-CN')
+                    : '';
+                const actionDisabled = !previewAvailable;
+                const actionLabel = previewAvailable ? '购买扩容包' : '暂不可购买';
+                const actionTitle = previewAvailable
+                    ? `${addon.name} · 跟随当前会员`
+                    : `${addon.name} · 暂不可购买`;
                 return `
                 <div class="card fantasy-offer-card plan-card">
                     <div class="card-body p-5">
@@ -2438,13 +2452,18 @@
                             </div>
                             <span class="offer-chip">+${Number(addon.roomCount || 0)} 房间</span>
                         </div>
-                        <div class="offer-price">¥${formatMoney(addon.priceMonthly)}<small>/月</small></div>
+                        <div class="offer-price">${previewAvailable ? `¥${formatMoney(previewPrice)}` : '需满足条件'}<small>${previewAvailable ? '/本期' : ''}</small></div>
                         <div class="offer-meta">
-                            <span class="offer-chip">月付</span>
-                            ${altPrices}
+                            <span class="offer-chip">跟随当前会员</span>
+                            <span class="offer-chip">仅企业版</span>
+                            ${previewEndDate ? `<span class="offer-chip">至 ${previewEndDate}</span>` : ''}
+                            ${purchaseLimit > 0 ? `<span class="offer-chip">限购 ${purchaseLimit} 次</span>` : ''}
                         </div>
-                        <div class="offer-description">${escapeHtml(tierText)}</div>
-                        <button class="btn fantasy-cta w-full offer-cta" onclick='initPurchase("addon", ${Number(addon.id)}, ${JSON.stringify(addon.name)}, ${Number(addon.priceMonthly || 0)})'>购买</button>
+                        <div class="offer-description">${escapeHtml(`${tierText} ${previewMessage}${purchaseLimit > 0 ? `，已购 ${purchaseCount} / ${purchaseLimit} 次` : ''}`.trim())}</div>
+                        <button
+                            class="btn w-full offer-cta ${actionDisabled ? 'fantasy-disabled' : 'fantasy-cta'}"
+                            ${actionDisabled ? `disabled title="${escapeHtml(previewMessage)}"` : `onclick='initPurchase("addon", ${Number(addon.id)}, ${JSON.stringify(actionTitle)}, ${Number(previewPrice || 0)})'`}
+                        >${actionLabel}</button>
                     </div>
                 </div>`;
             }).join('');
@@ -2468,12 +2487,21 @@
 
             aiGrid.innerHTML = packages.map((pkg, index) => {
                 const priceYuan = Number(pkg.priceYuan || 0);
+                const purchasePreview = pkg.purchasePreview || null;
+                const purchaseLimit = Number(pkg.perUserPurchaseLimit || purchasePreview?.purchaseLimit || 0);
+                const purchaseCount = Number(purchasePreview?.purchaseCount || 0);
+                const purchaseAvailable = purchasePreview ? Boolean(purchasePreview.available) : true;
                 const defaultDescription = Number(pkg.credits || 0) >= 1000
                     ? '适合高频分析。'
                     : Number(pkg.credits || 0) >= 300
                         ? '适合活动期间补充。'
                         : '适合临时补充。';
                 const normalizedDescription = formatAiPointDescription(pkg.description || defaultDescription);
+                const extraLimitText = purchaseLimit > 0 ? ` 已购 ${purchaseCount} / ${purchaseLimit} 次。` : '';
+                const actionDisabled = !purchaseAvailable;
+                const actionTitle = purchaseAvailable
+                    ? pkg.name
+                    : `${pkg.name} · 暂不可购买`;
                 return `
                 <div class="card fantasy-offer-card plan-card">
                     <div class="card-body p-5">
@@ -2488,9 +2516,15 @@
                         <div class="offer-price">¥${formatMoney(priceYuan)}<small>/包</small></div>
                         <div class="offer-meta">
                             <span class="offer-chip">即时到账</span>
+                            ${purchaseLimit > 0 ? `<span class="offer-chip">限购 ${purchaseLimit} 次</span>` : ''}
                         </div>
-                        <div class="offer-description">${escapeHtml(normalizedDescription)}</div>
-                        <button class="btn fantasy-cta w-full offer-cta" onclick='initPurchase("ai_credits", ${Number(pkg.id)}, ${JSON.stringify(pkg.name)}, ${JSON.stringify(formatMoney(priceYuan))})'>购买</button>
+                        <div class="offer-description">${escapeHtml(`${normalizedDescription}${extraLimitText}`.trim())}</div>
+                        <button
+                            class="btn w-full offer-cta ${actionDisabled ? 'fantasy-disabled' : 'fantasy-cta'}"
+                            ${actionDisabled
+                                ? `disabled title="${escapeHtml(purchasePreview?.message || '暂不可购买')}"`
+                                : `onclick='initPurchase("ai_credits", ${Number(pkg.id)}, ${JSON.stringify(actionTitle)}, ${JSON.stringify(formatMoney(priceYuan))})'`}
+                        >${actionDisabled ? '暂不可购买' : '购买'}</button>
                     </div>
                 </div>`;
             }).join('');
@@ -2552,7 +2586,8 @@
 
             const currentPlanId = subData?.subscription?.planId ? Number(subData.subscription.planId) : null;
             const currentSortOrder = Number(subData?.subscription?.planSortOrder || 0);
-            const activePeriodLabel = comparablePeriods.find(period => period.key === planPeriod)?.label || '月付';
+            const hasComparablePeriods = comparablePeriods.length > 0;
+            const activePeriodLabel = comparablePeriods.find(period => period.key === planPeriod)?.label || '按套餐可购周期';
             const columnStyle = `grid-template-columns: minmax(152px, 180px) repeat(${plans.length}, minmax(196px, 1fr)); min-width: ${152 + plans.length * 196}px;`;
 
             const preparedPlans = plans.map((plan) => {
@@ -2565,7 +2600,10 @@
                 const aiCredits = Number(plan.aiCreditsMonthly || 0);
                 const isCurrent = Number(plan.id) === currentPlanId;
                 const isDowngrade = Boolean(currentPlanId) && !isCurrent && Number(plan.sortOrder || 0) < currentSortOrder;
-                const activePeriod = getPlanPeriods(plan).find(period => period.key === planPeriod);
+                const planPeriods = getPlanPeriods(plan);
+                const activePeriod = hasComparablePeriods
+                    ? planPeriods.find(period => period.key === planPeriod)
+                    : planPeriods[0];
                 const supportText = getBusinessSupportLabel(plan, features);
                 const priceSummary = activePeriod.months > 1
                     ? `${activePeriod.label} ¥${formatMoney(activePeriod.price)}${activePeriod.discount > 0 ? ` · 省${activePeriod.discount}%` : ''}`
@@ -2779,16 +2817,7 @@
             const aiCredits = Number(plan.aiCreditsMonthly || 0);
             const lore = getPlanLore(plan, selectedPlanIndex);
 
-            const periods = [
-                { key: 'monthly', label: '月付', price: Number(plan.priceMonthly || 0), months: 1, cycle: 'monthly' },
-                Number(plan.priceQuarterly || 0) > 0 ? { key: 'quarterly', label: '季付', price: Number(plan.priceQuarterly || 0), months: 3, cycle: 'quarterly' } : null,
-                Number(plan.priceAnnual || 0) > 0 ? { key: 'yearly', label: '年付', price: Number(plan.priceAnnual || 0), months: 12, cycle: 'yearly' } : null
-            ].filter(Boolean).map(period => ({
-                ...period,
-                discount: period.months > 1 && Number(plan.priceMonthly || 0) > 0
-                    ? Math.max(0, Math.round((1 - period.price / (Number(plan.priceMonthly || 0) * period.months)) * 100))
-                    : 0
-            }));
+            const periods = getPlanPeriods(plan);
 
             if (!periods.some(period => period.key === planPeriod)) {
                 planPeriod = periods[0].key;

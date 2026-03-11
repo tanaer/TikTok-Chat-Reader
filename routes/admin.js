@@ -14,6 +14,15 @@ const {
     savePromptTemplate,
     resetPromptTemplate,
 } = require('../services/aiPromptService');
+const {
+    getPromptTemplatePreviewPreset,
+    renderAdminPromptPreview,
+} = require('../services/aiPromptPreviewService');
+const {
+    listAiStructuredDataSources,
+    getAiStructuredDataSourceDefinition,
+    testAiStructuredDataSource,
+} = require('../services/aiStructuredDataSourceService');
 const quotaService = require('../services/quotaService');
 const { listAdminAiWorkJobs, getAdminAiWorkJobDetail } = require('../services/aiWorkService');
 const keyManager = require('../utils/keyManager');
@@ -73,6 +82,7 @@ function resolveAdminRoutePermission(req) {
     if (routePath.startsWith('/settings')) return 'settings.manage';
     if (routePath.startsWith('/session-maintenance')) return 'session_maintenance.manage';
     if (routePath.startsWith('/prompt-templates')) return 'prompts.manage';
+    if (routePath.startsWith('/structured-sources')) return 'ai_channels.manage';
     if (routePath.startsWith('/ai-work')) return 'ai_work.manage';
     if (routePath.startsWith('/euler-keys')) return 'euler_keys.manage';
     if (routePath.startsWith('/ai-channels') || routePath.startsWith('/ai-models')) return 'ai_channels.manage';
@@ -921,6 +931,9 @@ router.post('/plans', [
 
     try {
         const { name, code, roomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, dailyRoomCreateLimit, aiCreditsMonthly } = req.body;
+        if (![priceMonthly, priceQuarterly, priceAnnual].some(price => Number(price) > 0)) {
+            return res.status(400).json({ error: '套餐至少要保留一个大于 0 的价格周期' });
+        }
 
         const existing = await db.get('SELECT id FROM subscription_plans WHERE code = ?', [code]);
         if (existing) return res.status(409).json({ error: '套餐代码已存在' });
@@ -944,6 +957,22 @@ router.put('/plans/:id', async (req, res) => {
     try {
         const { name, roomLimit, priceMonthly, priceQuarterly, priceAnnual, featureFlags, sortOrder, isActive, dailyRoomCreateLimit } = req.body;
         const planId = req.params.id;
+        const existingPlan = await db.get(
+            'SELECT id, name, price_monthly, price_quarterly, price_annual FROM subscription_plans WHERE id = ?',
+            [planId]
+        );
+        if (!existingPlan) {
+            return res.status(404).json({ error: '套餐不存在' });
+        }
+
+        const nextPrices = {
+            monthly: priceMonthly !== undefined ? Math.round(priceMonthly) : Math.round(Number(existingPlan.priceMonthly || 0)),
+            quarterly: priceQuarterly !== undefined ? Math.round(priceQuarterly) : Math.round(Number(existingPlan.priceQuarterly || 0)),
+            yearly: priceAnnual !== undefined ? Math.round(priceAnnual) : Math.round(Number(existingPlan.priceAnnual || 0)),
+        };
+        if (!Object.values(nextPrices).some(price => Number(price) > 0)) {
+            return res.status(400).json({ error: '套餐至少要保留一个大于 0 的价格周期' });
+        }
 
         const updates = [];
         const params = [];
@@ -1010,15 +1039,22 @@ router.post('/addons', [
     body('name').trim().notEmpty(),
     body('roomCount').isInt({ min: 1 }),
     body('priceMonthly').isFloat({ min: 0 }),
+    body('perUserPurchaseLimit').optional({ nullable: true }).isInt({ min: 1 }),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
     try {
-        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual } = req.body;
+        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual, perUserPurchaseLimit } = req.body;
+        if (![priceMonthly, priceQuarterly, priceAnnual].some(price => Number(price) > 0)) {
+            return res.status(400).json({ error: '扩容包至少要保留一个大于 0 的基准价格' });
+        }
+        const normalizedLimit = perUserPurchaseLimit === null || perUserPurchaseLimit === undefined || perUserPurchaseLimit === ''
+            ? null
+            : Math.floor(Number(perUserPurchaseLimit));
         await db.run(
-            'INSERT INTO room_addon_packages (name, room_count, price_monthly, price_quarterly, price_annual) VALUES (?, ?, ?, ?, ?)',
-            [name, roomCount, Math.round(priceMonthly), Math.round(priceQuarterly || 0), Math.round(priceAnnual || 0)]
+            'INSERT INTO room_addon_packages (name, room_count, price_monthly, price_quarterly, price_annual, per_user_purchase_limit) VALUES (?, ?, ?, ?, ?, ?)',
+            [name, roomCount, Math.round(priceMonthly), Math.round(priceQuarterly || 0), Math.round(priceAnnual || 0), normalizedLimit]
         );
         res.status(201).json({ message: '扩容包创建成功' });
     } catch (err) {
@@ -1031,7 +1067,27 @@ router.post('/addons', [
  */
 router.put('/addons/:id', async (req, res) => {
     try {
-        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual, isActive } = req.body;
+        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual, isActive, perUserPurchaseLimit } = req.body;
+        if (perUserPurchaseLimit !== undefined && perUserPurchaseLimit !== null && perUserPurchaseLimit !== '' && (!Number.isFinite(Number(perUserPurchaseLimit)) || Number(perUserPurchaseLimit) < 1)) {
+            return res.status(400).json({ error: '单账户限购次数必须大于 0' });
+        }
+        const existingAddon = await db.get(
+            'SELECT id, price_monthly, price_quarterly, price_annual FROM room_addon_packages WHERE id = ?',
+            [req.params.id]
+        );
+        if (!existingAddon) {
+            return res.status(404).json({ error: '扩容包不存在' });
+        }
+
+        const nextPrices = {
+            monthly: priceMonthly !== undefined ? Math.round(priceMonthly) : Math.round(Number(existingAddon.priceMonthly || 0)),
+            quarterly: priceQuarterly !== undefined ? Math.round(priceQuarterly) : Math.round(Number(existingAddon.priceQuarterly || 0)),
+            yearly: priceAnnual !== undefined ? Math.round(priceAnnual) : Math.round(Number(existingAddon.priceAnnual || 0)),
+        };
+        if (!Object.values(nextPrices).some(price => Number(price) > 0)) {
+            return res.status(400).json({ error: '扩容包至少要保留一个大于 0 的基准价格' });
+        }
+
         const updates = [];
         const params = [];
         let idx = 0;
@@ -1041,6 +1097,13 @@ router.put('/addons/:id', async (req, res) => {
         if (priceMonthly !== undefined) { updates.push(`price_monthly = $${++idx}`); params.push(Math.round(priceMonthly)); }
         if (priceQuarterly !== undefined) { updates.push(`price_quarterly = $${++idx}`); params.push(Math.round(priceQuarterly)); }
         if (priceAnnual !== undefined) { updates.push(`price_annual = $${++idx}`); params.push(Math.round(priceAnnual)); }
+        if (perUserPurchaseLimit !== undefined) {
+            const normalizedLimit = perUserPurchaseLimit === null || perUserPurchaseLimit === ''
+                ? null
+                : Math.floor(Number(perUserPurchaseLimit));
+            updates.push(`per_user_purchase_limit = $${++idx}`);
+            params.push(normalizedLimit);
+        }
         if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
 
         if (updates.length === 0) return res.status(400).json({ error: '没有要更新的字段' });
@@ -1387,7 +1450,31 @@ router.post('/session-maintenance/actions/:action', async (req, res) => {
 router.get('/prompt-templates', async (req, res) => {
     try {
         const templates = await listPromptTemplates();
-        res.json({ templates });
+        const sources = listAiStructuredDataSources();
+        const sourceMap = sources.reduce((map, item) => {
+            const list = map.get(item.scene) || [];
+            list.push(item);
+            map.set(item.scene, list);
+            return map;
+        }, new Map());
+
+        res.json({
+            templates: templates.map(item => ({
+                ...item,
+                structuredSources: sourceMap.get(item.key) || [],
+                variableSourceMappings: (item.variables || []).map(variable => {
+                    const matchedSource = sources.find(source => source.token === variable && source.scene === item.key);
+                    return {
+                        variable,
+                        sourceKey: matchedSource?.key || '',
+                        sourceTitle: matchedSource?.title || '',
+                        sourceDescription: matchedSource?.description || '',
+                        sceneLabel: matchedSource?.sceneLabel || '',
+                        isStructuredSource: Boolean(matchedSource)
+                    };
+                })
+            }))
+        });
     } catch (err) {
         console.error('[Admin] Load prompt templates error:', err.message);
         res.status(500).json({ error: '获取提示词失败' });
@@ -1426,6 +1513,96 @@ router.post('/prompt-templates/:key/reset', async (req, res) => {
     } catch (err) {
         console.error('[Admin] Reset prompt template error:', err.message);
         res.status(500).json({ error: '恢复默认失败' });
+    }
+});
+
+router.get('/prompt-templates/:key/preview-preset', async (req, res) => {
+    try {
+        const templateKey = String(req.params.key || '').trim();
+        if (!getPromptTemplateDefinition(templateKey)) {
+            return res.status(404).json({ error: '提示词不存在' });
+        }
+
+        res.json({
+            success: true,
+            templateKey,
+            preset: getPromptTemplatePreviewPreset(templateKey)
+        });
+    } catch (err) {
+        console.error('[Admin] Load prompt template preview preset error:', err.message);
+        res.status(500).json({ error: '获取预览预设失败' });
+    }
+});
+
+router.post('/prompt-templates/:key/preview', async (req, res) => {
+    try {
+        const templateKey = String(req.params.key || '').trim();
+        if (!getPromptTemplateDefinition(templateKey)) {
+            return res.status(404).json({ error: '提示词不存在' });
+        }
+
+        const content = req.body?.content;
+        const input = req.body?.input;
+        const variables = req.body?.variables;
+
+        if (content != null && typeof content !== 'string') {
+            return res.status(400).json({ error: '预览内容必须是字符串' });
+        }
+        if (input != null && (typeof input !== 'object' || Array.isArray(input))) {
+            return res.status(400).json({ error: '预览输入必须是 JSON 对象' });
+        }
+        if (variables != null && (typeof variables !== 'object' || Array.isArray(variables))) {
+            return res.status(400).json({ error: '预览变量必须是 JSON 对象' });
+        }
+
+        const result = await renderAdminPromptPreview({
+            templateKey,
+            content: typeof content === 'string' ? content : '',
+            input: input || {},
+            variables: variables || {}
+        });
+
+        res.json({
+            success: true,
+            preview: result
+        });
+    } catch (err) {
+        console.error('[Admin] Render prompt preview error:', err.message);
+        const isInputError = /不能为空|必须是 JSON 对象|参数|预览/i.test(String(err.message || ''));
+        res.status(isInputError ? 400 : 500).json({ error: err.message || '渲染提示词预览失败' });
+    }
+});
+
+router.get('/structured-sources', async (req, res) => {
+    try {
+        const scene = String(req.query.scene || '').trim();
+        const sources = listAiStructuredDataSources({ scene });
+        res.json({ sources });
+    } catch (err) {
+        console.error('[Admin] Load structured sources error:', err.message);
+        res.status(500).json({ error: '获取结构化数据源失败' });
+    }
+});
+
+router.post('/structured-sources/:key/test', async (req, res) => {
+    try {
+        const key = String(req.params.key || '').trim();
+        const definition = getAiStructuredDataSourceDefinition(key);
+        if (!definition) {
+            return res.status(404).json({ error: '结构化数据源不存在' });
+        }
+
+        const input = req.body?.input;
+        if (input != null && (typeof input !== 'object' || Array.isArray(input))) {
+            return res.status(400).json({ error: '测试输入必须是 JSON 对象' });
+        }
+
+        const result = await testAiStructuredDataSource(key, input || {});
+        res.json({ success: true, ...result });
+    } catch (err) {
+        console.error('[Admin] Test structured source error:', err.message);
+        const isInputError = /不能为空|必须是 JSON 对象|参数/i.test(String(err.message || ''));
+        res.status(isInputError ? 400 : 500).json({ error: err.message || '测试结构化数据源失败' });
     }
 });
 
@@ -1883,6 +2060,7 @@ function serializeAiCreditPackage(row) {
         credits: Number(row.credits || 0),
         priceYuan,
         description: row.description || '',
+        perUserPurchaseLimit: row?.perUserPurchaseLimit ? Number(row.perUserPurchaseLimit) : null,
         isActive: Boolean(row.isActive),
         createdAt: row.createdAt || null
     };
@@ -1892,7 +2070,7 @@ function serializeAiCreditPackage(row) {
 router.get('/ai-credit-packages', async (req, res) => {
     try {
         const packages = await db.all(
-            'SELECT id, name, credits, price_cents, description, is_active, created_at FROM ai_credit_packages ORDER BY credits'
+            'SELECT id, name, credits, price_cents, description, per_user_purchase_limit, is_active, created_at FROM ai_credit_packages ORDER BY credits'
         );
         res.json({ packages: packages.map(serializeAiCreditPackage) });
     } catch (err) { res.status(500).json({ error: '获取失败' }); }
@@ -1903,14 +2081,18 @@ router.post('/ai-credit-packages', [
     body('name').trim().notEmpty(),
     body('credits').isInt({ min: 1 }),
     body('priceYuan').isInt({ min: 0 }).withMessage('价格必须是非负整数元'),
+    body('perUserPurchaseLimit').optional({ nullable: true }).isInt({ min: 1 }),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
     try {
-        const { name, credits, priceYuan, description } = req.body;
+        const { name, credits, priceYuan, description, perUserPurchaseLimit } = req.body;
+        const normalizedLimit = perUserPurchaseLimit === null || perUserPurchaseLimit === undefined || perUserPurchaseLimit === ''
+            ? null
+            : Math.floor(Number(perUserPurchaseLimit));
         await db.run(
-            'INSERT INTO ai_credit_packages (name, credits, price_cents, description) VALUES (?, ?, ?, ?)',
-            [name, credits, Number(priceYuan) * 100, description || '']
+            'INSERT INTO ai_credit_packages (name, credits, price_cents, description, per_user_purchase_limit) VALUES (?, ?, ?, ?, ?)',
+            [name, credits, Number(priceYuan) * 100, description || '', normalizedLimit]
         );
         res.status(201).json({ message: '创建成功' });
     } catch (err) { res.status(500).json({ error: '创建失败' }); }
@@ -1919,7 +2101,7 @@ router.post('/ai-credit-packages', [
 /** PUT /api/admin/ai-credit-packages/:id */
 router.put('/ai-credit-packages/:id', async (req, res) => {
     try {
-        const { name, credits, priceYuan, description, isActive } = req.body;
+        const { name, credits, priceYuan, description, isActive, perUserPurchaseLimit } = req.body;
         const updates = []; const params = []; let idx = 0;
         if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
         if (credits !== undefined) { updates.push(`credits = $${++idx}`); params.push(credits); }
@@ -1932,6 +2114,16 @@ router.put('/ai-credit-packages/:id', async (req, res) => {
             params.push(normalizedPriceYuan * 100);
         }
         if (description !== undefined) { updates.push(`description = $${++idx}`); params.push(description); }
+        if (perUserPurchaseLimit !== undefined) {
+            if (perUserPurchaseLimit !== null && perUserPurchaseLimit !== '' && (!Number.isFinite(Number(perUserPurchaseLimit)) || Number(perUserPurchaseLimit) < 1)) {
+                return res.status(400).json({ error: '单账户限购次数必须大于 0' });
+            }
+            const normalizedLimit = perUserPurchaseLimit === null || perUserPurchaseLimit === ''
+                ? null
+                : Math.floor(Number(perUserPurchaseLimit));
+            updates.push(`per_user_purchase_limit = $${++idx}`);
+            params.push(normalizedLimit);
+        }
         if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
         if (updates.length === 0) return res.status(400).json({ error: '无更新' });
         params.push(req.params.id);

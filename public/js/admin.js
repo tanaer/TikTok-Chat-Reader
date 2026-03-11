@@ -10,6 +10,7 @@ const ADMIN_SECTION_META = Object.freeze({
     notifications: { title: '通知系统', permission: 'notifications.manage' },
     aiWork: { title: 'AI工作中心', permission: 'ai_work.manage' },
     prompts: { title: '提示词管理', permission: 'prompts.manage' },
+    structuredSources: { title: '结构化数据源', permission: 'ai_channels.manage' },
     aiModels: { title: 'AI 通道配置', permission: 'ai_channels.manage' },
     eulerKeys: { title: 'Euler API Keys', permission: 'euler_keys.manage' },
     sessionMaintenance: { title: '场次运维', permission: 'session_maintenance.manage' },
@@ -28,6 +29,7 @@ const ADMIN_REQUEST_TARGET_HINTS = Object.freeze([
     ['smtp', '邮箱服务'],
     ['/docs', '系统文档'],
     ['prompt-templates', '提示词管理'],
+    ['structured-sources', '结构化数据源'],
     ['ai-work', 'AI工作中心'],
     ['ai-models', 'AI 通道配置'],
     ['ai-channels', 'AI 通道配置'],
@@ -272,6 +274,14 @@ let adminAdminsCache = [];
 let adminCandidatesCache = [];
 let adminRoleEditingSnapshot = null;
 let adminRoleEditorId = null;
+let structuredSourcesCache = [];
+let currentStructuredSourceKey = '';
+
+const PLAN_PRICE_FIELD_META = Object.freeze({
+    monthly: { inputId: 'pf-pm', label: '月价' },
+    quarterly: { inputId: 'pf-pq', label: '季价' },
+    yearly: { inputId: 'pf-py', label: '年价' },
+});
 
 function getDefaultMenuPermissions() {
     return [...new Set(Object.values(ADMIN_SECTION_META).map((item) => item.permission).filter(Boolean))];
@@ -360,6 +370,7 @@ function runSectionLoader(name) {
     else if (name === 'smtpServices') loadSmtpServices();
     else if (name === 'aiWork') loadAdminAiWorkJobs(1);
     else if (name === 'prompts') loadPromptTemplates();
+    else if (name === 'structuredSources') loadStructuredSources();
     else if (name === 'docs') loadAdminDocs();
     else if (name === 'eulerKeys') loadEulerKeys();
     else if (name === 'aiModels') loadAiModels();
@@ -907,13 +918,18 @@ async function loadPlans() {
     container.innerHTML = data.plans.map(p => {
         const roomText = p.roomLimit === -1 ? '无限' : p.roomLimit;
         const dailyText = p.dailyRoomCreateLimit === -1 ? '无限' : (p.dailyRoomCreateLimit || '无限');
+        const priceBadges = [
+            Number(p.priceMonthly || 0) > 0 ? `月¥${p.priceMonthly}` : '月已删',
+            Number(p.priceQuarterly || 0) > 0 ? `季¥${p.priceQuarterly}` : '季已删',
+            Number(p.priceAnnual || 0) > 0 ? `年¥${p.priceAnnual}` : '年已删',
+        ].join(' / ');
         return `
         <div class="card bg-base-100 border ${p.isActive ? 'border-base-300' : 'border-error opacity-60'}">
             <div class="card-body p-4">
                 <div class="flex justify-between items-start">
                     <div>
                         <h4 class="font-bold">${p.name} <span class="text-xs text-base-content/60">(${p.code})</span></h4>
-                        <p class="text-sm">房间: ${roomText} | 每日新建: ${dailyText} | AI: ${p.aiCreditsMonthly || 0}点/月 | 月¥${p.priceMonthly} / 季¥${p.priceQuarterly} / 年¥${p.priceAnnual}</p>
+                        <p class="text-sm">房间: ${roomText} | 每日新建: ${dailyText} | AI: ${p.aiCreditsMonthly || 0}点/月 | ${priceBadges}</p>
                         ${!p.isActive ? '<span class="badge badge-error badge-sm">已下架</span>' : ''}
                     </div>
                     <div class="flex gap-1">
@@ -962,6 +978,37 @@ function showPlanForm(plan) {
 
 function editPlan(plan) { showPlanForm(plan); }
 
+function confirmDeletePlanPrice(periodKey) {
+    const meta = PLAN_PRICE_FIELD_META[periodKey];
+    if (!meta) return;
+
+    const input = document.getElementById(meta.inputId);
+    if (!input) return;
+
+    const otherPeriods = Object.entries(PLAN_PRICE_FIELD_META).filter(([key]) => key !== periodKey);
+    const hasOtherActivePrice = otherPeriods.some(([, item]) => {
+        const otherInput = document.getElementById(item.inputId);
+        return Number.parseFloat(otherInput?.value || '0') > 0;
+    });
+
+    if (!hasOtherActivePrice) {
+        alert('套餐至少要保留一个大于 0 的价格周期，不能把最后一个价格也删除。');
+        return;
+    }
+
+    const planName = document.getElementById('pf-name').value.trim() || '当前套餐';
+    const currentValue = Number.parseFloat(input.value || '0');
+    if (currentValue <= 0) {
+        alert(`${meta.label}当前已经是 0，无需重复删除。`);
+        return;
+    }
+
+    const confirmed = confirm(`确认删除「${planName}」的${meta.label}吗？\n\n删除后该计费周期会从前台下线，用户将无法再购买这个周期。`);
+    if (!confirmed) return;
+
+    input.value = '0';
+}
+
 async function submitPlanForm() {
     const id = document.getElementById('pf-id').value;
     const parseIntOr = (elementId, fallback) => {
@@ -995,6 +1042,11 @@ async function submitPlanForm() {
         featureFlags,
     };
 
+    if (![body.priceMonthly, body.priceQuarterly, body.priceAnnual].some(price => Number(price) > 0)) {
+        alert('套餐至少要保留一个大于 0 的价格周期。');
+        return;
+    }
+
     const url = id ? `/api/admin/plans/${id}` : '/api/admin/plans';
     const method = id ? 'PUT' : 'POST';
     const res = await Auth.apiFetch(url, { method, body: JSON.stringify(body) });
@@ -1026,7 +1078,8 @@ async function loadAddons() {
                 <div class="flex justify-between items-center">
                     <div>
                         <h4 class="font-bold">${a.name}</h4>
-                        <p class="text-sm">+${a.roomCount}房间 | ¥${a.price}</p>
+                        <p class="text-sm">+${a.roomCount}房间 | 月¥${a.priceMonthly || 0} / 季¥${a.priceQuarterly || 0} / 年¥${a.priceAnnual || 0}</p>
+                        <p class="text-xs text-base-content/60 mt-1">购买时会跟随当前企业版会员有效期，并按剩余天数折算本期价格。${a.perUserPurchaseLimit ? ` 单账户限购 ${Number(a.perUserPurchaseLimit)} 次。` : ' 单账户不限购。'}</p>
                     </div>
                     <div class="flex gap-1">
                         <button class="btn btn-xs btn-ghost" onclick="editAddon(${JSON.stringify(a).replace(/"/g, '&quot;')})">编辑</button>
@@ -1042,7 +1095,10 @@ function showAddonForm(addon) {
     document.getElementById('af-id').value = addon?.id || '';
     document.getElementById('af-name').value = addon?.name || '';
     document.getElementById('af-count').value = addon?.roomCount || '';
-    document.getElementById('af-price').value = addon?.price || '';
+    document.getElementById('af-price-monthly').value = addon?.priceMonthly ?? '';
+    document.getElementById('af-price-quarterly').value = addon?.priceQuarterly ?? '';
+    document.getElementById('af-price-annual').value = addon?.priceAnnual ?? '';
+    document.getElementById('af-purchase-limit').value = addon?.perUserPurchaseLimit ?? '';
     document.getElementById('af-desc').value = addon?.description || '';
     document.getElementById('addonFormModal').showModal();
 }
@@ -1054,9 +1110,19 @@ async function submitAddonForm() {
     const body = {
         name: document.getElementById('af-name').value,
         roomCount: parseInt(document.getElementById('af-count').value),
-        price: parseFloat(document.getElementById('af-price').value),
+        priceMonthly: parseFloat(document.getElementById('af-price-monthly').value || '0'),
+        priceQuarterly: parseFloat(document.getElementById('af-price-quarterly').value || '0'),
+        priceAnnual: parseFloat(document.getElementById('af-price-annual').value || '0'),
+        perUserPurchaseLimit: document.getElementById('af-purchase-limit').value === ''
+            ? null
+            : parseInt(document.getElementById('af-purchase-limit').value, 10),
         description: document.getElementById('af-desc').value,
     };
+
+    if (body.priceMonthly <= 0 && body.priceQuarterly <= 0 && body.priceAnnual <= 0) {
+        alert('扩容包至少要保留一个大于 0 的基准价格。');
+        return;
+    }
 
     const url = id ? `/api/admin/addons/${id}` : '/api/admin/addons';
     const method = id ? 'PUT' : 'POST';
@@ -2382,7 +2448,9 @@ async function loadPromptTemplates(force = false) {
         }
 
         wrap.dataset.loaded = 'true';
-        wrap.innerHTML = templates.map(item => `
+        wrap.innerHTML = templates.map(item => {
+            const structuredSources = Array.isArray(item.structuredSources) ? item.structuredSources : [];
+            return `
             <div class="rounded-box border border-base-300 bg-base-100 p-5 shadow-sm">
                 <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
                     <div>
@@ -2395,19 +2463,82 @@ async function loadPromptTemplates(force = false) {
                         <span class="badge badge-ghost">${item.updatedAt ? `更新于 ${escapeHtml(new Date(item.updatedAt).toLocaleString('zh-CN'))}` : '使用内置默认值'}</span>
                     </div>
                 </div>
-                <div class="text-xs text-base-content/50 mb-3">可用变量：${(item.variables || []).map(v => `<code>${escapeHtml(`{{${v}}}`)}</code>`).join('、') || '无'}</div>
+                <div class="rounded-box border border-base-300 bg-base-200/60 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+                        <div class="font-semibold text-base-content/80">可用变量 / 数据源</div>
+                        <button class="btn btn-xs btn-outline" onclick="showSection('structuredSources')">打开结构化数据源</button>
+                    </div>
+                    <div class="space-y-2">
+                        ${(Array.isArray(item.variableSourceMappings) ? item.variableSourceMappings : []).map(mapping => `
+                            <div>
+                                <code>${escapeHtml(`{{${mapping.variable}}}`)}</code>
+                                ${mapping.isStructuredSource ? `
+                                    <span class="text-base-content/80"> · ${escapeHtml(mapping.sourceTitle || mapping.sourceKey || '结构化数据源')}</span>
+                                    ${mapping.sourceDescription ? `<span class="text-base-content/55"> · ${escapeHtml(mapping.sourceDescription)}</span>` : ''}
+                                ` : `
+                                    <span class="text-base-content/55"> · 普通模板变量</span>
+                                `}
+                            </div>
+                        `).join('') || '<div>无</div>'}
+                    </div>
+                </div>
                 ${item.key === 'customer_analysis_review' ? `
                     <div class="rounded-box border border-base-300 bg-base-200/80 px-4 py-3 text-xs leading-6 text-base-content/70 mb-3">
-                        该模板用于「房间详情 / 历史排行榜 / 客户价值深度挖掘」。系统已经提前计算好客户数值、时间、排行与模型标签；编辑时请让 AI 只负责输出直接结论、重点结论、下一步动作和主播话术，不要直出英文键名，也不要让 AI 自己重算事实。涉及贡献占比时，请明确写成“该客户近30天总贡献里投向本房/其他房间的占比”，避免歧义。
+                        该模板用于「房间详情 / 历史排行榜 / AI客户分析」。系统已经提前计算好客户数值、时间、排行与模型标签；编辑时请让 AI 只负责输出直接结论、重点结论、下一步动作和主播话术，不要直出英文键名，也不要让 AI 自己重算事实。涉及贡献占比时，请明确写成“该客户近30天总贡献里投向本房/其他房间的占比”，避免歧义。
                     </div>
                 ` : ''}
                 <textarea id="prompt-template-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[22rem] font-mono text-xs leading-6">${escapeHtml(item.content || '')}</textarea>
                 <div class="flex flex-wrap items-center gap-3 mt-4">
                     <button class="btn btn-primary btn-sm" onclick="savePromptTemplate('${escapeHtml(item.key)}')">保存提示词</button>
                     <button class="btn btn-outline btn-sm" onclick="resetPromptTemplate('${escapeHtml(item.key)}')">恢复默认</button>
+                    <button class="btn btn-outline btn-sm" onclick="loadPromptPreviewPreset('${escapeHtml(item.key)}')">加载测试参数</button>
+                    <button class="btn btn-outline btn-sm" onclick="previewPromptTemplate('${escapeHtml(item.key)}')">渲染预览</button>
+                </div>
+                <div class="rounded-box border border-base-300 bg-base-200/60 px-4 py-4 mt-4">
+                    <div class="flex flex-wrap items-center justify-between gap-3 mb-3">
+                        <div>
+                            <div class="font-semibold text-sm">Prompt 渲染预览</div>
+                            <div class="text-xs text-base-content/55 mt-1">可在保存前测试结构化数据注入、手动变量覆盖和最终渲染结果。</div>
+                        </div>
+                        <div class="flex flex-wrap items-center gap-2">
+                            <button id="prompt-preview-copy-${escapeHtml(item.key)}" class="btn btn-xs btn-outline btn-disabled" onclick="copyPromptPreviewResult('${escapeHtml(item.key)}')" disabled>复制结果</button>
+                            <button id="prompt-preview-download-${escapeHtml(item.key)}" class="btn btn-xs btn-outline btn-disabled" onclick="downloadPromptPreviewResult('${escapeHtml(item.key)}')" disabled>下载TXT</button>
+                            <div id="prompt-preview-meta-${escapeHtml(item.key)}" class="text-xs text-base-content/55">尚未渲染预览</div>
+                        </div>
+                    </div>
+                    <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                        <div class="space-y-2">
+                            <div class="text-xs font-semibold text-base-content/70">结构化输入（JSON）</div>
+                            <textarea id="prompt-preview-input-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[10rem] font-mono text-xs leading-6" spellcheck="false">{}</textarea>
+                        </div>
+                        <div class="space-y-2">
+                            <div class="text-xs font-semibold text-base-content/70">手动变量覆盖（JSON）</div>
+                            <textarea id="prompt-preview-vars-${escapeHtml(item.key)}" class="textarea textarea-bordered w-full min-h-[10rem] font-mono text-xs leading-6" spellcheck="false">{}</textarea>
+                        </div>
+                    </div>
+                    <div id="prompt-preview-status-${escapeHtml(item.key)}" class="text-xs text-base-content/55 mt-3">未加载测试参数</div>
+                    <div id="prompt-preview-token-notes-${escapeHtml(item.key)}" class="hidden rounded-box border border-base-300 bg-base-100/80 px-3 py-3 text-xs leading-6 text-base-content/70 mt-3"></div>
+                    <div class="collapse collapse-arrow border border-base-300 bg-base-100/80 mt-3">
+                        <input type="checkbox" />
+                        <div class="collapse-title min-h-0 py-3 text-sm font-semibold">查看模板对比</div>
+                        <div class="collapse-content pt-0">
+                            <div class="grid grid-cols-1 xl:grid-cols-2 gap-4">
+                                <div class="space-y-2">
+                                    <div class="text-xs font-semibold text-base-content/70">当前模板内容</div>
+                                    <pre id="prompt-preview-raw-${escapeHtml(item.key)}" class="rounded-box border border-base-300 bg-base-200 px-4 py-4 text-xs leading-6 whitespace-pre-wrap break-all">尚未渲染预览</pre>
+                                </div>
+                                <div class="space-y-2">
+                                    <div class="text-xs font-semibold text-base-content/70">系统补入后的有效模板</div>
+                                    <pre id="prompt-preview-effective-${escapeHtml(item.key)}" class="rounded-box border border-base-300 bg-base-200 px-4 py-4 text-xs leading-6 whitespace-pre-wrap break-all">尚未渲染预览</pre>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <pre id="prompt-preview-result-${escapeHtml(item.key)}" class="rounded-box border border-base-300 bg-base-100 px-4 py-4 text-xs leading-6 whitespace-pre-wrap break-all mt-3">尚未渲染预览</pre>
                 </div>
             </div>
-        `).join('');
+        `;
+        }).join('');
     } catch (err) {
         wrap.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-5 py-8 text-sm text-error">${escapeHtml(err.message || '加载提示词失败')}</div>`;
     }
@@ -2443,6 +2574,581 @@ async function resetPromptTemplate(key) {
         return;
     }
     alert(data.error || '恢复默认失败');
+}
+
+function getPromptPreviewElements(key) {
+    return {
+        templateEl: document.getElementById(`prompt-template-${key}`),
+        inputEl: document.getElementById(`prompt-preview-input-${key}`),
+        varsEl: document.getElementById(`prompt-preview-vars-${key}`),
+        resultEl: document.getElementById(`prompt-preview-result-${key}`),
+        rawEl: document.getElementById(`prompt-preview-raw-${key}`),
+        effectiveEl: document.getElementById(`prompt-preview-effective-${key}`),
+        metaEl: document.getElementById(`prompt-preview-meta-${key}`),
+        statusEl: document.getElementById(`prompt-preview-status-${key}`),
+        tokenNotesEl: document.getElementById(`prompt-preview-token-notes-${key}`),
+        copyBtn: document.getElementById(`prompt-preview-copy-${key}`),
+        downloadBtn: document.getElementById(`prompt-preview-download-${key}`)
+    };
+}
+
+function setPromptPreviewActionState(key, { ready = false, copyLabel = '复制结果' } = {}) {
+    const { copyBtn, downloadBtn } = getPromptPreviewElements(key);
+    [copyBtn, downloadBtn].forEach((btn) => {
+        if (!btn) return;
+        btn.disabled = !ready;
+        btn.classList.toggle('btn-disabled', !ready);
+    });
+    if (copyBtn) copyBtn.textContent = copyLabel;
+}
+
+function renderPromptPreviewTokenNotes(key, preview = {}) {
+    const { tokenNotesEl } = getPromptPreviewElements(key);
+    if (!tokenNotesEl) return;
+
+    const autoAppendedTokens = Array.isArray(preview.autoAppendedTokens) ? preview.autoAppendedTokens : [];
+    const unresolvedTokens = Array.isArray(preview.unresolvedTokens) ? preview.unresolvedTokens : [];
+    const skippedSources = Array.isArray(preview.skippedSources) ? preview.skippedSources : [];
+
+    const segments = [];
+    if (autoAppendedTokens.length) {
+        segments.push(`
+            <div>
+                <div class="font-semibold text-base-content/80 mb-1">系统自动补入</div>
+                <div class="flex flex-wrap gap-2">
+                    ${autoAppendedTokens.map(token => `<span class="badge badge-outline badge-sm">${escapeHtml(`{{${token}}}`)}</span>`).join('')}
+                </div>
+            </div>
+        `);
+    }
+    if (unresolvedTokens.length) {
+        segments.push(`
+            <div>
+                <div class="font-semibold text-warning mb-1">仍未替换的占位符</div>
+                <div class="flex flex-wrap gap-2">
+                    ${unresolvedTokens.map(token => `<span class="badge badge-warning badge-sm">${escapeHtml(`{{${token}}}`)}</span>`).join('')}
+                </div>
+            </div>
+        `);
+    }
+    if (skippedSources.length) {
+        segments.push(`
+            <div>
+                <div class="font-semibold text-base-content/80 mb-1">本次跳过的数据源</div>
+                <div class="space-y-1">
+                    ${skippedSources.map(item => `
+                        <div>
+                            <code>${escapeHtml(`{{${item.token}}}`)}</code>
+                            <span> · ${escapeHtml(item.reason || '已跳过')}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </div>
+        `);
+    }
+
+    if (!segments.length) {
+        tokenNotesEl.classList.add('hidden');
+        tokenNotesEl.innerHTML = '';
+        return;
+    }
+
+    tokenNotesEl.classList.remove('hidden');
+    tokenNotesEl.innerHTML = segments.join('');
+}
+
+async function copyTextWithFallback(text) {
+    const normalized = String(text || '');
+    if (!normalized) return false;
+
+    try {
+        if (navigator.clipboard && window.isSecureContext) {
+            await navigator.clipboard.writeText(normalized);
+            return true;
+        }
+    } catch {
+    }
+
+    try {
+        const textarea = document.createElement('textarea');
+        textarea.value = normalized;
+        textarea.setAttribute('readonly', 'readonly');
+        textarea.style.position = 'fixed';
+        textarea.style.opacity = '0';
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand('copy');
+        document.body.removeChild(textarea);
+        return copied;
+    } catch {
+        return false;
+    }
+}
+
+function downloadTextAsFile(text, filename) {
+    const blob = new Blob([String(text || '')], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function buildPromptPreviewFileName(key) {
+    const stamp = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+    return `Prompt预览_${String(key || 'template').trim() || 'template'}_${stamp}.txt`.replace(/[\/:*?"<>|\s]+/g, '_');
+}
+
+async function loadPromptPreviewPreset(key) {
+    const { inputEl, varsEl, statusEl, metaEl, resultEl, rawEl, effectiveEl } = getPromptPreviewElements(key);
+    if (!inputEl || !varsEl) return;
+
+    if (statusEl) statusEl.textContent = '正在加载测试参数...';
+    if (metaEl) metaEl.textContent = '正在加载';
+    setPromptPreviewActionState(key, { ready: false });
+    renderPromptPreviewTokenNotes(key, {});
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/prompt-templates/${encodeURIComponent(key)}/preview-preset`);
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '加载预览预设失败');
+
+        inputEl.value = formatJsonBlock(data.preset?.input || {}, '{}');
+        varsEl.value = formatJsonBlock(data.preset?.variables || {}, '{}');
+        if (statusEl) statusEl.textContent = '测试参数已加载，可直接点“渲染预览”';
+        if (metaEl) metaEl.textContent = '预设已加载';
+        if (resultEl) resultEl.textContent = '尚未渲染预览';
+        if (rawEl) rawEl.textContent = '尚未渲染预览';
+        if (effectiveEl) effectiveEl.textContent = '尚未渲染预览';
+    } catch (err) {
+        if (statusEl) statusEl.textContent = `加载失败：${err.message || '预设加载失败'}`;
+        if (metaEl) metaEl.textContent = '预设加载失败';
+    }
+}
+
+async function previewPromptTemplate(key) {
+    const { templateEl, inputEl, varsEl, resultEl, rawEl, effectiveEl, metaEl, statusEl } = getPromptPreviewElements(key);
+    if (!templateEl || !inputEl || !varsEl || !resultEl || !metaEl) return;
+
+    let input = {};
+    let variables = {};
+
+    try {
+        input = JSON.parse(String(inputEl.value || '{}').trim() || '{}');
+    } catch {
+        alert('结构化输入必须是合法 JSON');
+        return;
+    }
+
+    try {
+        variables = JSON.parse(String(varsEl.value || '{}').trim() || '{}');
+    } catch {
+        alert('手动变量覆盖必须是合法 JSON');
+        return;
+    }
+
+    if (statusEl) statusEl.textContent = '正在渲染预览...';
+    resultEl.textContent = '正在渲染预览...';
+    if (rawEl) rawEl.textContent = '正在渲染预览...';
+    if (effectiveEl) effectiveEl.textContent = '正在渲染预览...';
+    metaEl.textContent = '正在渲染';
+    setPromptPreviewActionState(key, { ready: false });
+    renderPromptPreviewTokenNotes(key, {});
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/prompt-templates/${encodeURIComponent(key)}/preview`, {
+            method: 'POST',
+            body: JSON.stringify({
+                content: templateEl.value,
+                input,
+                variables
+            })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '渲染预览失败');
+
+        const preview = data.preview || {};
+        const summaryParts = [];
+        summaryParts.push(`长度 ${Number(preview.promptLength || 0)} 字`);
+        if (Array.isArray(preview.autoAppendedTokens) && preview.autoAppendedTokens.length) {
+            summaryParts.push(`自动补全 ${preview.autoAppendedTokens.map(item => `{{${item}}}`).join('、')}`);
+        }
+        if (Array.isArray(preview.unresolvedTokens) && preview.unresolvedTokens.length) {
+            summaryParts.push(`未替换 ${preview.unresolvedTokens.map(item => `{{${item}}}`).join('、')}`);
+        }
+        if (statusEl) {
+            const resolvedText = Array.isArray(preview.resolvedSources) && preview.resolvedSources.length
+                ? `已注入：${preview.resolvedSources.map(item => `{{${item.token}}}`).join('、')}`
+                : '本次没有注入结构化数据源';
+            const skippedText = Array.isArray(preview.skippedSources) && preview.skippedSources.length
+                ? `；跳过：${preview.skippedSources.map(item => `{{${item.token}}}（${item.reason}）`).join('、')}`
+                : '';
+            statusEl.textContent = `${resolvedText}${skippedText}`;
+        }
+        metaEl.textContent = summaryParts.join(' · ') || '渲染完成';
+        if (rawEl) rawEl.textContent = String(preview.rawContent || '').trim() || '模板为空';
+        if (effectiveEl) effectiveEl.textContent = String(preview.effectiveContent || '').trim() || '有效模板为空';
+        resultEl.textContent = String(preview.renderedPrompt || '').trim() || '渲染结果为空';
+        resultEl.dataset.renderedPrompt = String(preview.renderedPrompt || '').trim();
+        setPromptPreviewActionState(key, { ready: Boolean(resultEl.dataset.renderedPrompt) });
+        renderPromptPreviewTokenNotes(key, preview);
+    } catch (err) {
+        resultEl.textContent = `错误：${err.message || '渲染失败'}`;
+        if (rawEl) rawEl.textContent = '渲染失败';
+        if (effectiveEl) effectiveEl.textContent = '渲染失败';
+        resultEl.dataset.renderedPrompt = '';
+        metaEl.textContent = '渲染失败';
+        if (statusEl) statusEl.textContent = '渲染失败';
+        setPromptPreviewActionState(key, { ready: false });
+        renderPromptPreviewTokenNotes(key, {});
+    }
+}
+
+async function copyPromptPreviewResult(key) {
+    const { resultEl } = getPromptPreviewElements(key);
+    const promptText = String(resultEl?.dataset?.renderedPrompt || resultEl?.textContent || '').trim();
+    if (!promptText || promptText === '尚未渲染预览') return;
+
+    const copied = await copyTextWithFallback(promptText);
+    setPromptPreviewActionState(key, {
+        ready: true,
+        copyLabel: copied ? '✓ 已复制' : '复制失败'
+    });
+    window.setTimeout(() => {
+        setPromptPreviewActionState(key, { ready: true });
+    }, 1200);
+}
+
+function downloadPromptPreviewResult(key) {
+    const { resultEl } = getPromptPreviewElements(key);
+    const promptText = String(resultEl?.dataset?.renderedPrompt || resultEl?.textContent || '').trim();
+    if (!promptText || promptText === '尚未渲染预览') return;
+    downloadTextAsFile(promptText, buildPromptPreviewFileName(key));
+}
+
+function getStructuredSourceByKey(key) {
+    const normalizedKey = String(key || '').trim();
+    return structuredSourcesCache.find(item => item.key === normalizedKey) || null;
+}
+
+function getStructuredSourceFieldConfigs(source) {
+    const schema = source?.inputSchema || {};
+    const requiredSet = new Set(Array.isArray(schema.required) ? schema.required : []);
+    const properties = schema.properties && typeof schema.properties === 'object' ? schema.properties : {};
+    const rememberedValues = getStructuredSourceRememberedDefaults();
+
+    return Object.entries(properties).map(([key, config]) => ({
+        key,
+        type: String(config?.type || 'string').trim() || 'string',
+        label: String(config?.label || key).trim() || key,
+        description: String(config?.description || '').trim(),
+        required: requiredSet.has(key),
+        defaultValue: rememberedValues[key] ?? source?.defaultTestInput?.[key] ?? ''
+    }));
+}
+
+function getStructuredSourceMemoryStorageKey() {
+    return 'admin.structured_sources.last_input';
+}
+
+function getStructuredSourceRememberedDefaults() {
+    try {
+        const raw = window.localStorage?.getItem(getStructuredSourceMemoryStorageKey()) || '';
+        if (!raw) return {};
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+        return parsed;
+    } catch {
+        return {};
+    }
+}
+
+function saveStructuredSourceRememberedDefaults(input = {}) {
+    try {
+        const source = input && typeof input === 'object' && !Array.isArray(input) ? input : {};
+        const normalized = {};
+        ['roomId', 'sessionId'].forEach((key) => {
+            const value = String(source[key] || '').trim();
+            if (value) normalized[key] = value;
+        });
+        window.localStorage?.setItem(getStructuredSourceMemoryStorageKey(), JSON.stringify(normalized));
+    } catch {
+    }
+}
+
+function renderStructuredSourceForm(source) {
+    const wrap = document.getElementById('structured-source-form-fields');
+    const hintEl = document.getElementById('structured-source-form-hint');
+    if (!wrap || !hintEl) return;
+
+    if (!source) {
+        wrap.innerHTML = '<div class="text-xs text-base-content/60">请选择数据源后填写参数。</div>';
+        hintEl.textContent = '必填项会在这里直接展示，无需编辑左侧输入结构。';
+        return;
+    }
+
+    const fields = getStructuredSourceFieldConfigs(source);
+    if (!fields.length) {
+        wrap.innerHTML = '<div class="text-xs text-base-content/60">该数据源当前无需额外输入参数。</div>';
+        hintEl.textContent = '可直接点击“测试数据源”。';
+        return;
+    }
+
+    wrap.innerHTML = fields.map(field => `
+        <label class="form-control w-full">
+            <div class="label pb-1">
+                <span class="label-text text-sm font-medium">
+                    ${escapeHtml(field.label)}
+                    ${field.required ? '<span class="text-error ml-1">*</span>' : ''}
+                </span>
+            </div>
+            <input
+                id="structured-source-field-${escapeHtml(field.key)}"
+                data-structured-source-field="true"
+                data-field-key="${escapeHtml(field.key)}"
+                data-field-type="${escapeHtml(field.type)}"
+                class="input input-bordered w-full"
+                type="text"
+                value="${escapeHtml(field.defaultValue == null ? '' : String(field.defaultValue))}"
+                placeholder="${escapeHtml(field.description || field.label)}"
+                oninput="syncStructuredSourceFormToJson()"
+            >
+            ${field.description ? `<div class="label pt-1"><span class="label-text-alt text-base-content/55">${escapeHtml(field.description)}</span></div>` : ''}
+        </label>
+    `).join('');
+
+    const requiredLabels = fields.filter(field => field.required).map(field => field.label);
+    hintEl.textContent = requiredLabels.length
+        ? `请先填写必填项：${requiredLabels.join('、')}。右侧 JSON 会自动同步。`
+        : '可选参数可直接填写，右侧 JSON 会自动同步。';
+}
+
+function collectStructuredSourceFormInput() {
+    const inputs = Array.from(document.querySelectorAll('[data-structured-source-field="true"]'));
+    return inputs.reduce((acc, input) => {
+        const key = String(input.dataset.fieldKey || '').trim();
+        if (!key) return acc;
+        const rawValue = String(input.value || '');
+        acc[key] = rawValue;
+        return acc;
+    }, {});
+}
+
+function normalizeStructuredSourceInputValue(rawValue, type = 'string') {
+    if (type === 'number' || type === 'integer') {
+        const trimmed = String(rawValue || '').trim();
+        if (!trimmed) return '';
+        const numeric = Number(trimmed);
+        return Number.isFinite(numeric) ? numeric : trimmed;
+    }
+    if (type === 'boolean') {
+        const normalized = String(rawValue || '').trim().toLowerCase();
+        if (!normalized) return '';
+        if (['true', '1', 'yes', 'y'].includes(normalized)) return true;
+        if (['false', '0', 'no', 'n'].includes(normalized)) return false;
+    }
+    return String(rawValue || '');
+}
+
+function syncStructuredSourceFormToJson() {
+    const source = getStructuredSourceByKey(currentStructuredSourceKey);
+    const inputEl = document.getElementById('structured-source-test-input');
+    if (!source || !inputEl) return;
+
+    const fields = getStructuredSourceFieldConfigs(source);
+    const rawForm = collectStructuredSourceFormInput();
+    const payload = {};
+
+    fields.forEach(field => {
+        const normalizedValue = normalizeStructuredSourceInputValue(rawForm[field.key], field.type);
+        if (normalizedValue === '') return;
+        payload[field.key] = normalizedValue;
+    });
+
+    inputEl.value = formatJsonBlock(payload, '{}');
+    saveStructuredSourceRememberedDefaults(payload);
+}
+
+function validateStructuredSourceRequiredInput(source, parsedInput = {}) {
+    const fields = getStructuredSourceFieldConfigs(source);
+    const missingLabels = fields
+        .filter(field => field.required)
+        .filter(field => {
+            const value = parsedInput?.[field.key];
+            if (typeof value === 'string') return !value.trim();
+            return value == null;
+        })
+        .map(field => field.label);
+
+    return {
+        valid: missingLabels.length === 0,
+        missingLabels
+    };
+}
+
+function renderStructuredSourceList() {
+    const wrap = document.getElementById('structured-sources-list');
+    if (!wrap) return;
+
+    if (!structuredSourcesCache.length) {
+        wrap.innerHTML = '<div class="rounded-box bg-base-200 px-4 py-6 text-sm text-base-content/60">当前没有可用结构化数据源。</div>';
+        return;
+    }
+
+    wrap.innerHTML = structuredSourcesCache.map(item => {
+        const isActive = item.key === currentStructuredSourceKey;
+        return `
+            <button class="w-full text-left rounded-box border px-4 py-4 transition ${isActive ? 'border-primary bg-primary/10 shadow-sm' : 'border-base-300 bg-base-100 hover:bg-base-200/70'}"
+                onclick="selectStructuredSource('${escapeHtml(item.key)}')">
+                <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div class="min-w-0">
+                        <div class="font-semibold text-sm text-base-content/90">${escapeHtml(item.title || item.key)}</div>
+                        <div class="text-xs text-base-content/55 mt-1">${escapeHtml(item.description || '')}</div>
+                    </div>
+                    <span class="badge badge-outline badge-sm">${escapeHtml(item.category || '未分类')}</span>
+                </div>
+                <div class="text-[11px] text-base-content/50 mt-3 flex flex-wrap gap-2">
+                    <span>Token: <code>${escapeHtml(`{{${item.token}}}`)}</code></span>
+                    <span>场景: ${escapeHtml(item.sceneLabel || item.scene || '-')}</span>
+                </div>
+            </button>
+        `;
+    }).join('');
+}
+
+function renderStructuredSourceDetail(source) {
+    const emptyEl = document.getElementById('structured-source-empty');
+    const detailEl = document.getElementById('structured-source-detail');
+    const titleEl = document.getElementById('structured-source-title');
+    const subtitleEl = document.getElementById('structured-source-subtitle');
+    const badgesEl = document.getElementById('structured-source-badges');
+    const descEl = document.getElementById('structured-source-description');
+    const schemaEl = document.getElementById('structured-source-schema');
+    const inputEl = document.getElementById('structured-source-test-input');
+    const resultEl = document.getElementById('structured-source-test-result');
+    const metaEl = document.getElementById('structured-source-test-meta');
+
+    if (!source) {
+        currentStructuredSourceKey = '';
+        if (emptyEl) emptyEl.classList.remove('hidden');
+        if (detailEl) detailEl.classList.add('hidden');
+        if (titleEl) titleEl.textContent = '请选择左侧数据源';
+        if (subtitleEl) subtitleEl.textContent = '支持查看 token、输入参数、场景说明与测试结果。';
+        if (badgesEl) badgesEl.innerHTML = '';
+        if (descEl) descEl.textContent = '';
+        if (schemaEl) schemaEl.textContent = '暂无';
+        if (inputEl) inputEl.value = '';
+        renderStructuredSourceForm(null);
+        if (resultEl) resultEl.textContent = '尚未执行测试';
+        if (metaEl) metaEl.textContent = '尚未执行测试';
+        return;
+    }
+
+    currentStructuredSourceKey = source.key;
+    if (emptyEl) emptyEl.classList.add('hidden');
+    if (detailEl) detailEl.classList.remove('hidden');
+    if (titleEl) titleEl.textContent = source.title || source.key;
+    if (subtitleEl) subtitleEl.textContent = `Token：{{${source.token}}} · 场景：${source.sceneLabel || source.scene || '-'}`;
+    if (badgesEl) {
+        badgesEl.innerHTML = `
+            <span class="badge badge-outline">Key: ${escapeHtml(source.key || '-')}</span>
+            <span class="badge badge-primary badge-outline">Token: ${escapeHtml(`{{${source.token}}}`)}</span>
+            <span class="badge badge-ghost">${escapeHtml(source.category || '未分类')}</span>
+        `;
+    }
+    if (descEl) descEl.textContent = source.description || '暂无说明';
+    if (schemaEl) schemaEl.textContent = formatJsonBlock(source.inputSchema || {});
+    renderStructuredSourceForm(source);
+    if (inputEl) {
+        const remembered = getStructuredSourceRememberedDefaults();
+        inputEl.value = formatJsonBlock({
+            ...(source.defaultTestInput || {}),
+            ...remembered
+        });
+    }
+    if (resultEl) resultEl.textContent = '尚未执行测试';
+    if (metaEl) metaEl.textContent = '尚未执行测试';
+}
+
+function selectStructuredSource(key) {
+    renderStructuredSourceDetail(getStructuredSourceByKey(key));
+    renderStructuredSourceList();
+}
+
+async function loadStructuredSources(force = false) {
+    const wrap = document.getElementById('structured-sources-list');
+    if (!wrap) return;
+    if (force || !wrap.dataset.loaded) {
+        wrap.innerHTML = '<div class="rounded-box bg-base-200 px-4 py-6 text-sm text-base-content/60">正在加载结构化数据源...</div>';
+    }
+
+    try {
+        const res = await Auth.apiFetch('/api/admin/structured-sources');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '加载结构化数据源失败');
+
+        structuredSourcesCache = Array.isArray(data.sources) ? data.sources : [];
+        wrap.dataset.loaded = 'true';
+        const nextKey = getStructuredSourceByKey(currentStructuredSourceKey)?.key || structuredSourcesCache[0]?.key || '';
+        renderStructuredSourceDetail(getStructuredSourceByKey(nextKey));
+        renderStructuredSourceList();
+    } catch (err) {
+        wrap.innerHTML = `<div class="rounded-box bg-error/10 border border-error/20 px-4 py-6 text-sm text-error">${escapeHtml(err.message || '加载结构化数据源失败')}</div>`;
+        renderStructuredSourceDetail(null);
+    }
+}
+
+async function testStructuredSource(explicitKey = '') {
+    const source = getStructuredSourceByKey(explicitKey || currentStructuredSourceKey);
+    if (!source) {
+        alert('请先选择一个结构化数据源');
+        return;
+    }
+
+    const inputEl = document.getElementById('structured-source-test-input');
+    const resultEl = document.getElementById('structured-source-test-result');
+    const metaEl = document.getElementById('structured-source-test-meta');
+    if (!inputEl || !resultEl || !metaEl) return;
+
+    let parsedInput = {};
+    const rawInput = String(inputEl.value || '').trim();
+    if (rawInput) {
+        try {
+            parsedInput = JSON.parse(rawInput);
+        } catch {
+            alert('测试参数必须是合法 JSON');
+            return;
+        }
+    }
+
+    const validation = validateStructuredSourceRequiredInput(source, parsedInput);
+    if (!validation.valid) {
+        alert(`请先填写必填参数：${validation.missingLabels.join('、')}`);
+        return;
+    }
+
+    saveStructuredSourceRememberedDefaults(parsedInput);
+
+    resultEl.textContent = '正在测试数据源...';
+    metaEl.textContent = '正在执行测试';
+
+    try {
+        const res = await Auth.apiFetch(`/api/admin/structured-sources/${encodeURIComponent(source.key)}/test`, {
+            method: 'POST',
+            body: JSON.stringify({ input: parsedInput })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '测试结构化数据源失败');
+
+        resultEl.textContent = formatJsonBlock(data.output ?? data.renderedValue ?? {});
+        metaEl.textContent = `测试成功 · 耗时 ${Number(data.durationMs || 0)} ms · 输出版本 ${data.version || '-'}`;
+    } catch (err) {
+        resultEl.textContent = `错误：${err.message || '测试失败'}`;
+        metaEl.textContent = '测试失败';
+    }
 }
 
 // ==================== Utility ====================
@@ -3063,6 +3769,7 @@ async function loadAiCreditPackages() {
                         <div>
                             <h4 class="font-bold">${p.name}</h4>
                             <p class="text-sm">${p.credits} 点 | ¥${Number(p.priceYuan || 0).toFixed(2)} ${normalizedDescription ? '| ' + normalizedDescription : ''}</p>
+                            <p class="text-xs text-base-content/60 mt-1">${p.perUserPurchaseLimit ? `单账户限购 ${Number(p.perUserPurchaseLimit)} 次。` : '单账户不限购。'}</p>
                         </div>
                         <div class="flex gap-1">
                             <button class="btn btn-xs btn-ghost" onclick='editAiCreditPkg(${JSON.stringify(p).replace(/'/g, "&#39;")})'>编辑</button>
@@ -3081,6 +3788,7 @@ function showAiCreditForm(pkg) {
     document.getElementById('aic-name').value = pkg?.name || '';
     document.getElementById('aic-credits').value = pkg?.credits || '';
     document.getElementById('aic-price').value = pkg?.priceYuan || '';
+    document.getElementById('aic-purchase-limit').value = pkg?.perUserPurchaseLimit ?? '';
     document.getElementById('aic-desc').value = pkg?.description || '';
     document.getElementById('aiCreditModal').showModal();
 }
@@ -3093,6 +3801,9 @@ async function submitAiCreditForm() {
         name: document.getElementById('aic-name').value.trim(),
         credits: parseInt(document.getElementById('aic-credits').value),
         priceYuan: parseInt(document.getElementById('aic-price').value, 10),
+        perUserPurchaseLimit: document.getElementById('aic-purchase-limit').value === ''
+            ? null
+            : parseInt(document.getElementById('aic-purchase-limit').value, 10),
         description: document.getElementById('aic-desc').value.trim(),
     };
     if (!body.name || !body.credits || isNaN(body.priceYuan)) { alert('请填写必填项'); return; }
