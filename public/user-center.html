@@ -2427,6 +2427,8 @@
                         : '适合小幅补充。';
                 const preview = addon.purchasePreview || null;
                 const previewAvailable = Boolean(preview?.available);
+                const purchaseLimit = Number(addon.perUserPurchaseLimit || preview?.purchaseLimit || 0);
+                const purchaseCount = Number(preview?.purchaseCount || 0);
                 const previewMessage = previewAvailable
                     ? `随当前会员周期生效，剩余 ${Number(preview.remainingDays || 0)} 天`
                     : (preview?.message || '仅企业版会员可购买');
@@ -2455,8 +2457,9 @@
                             <span class="offer-chip">跟随当前会员</span>
                             <span class="offer-chip">仅企业版</span>
                             ${previewEndDate ? `<span class="offer-chip">至 ${previewEndDate}</span>` : ''}
+                            ${purchaseLimit > 0 ? `<span class="offer-chip">限购 ${purchaseLimit} 次</span>` : ''}
                         </div>
-                        <div class="offer-description">${escapeHtml(`${tierText} ${previewMessage}`.trim())}</div>
+                        <div class="offer-description">${escapeHtml(`${tierText} ${previewMessage}${purchaseLimit > 0 ? `，已购 ${purchaseCount} / ${purchaseLimit} 次` : ''}`.trim())}</div>
                         <button
                             class="btn w-full offer-cta ${actionDisabled ? 'fantasy-disabled' : 'fantasy-cta'}"
                             ${actionDisabled ? `disabled title="${escapeHtml(previewMessage)}"` : `onclick='initPurchase("addon", ${Number(addon.id)}, ${JSON.stringify(actionTitle)}, ${Number(previewPrice || 0)})'`}
@@ -2484,12 +2487,21 @@
 
             aiGrid.innerHTML = packages.map((pkg, index) => {
                 const priceYuan = Number(pkg.priceYuan || 0);
+                const purchasePreview = pkg.purchasePreview || null;
+                const purchaseLimit = Number(pkg.perUserPurchaseLimit || purchasePreview?.purchaseLimit || 0);
+                const purchaseCount = Number(purchasePreview?.purchaseCount || 0);
+                const purchaseAvailable = purchasePreview ? Boolean(purchasePreview.available) : true;
                 const defaultDescription = Number(pkg.credits || 0) >= 1000
                     ? '适合高频分析。'
                     : Number(pkg.credits || 0) >= 300
                         ? '适合活动期间补充。'
                         : '适合临时补充。';
                 const normalizedDescription = formatAiPointDescription(pkg.description || defaultDescription);
+                const extraLimitText = purchaseLimit > 0 ? ` 已购 ${purchaseCount} / ${purchaseLimit} 次。` : '';
+                const actionDisabled = !purchaseAvailable;
+                const actionTitle = purchaseAvailable
+                    ? pkg.name
+                    : `${pkg.name} · 暂不可购买`;
                 return `
                 <div class="card fantasy-offer-card plan-card">
                     <div class="card-body p-5">
@@ -2504,9 +2516,15 @@
                         <div class="offer-price">¥${formatMoney(priceYuan)}<small>/包</small></div>
                         <div class="offer-meta">
                             <span class="offer-chip">即时到账</span>
+                            ${purchaseLimit > 0 ? `<span class="offer-chip">限购 ${purchaseLimit} 次</span>` : ''}
                         </div>
-                        <div class="offer-description">${escapeHtml(normalizedDescription)}</div>
-                        <button class="btn fantasy-cta w-full offer-cta" onclick='initPurchase("ai_credits", ${Number(pkg.id)}, ${JSON.stringify(pkg.name)}, ${JSON.stringify(formatMoney(priceYuan))})'>购买</button>
+                        <div class="offer-description">${escapeHtml(`${normalizedDescription}${extraLimitText}`.trim())}</div>
+                        <button
+                            class="btn w-full offer-cta ${actionDisabled ? 'fantasy-disabled' : 'fantasy-cta'}"
+                            ${actionDisabled
+                                ? `disabled title="${escapeHtml(purchasePreview?.message || '暂不可购买')}"`
+                                : `onclick='initPurchase("ai_credits", ${Number(pkg.id)}, ${JSON.stringify(actionTitle)}, ${JSON.stringify(formatMoney(priceYuan))})'`}
+                        >${actionDisabled ? '暂不可购买' : '购买'}</button>
                     </div>
                 </div>`;
             }).join('');
