@@ -381,6 +381,10 @@ async function purchaseAddon(userId, addonId, billingCycle = 'monthly') {
         [userId, addonId, purchase.order.orderNo, addonPreview.billingCycle, addonPreview.startDate, addonPreview.endDate]
     );
 
+    const remainingPurchasesAfterBuy = addonPreview.purchaseLimit
+        ? Math.max(0, Number(addonPreview.remainingPurchases || 0) - 1)
+        : null;
+
     return {
         success: true,
         addon: {
@@ -392,7 +396,7 @@ async function purchaseAddon(userId, addonId, billingCycle = 'monthly') {
             endDate: addonPreview.endDate,
             followsSubscription: true,
             purchaseLimit: addonPreview.purchaseLimit,
-            remainingPurchases: addonPreview.remainingPurchases,
+            remainingPurchases: remainingPurchasesAfterBuy,
         },
         order: purchase.order
     };
