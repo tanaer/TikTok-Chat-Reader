@@ -106,7 +106,7 @@
                         stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
                     </svg>
-                    添加房间
+                    添加直播间
                 </button>
             </div>
 
@@ -114,7 +114,7 @@
                 <!-- Cards injected via room_list.js -->
                 <div class="col-span-full text-center py-10 text-base-content/50">
                     <span class="loading loading-spinner loading-lg"></span>
-                    <p>正在加载房间...</p>
+                    <p>正在加载直播间...</p>
                 </div>
             </div>
         </section>
@@ -1088,19 +1088,19 @@
     <!-- Modal: Add Room -->
     <dialog id="roomModal" class="modal">
         <div class="modal-box">
-            <h3 id="roomModalTitle" class="font-bold text-lg mb-4">添加房间</h3>
+            <h3 id="roomModalTitle" class="font-bold text-lg mb-4">添加直播间</h3>
             <!-- Quota info bar -->
             <div id="roomQuotaInfo" class="mb-4" style="display:none"></div>
             <input type="hidden" id="editRoomIdRaw">
 
             <div class="form-control w-full mb-4">
-                <label class="label"><span class="label-text">房间 ID (UniqueId)</span></label>
+                <label class="label"><span class="label-text">直播间ID</span></label>
                 <input type="text" id="roomUniqueId" placeholder="例如: my1mint4" class="input input-bordered w-full" />
             </div>
 
             <div class="form-control w-full mb-4">
-                <label class="label"><span class="label-text">房间名称 (备注)</span></label>
-                <input type="text" id="roomNameInput" placeholder="备注名称" class="input input-bordered w-full" />
+                <label class="label"><span class="label-text">直播间名称</span></label>
+                <input type="text" id="roomNameInput" placeholder="给直播间起个好记的名称" class="input input-bordered w-full" />
             </div>
 
             <div class="form-control w-full mb-4" data-admin-only="true">
@@ -1462,8 +1462,7 @@
                     <div class="room-customer-analysis-header-actions">
                         <span id="roomCustomerAnalysisCacheStatus" class="text-[10px] opacity-40"></span>
                         <div class="room-customer-analysis-action-row room-customer-analysis-export-control">
-                            <div class="hidden dropdown dropdown-end"
-                                data-room-customer-export-wrap="true">
+                            <div class="hidden dropdown dropdown-end" data-room-customer-export-wrap="true">
                                 <button type="button" tabindex="0" class="btn btn-sm btn-outline gap-2"
                                     data-room-customer-export-menu-btn="true">导出结果</button>
                                 <ul tabindex="0"
@@ -1477,40 +1476,53 @@
                             <button class="btn btn-primary btn-sm gap-2" data-room-customer-run-btn="true"
                                 onclick="runRoomCustomerAnalysis()">
                                 <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
-                                    stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round"
-                                        stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                                    stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                        d="M13 10V3L4 14h7v7l9-11h-7z" />
+                                </svg>
                                 开始挖掘
                             </button>
-                            <button class="btn btn-sm" type="button" onclick="closeRoomCustomerAnalysisModal()">关闭</button>
+                            <button class="btn btn-sm" type="button"
+                                onclick="closeRoomCustomerAnalysisModal()">关闭</button>
                         </div>
                     </div>
                 </div>
                 <div id="roomCustomerAnalysisMeta" class="text-[10px] opacity-40" style="display:none;"></div>
-                <div id="roomCustomerAnalysisResult" class="min-h-[180px] rounded-box border border-base-300 bg-base-200 p-4 text-sm leading-6 text-base-content/80">
+                <div id="roomCustomerAnalysisResult"
+                    class="min-h-[180px] rounded-box border border-base-300 bg-base-200 p-4 text-sm leading-6 text-base-content/80">
                     请选择历史榜用户后开始深度挖掘。
                 </div>
-                <div id="roomCustomerAnalysisTip" class="text-[10px] opacity-50">首次深挖默认消耗 3 AI点；命中当前账号 + 当前房间缓存再次查看不重复扣点。</div>
+                <div id="roomCustomerAnalysisTip" class="text-[10px] opacity-50">首次深挖默认消耗 3 AI点；命中当前账号 +
+                    当前房间缓存再次查看不重复扣点。</div>
             </div>
             <div class="modal-action flex-wrap room-customer-analysis-action-row">
                 <div id="roomCustomerAnalysisExportActions" class="hidden dropdown dropdown-end"
                     data-room-customer-export-wrap="true">
-                    <button type="button" id="roomCustomerAnalysisExportMenuBtn" tabindex="0" class="btn btn-sm btn-outline gap-2"
-                        data-room-customer-export-menu-btn="true">
+                    <button type="button" id="roomCustomerAnalysisExportMenuBtn" tabindex="0"
+                        class="btn btn-sm btn-outline gap-2" data-room-customer-export-menu-btn="true">
                         导出结果
                     </button>
-                    <ul tabindex="0" class="dropdown-content menu w-36 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl z-[30]">
-                        <li><button type="button" id="exportRoomCustomerAnalysisImageBtn" data-room-customer-export-image-btn="true"
+                    <ul tabindex="0"
+                        class="dropdown-content menu w-36 rounded-box border border-base-300 bg-base-100 p-2 shadow-xl z-[30]">
+                        <li><button type="button" id="exportRoomCustomerAnalysisImageBtn"
+                                data-room-customer-export-image-btn="true"
                                 onclick="exportRoomCustomerAnalysisAsImage()">导出图片</button></li>
-                        <li><button type="button" id="exportRoomCustomerAnalysisPdfBtn" data-room-customer-export-pdf-btn="true"
+                        <li><button type="button" id="exportRoomCustomerAnalysisPdfBtn"
+                                data-room-customer-export-pdf-btn="true"
                                 onclick="exportRoomCustomerAnalysisAsPdf()">导出PDF</button></li>
                     </ul>
                 </div>
-                <button id="runRoomCustomerAnalysisBtn" class="btn btn-primary btn-sm gap-2" data-room-customer-run-btn="true"
-                    onclick="runRoomCustomerAnalysis()">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+                <button id="runRoomCustomerAnalysisBtn" class="btn btn-primary btn-sm gap-2"
+                    data-room-customer-run-btn="true" onclick="runRoomCustomerAnalysis()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
                     开始挖掘
                 </button>
-                <button id="rerunRoomCustomerAnalysisBtn" class="hidden" type="button" tabindex="-1" aria-hidden="true">重新挖掘</button>
+                <button id="rerunRoomCustomerAnalysisBtn" class="hidden" type="button" tabindex="-1"
+                    aria-hidden="true">重新挖掘</button>
                 <button class="btn btn-sm" type="button" onclick="closeRoomCustomerAnalysisModal()">关闭</button>
             </div>
         </div>

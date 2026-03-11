@@ -82,7 +82,7 @@ router.post('/', authenticate, checkRoomQuota, [
         });
     } catch (err) {
         console.error('[Rooms] Add room error:', err.message);
-        res.status(500).json({ error: '添加房间失败' });
+        res.status(500).json({ error: '添加直播间失败' });
     }
 });
 
