@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>团播运营计算器 - TikTok Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.2/dist/full.min.css" rel="stylesheet" type="text/css" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="/shared-shell.css">
+    <script src="/js/auth.js?v=20260309a"></script>
+    <style>
+        html, body {
+            height: 100%;
+        }
+        body {
+            margin: 0;
+        }
+        .tool-page {
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background: hsl(var(--b3));
+        }
+        .tool-frame {
+            flex: 1;
+            border: 0;
+            width: 100%;
+            min-height: calc(100vh - 64px);
+            background: #0f172a;
+        }
+    </style>
+</head>
+<body class="tool-page">
+    <div class="navbar app-shell-nav z-20 flex-wrap gap-2 px-3 py-2">
+        <div class="flex-1 min-w-0 flex flex-wrap items-center gap-2">
+            <a class="btn btn-ghost text-xl font-bold px-2 app-shell-nav-brand" href="/">TikTok Monitor</a>
+            <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1 ml-0 md:ml-2"></ul>
+        </div>
+        <div class="w-full md:w-auto">
+            <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap justify-start md:justify-end px-0 gap-2"></ul>
+        </div>
+    </div>
+
+    <iframe id="tool-frame" class="tool-frame" src="about:blank" title="团播运营计算器"></iframe>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', async function () {
+            if (typeof Auth !== 'undefined') {
+                if (!Auth.requireAuth()) return;
+                const ok = await Auth.ensureSessionActive();
+                if (!ok) return;
+                Auth.updateNavbar();
+            }
+
+            const frame = document.getElementById('tool-frame');
+            if (frame) {
+                frame.src = '/tuangu-profit-calculator-app/index.html';
+            }
+        });
+    </script>
+</body>
+</html>

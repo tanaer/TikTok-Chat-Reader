@@ -86,6 +86,56 @@ function previewAddonPurchase(addon, subscription, now = new Date()) {
     };
 }
 
+function normalizeAddonPurchaseLimit(value) {
+    if (value === null || value === undefined || value === '') return null;
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed) || parsed <= 0) return null;
+    return Math.floor(parsed);
+}
+
+async function getAddonPurchaseCount(userId, addonId) {
+    const row = await db.get(
+        `SELECT COUNT(*) AS total
+         FROM user_room_addons
+         WHERE user_id = ? AND package_id = ?`,
+        [userId, addonId]
+    );
+    return Number(row?.total || 0);
+}
+
+async function enrichAddonPurchasePreview(addon, subscription, userId) {
+    const preview = previewAddonPurchase(addon, subscription);
+    const purchaseLimit = normalizeAddonPurchaseLimit(addon?.perUserPurchaseLimit);
+
+    if (!userId || !purchaseLimit) {
+        return {
+            ...preview,
+            purchaseLimit,
+            purchaseCount: null,
+            remainingPurchases: purchaseLimit,
+        };
+    }
+
+    const purchaseCount = await getAddonPurchaseCount(userId, addon.id);
+    const remainingPurchases = Math.max(0, purchaseLimit - purchaseCount);
+    if (remainingPurchases <= 0) {
+        return {
+            ok: false,
+            error: `该扩容包单账户最多可购买 ${purchaseLimit} 次`,
+            purchaseLimit,
+            purchaseCount,
+            remainingPurchases: 0,
+        };
+    }
+
+    return {
+        ...preview,
+        purchaseLimit,
+        purchaseCount,
+        remainingPurchases,
+    };
+}
+
 /**
  * Get user's active subscription with plan info
  */
@@ -307,7 +357,7 @@ async function purchaseAddon(userId, addonId, billingCycle = 'monthly') {
     );
 
     const subscription = await getActiveSubscription(userId);
-    const addonPreview = previewAddonPurchase(addon, subscription);
+    const addonPreview = await enrichAddonPurchasePreview(addon, subscription, userId);
     if (!addonPreview.ok) {
         return { success: false, error: addonPreview.error };
     }
@@ -341,6 +391,8 @@ async function purchaseAddon(userId, addonId, billingCycle = 'monthly') {
             remainingDays: addonPreview.remainingDays,
             endDate: addonPreview.endDate,
             followsSubscription: true,
+            purchaseLimit: addonPreview.purchaseLimit,
+            remainingPurchases: addonPreview.remainingPurchases,
         },
         order: purchase.order
     };
@@ -364,5 +416,6 @@ module.exports = {
     purchaseAddon,
     expireOverdueSubscriptions,
     previewAddonPurchase,
+    enrichAddonPurchasePreview,
     isAddonPlanEligible,
 };

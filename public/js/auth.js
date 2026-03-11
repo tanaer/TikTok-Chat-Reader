@@ -296,7 +296,8 @@ const Auth = {
         if (this.isLoggedIn()) {
             const items = [
                 this.buildNavLink('/', '首页', { active: currentPath === '/' }),
-                this.buildNavLink('/monitor.html', '监控中心', { active: currentPath === '/monitor.html' })
+                this.buildNavLink('/monitor.html', '监控中心', { active: currentPath === '/monitor.html' }),
+                this.buildNavLink('/tuangu-profit-calculator.html', '团播运营计算器', { active: currentPath === '/tuangu-profit-calculator.html' })
             ];
             if (this.isAdmin()) {
                 items.push(this.buildNavLink('/tanaer.html', '管理后台', { active: currentPath === '/tanaer.html' }));
@@ -594,6 +595,7 @@ const Auth = {
             const items = [];
             if (!hasGlobalNav) {
                 items.push(this.buildNavLink('/monitor.html', '监控中心', { button: true, tone: 'default', active: currentPath === '/monitor.html' }));
+                items.push(this.buildNavLink('/tuangu-profit-calculator.html', '团播运营计算器', { button: true, tone: 'default', active: currentPath === '/tuangu-profit-calculator.html' }));
                 if (this.isAdmin()) {
                     items.push(this.buildNavLink('/tanaer.html', '管理后台', { button: true, tone: 'warning', active: currentPath === '/tanaer.html' }));
                 }

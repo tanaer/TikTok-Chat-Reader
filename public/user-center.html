@@ -1678,7 +1678,7 @@
                             <div>
                                 <p class="section-kicker">Plans</p>
                                 <h3 class="section-title">会员计划</h3>
-                                <p class="section-lead">权益按项纵向对比，方便快速比较。</p>
+                                <p class="section-lead">所有套餐均包含实时弹幕监控、实时礼物监控、实时点赞监控、直播间排行榜、团播运营计算器、用户数据分析。</p>
                             </div>
                             <div id="plan-period-switcher"></div>
                         </div>
@@ -2478,6 +2478,15 @@
                 .replace(/(\d+)次/g, '$1点');
         }
 
+        const COMMON_PLAN_BENEFITS = [
+            '实时弹幕监控',
+            '实时礼物监控',
+            '实时点赞监控',
+            '直播间排行榜',
+            '团播运营计算器',
+            '用户数据分析'
+        ];
+
         function renderAiCreditOffers(packages) {
             const aiGrid = document.getElementById('ai-credits-grid');
             if (!packages || packages.length === 0) {
@@ -2653,6 +2662,11 @@
                     hint: '每月可用 AI 分析额度',
                     render: (item) => `<strong>${item.aiCredits}</strong> 点/月`
                 },
+                ...COMMON_PLAN_BENEFITS.map((benefit) => ({
+                    label: benefit,
+                    hint: '所有套餐均包含',
+                    render: () => '<strong>支持</strong>'
+                })),
                 {
                     label: 'AI直播复盘',
                     hint: '单场 AI直播复盘与老板摘要',
@@ -2837,9 +2851,9 @@
                 feat(true, `<strong>${roomText}</strong> 个监控房间`),
                 feat(true, `每日可添加 <strong>${dailyCreateText}</strong> 次房间`),
                 feat(true, `AI 额度 <strong>${aiCredits}</strong> 点/月`),
+                ...COMMON_PLAN_BENEFITS.map((benefit) => feat(true, benefit)),
                 feat(hasFlag(features, 'ai_live_recap', 'aiLiveRecap'), 'AI直播复盘（单场）'),
                 feat(hasFlag(features, 'export', 'data_export'), '数据导出'),
-                feat(true, 'AI 用户分析'),
                 feat(hasFlag(features, 'priority_support', 'prioritySupport'), '优先支持')
             ].join('');
 

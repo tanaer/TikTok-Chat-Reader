@@ -21,7 +21,21 @@
 - 当前数据库字段与内部实现仍沿用 `ai_credits_*` 命名。
 - AI 点数包价格统一按“元”配置、展示和余额扣款。
 - `ai_credit_packages.price_cents` 作为历史兼容存储字段保留，但接口与前端统一使用 `priceYuan`。
+- AI 点数包支持配置 `单账户限购次数`，留空表示不限购。
 - 后续新增 AI 能力时，应默认采用“按点消耗”的口径，而不是“按次消耗”的口径。
+
+## AI 点数包限购规则
+
+- 配置位置：后台 `AI 点数包`
+- 存储字段：`ai_credit_packages.per_user_purchase_limit`
+- 留空或 `0`：不限购
+- 大于 `0`：同一账号最多可购买该点数包指定次数
+- 前台行为：
+  - 用户中心展示限购次数
+  - 达到上限后按钮置灰并提示原因
+- 服务端行为：
+  - `POST /api/subscription/purchase-ai-credits` 再次强校验
+  - 购买成功后把 `packageId` 写入订单 `metadata`，用于后续稳定统计限购次数
 
 ## CNY 估算基线
 

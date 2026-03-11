@@ -1576,6 +1576,8 @@
                         type="number" id="af-price-annual" class="input input-bordered input-sm" step="0.01"></div>
             </div>
             <p class="text-xs text-base-content/60 mt-2">扩容包不再独立计时，用户购买时会跟随当前企业版会员有效期，并按剩余天数折算本期价格。</p>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">单账户限购次数</span></label><input
+                    type="number" id="af-purchase-limit" class="input input-bordered" min="1" placeholder="留空表示不限购"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input
                     type="text" id="af-desc" class="input input-bordered"></div>
             <div class="modal-action">
@@ -1598,6 +1600,8 @@
                     type="number" id="aic-price" class="input input-bordered" min="0" step="1">
                 <p class="text-xs text-base-content/50 mt-1">例：10 = ¥10</p>
             </div>
+            <div class="form-control mt-2"><label class="label"><span class="label-text">单账户限购次数</span></label><input
+                    type="number" id="aic-purchase-limit" class="input input-bordered" min="1" placeholder="留空表示不限购"></div>
             <div class="form-control mt-2"><label class="label"><span class="label-text">描述</span></label><input
                     type="text" id="aic-desc" class="input input-bordered" placeholder="可选"></div>
             <div class="modal-action">

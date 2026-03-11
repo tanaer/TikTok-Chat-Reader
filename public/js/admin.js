@@ -1079,7 +1079,7 @@ async function loadAddons() {
                     <div>
                         <h4 class="font-bold">${a.name}</h4>
                         <p class="text-sm">+${a.roomCount}房间 | 月¥${a.priceMonthly || 0} / 季¥${a.priceQuarterly || 0} / 年¥${a.priceAnnual || 0}</p>
-                        <p class="text-xs text-base-content/60 mt-1">购买时会跟随当前企业版会员有效期，并按剩余天数折算本期价格。</p>
+                        <p class="text-xs text-base-content/60 mt-1">购买时会跟随当前企业版会员有效期，并按剩余天数折算本期价格。${a.perUserPurchaseLimit ? ` 单账户限购 ${Number(a.perUserPurchaseLimit)} 次。` : ' 单账户不限购。'}</p>
                     </div>
                     <div class="flex gap-1">
                         <button class="btn btn-xs btn-ghost" onclick="editAddon(${JSON.stringify(a).replace(/"/g, '&quot;')})">编辑</button>
@@ -1098,6 +1098,7 @@ function showAddonForm(addon) {
     document.getElementById('af-price-monthly').value = addon?.priceMonthly ?? '';
     document.getElementById('af-price-quarterly').value = addon?.priceQuarterly ?? '';
     document.getElementById('af-price-annual').value = addon?.priceAnnual ?? '';
+    document.getElementById('af-purchase-limit').value = addon?.perUserPurchaseLimit ?? '';
     document.getElementById('af-desc').value = addon?.description || '';
     document.getElementById('addonFormModal').showModal();
 }
@@ -1112,6 +1113,9 @@ async function submitAddonForm() {
         priceMonthly: parseFloat(document.getElementById('af-price-monthly').value || '0'),
         priceQuarterly: parseFloat(document.getElementById('af-price-quarterly').value || '0'),
         priceAnnual: parseFloat(document.getElementById('af-price-annual').value || '0'),
+        perUserPurchaseLimit: document.getElementById('af-purchase-limit').value === ''
+            ? null
+            : parseInt(document.getElementById('af-purchase-limit').value, 10),
         description: document.getElementById('af-desc').value,
     };
 
@@ -3765,6 +3769,7 @@ async function loadAiCreditPackages() {
                         <div>
                             <h4 class="font-bold">${p.name}</h4>
                             <p class="text-sm">${p.credits} 点 | ¥${Number(p.priceYuan || 0).toFixed(2)} ${normalizedDescription ? '| ' + normalizedDescription : ''}</p>
+                            <p class="text-xs text-base-content/60 mt-1">${p.perUserPurchaseLimit ? `单账户限购 ${Number(p.perUserPurchaseLimit)} 次。` : '单账户不限购。'}</p>
                         </div>
                         <div class="flex gap-1">
                             <button class="btn btn-xs btn-ghost" onclick='editAiCreditPkg(${JSON.stringify(p).replace(/'/g, "&#39;")})'>编辑</button>
@@ -3783,6 +3788,7 @@ function showAiCreditForm(pkg) {
     document.getElementById('aic-name').value = pkg?.name || '';
     document.getElementById('aic-credits').value = pkg?.credits || '';
     document.getElementById('aic-price').value = pkg?.priceYuan || '';
+    document.getElementById('aic-purchase-limit').value = pkg?.perUserPurchaseLimit ?? '';
     document.getElementById('aic-desc').value = pkg?.description || '';
     document.getElementById('aiCreditModal').showModal();
 }
@@ -3795,6 +3801,9 @@ async function submitAiCreditForm() {
         name: document.getElementById('aic-name').value.trim(),
         credits: parseInt(document.getElementById('aic-credits').value),
         priceYuan: parseInt(document.getElementById('aic-price').value, 10),
+        perUserPurchaseLimit: document.getElementById('aic-purchase-limit').value === ''
+            ? null
+            : parseInt(document.getElementById('aic-purchase-limit').value, 10),
         description: document.getElementById('aic-desc').value.trim(),
     };
     if (!body.name || !body.credits || isNaN(body.priceYuan)) { alert('请填写必填项'); return; }

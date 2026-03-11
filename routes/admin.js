@@ -1039,18 +1039,22 @@ router.post('/addons', [
     body('name').trim().notEmpty(),
     body('roomCount').isInt({ min: 1 }),
     body('priceMonthly').isFloat({ min: 0 }),
+    body('perUserPurchaseLimit').optional({ nullable: true }).isInt({ min: 1 }),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
 
     try {
-        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual } = req.body;
+        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual, perUserPurchaseLimit } = req.body;
         if (![priceMonthly, priceQuarterly, priceAnnual].some(price => Number(price) > 0)) {
             return res.status(400).json({ error: '扩容包至少要保留一个大于 0 的基准价格' });
         }
+        const normalizedLimit = perUserPurchaseLimit === null || perUserPurchaseLimit === undefined || perUserPurchaseLimit === ''
+            ? null
+            : Math.floor(Number(perUserPurchaseLimit));
         await db.run(
-            'INSERT INTO room_addon_packages (name, room_count, price_monthly, price_quarterly, price_annual) VALUES (?, ?, ?, ?, ?)',
-            [name, roomCount, Math.round(priceMonthly), Math.round(priceQuarterly || 0), Math.round(priceAnnual || 0)]
+            'INSERT INTO room_addon_packages (name, room_count, price_monthly, price_quarterly, price_annual, per_user_purchase_limit) VALUES (?, ?, ?, ?, ?, ?)',
+            [name, roomCount, Math.round(priceMonthly), Math.round(priceQuarterly || 0), Math.round(priceAnnual || 0), normalizedLimit]
         );
         res.status(201).json({ message: '扩容包创建成功' });
     } catch (err) {
@@ -1063,7 +1067,10 @@ router.post('/addons', [
  */
 router.put('/addons/:id', async (req, res) => {
     try {
-        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual, isActive } = req.body;
+        const { name, roomCount, priceMonthly, priceQuarterly, priceAnnual, isActive, perUserPurchaseLimit } = req.body;
+        if (perUserPurchaseLimit !== undefined && perUserPurchaseLimit !== null && perUserPurchaseLimit !== '' && (!Number.isFinite(Number(perUserPurchaseLimit)) || Number(perUserPurchaseLimit) < 1)) {
+            return res.status(400).json({ error: '单账户限购次数必须大于 0' });
+        }
         const existingAddon = await db.get(
             'SELECT id, price_monthly, price_quarterly, price_annual FROM room_addon_packages WHERE id = ?',
             [req.params.id]
@@ -1090,6 +1097,13 @@ router.put('/addons/:id', async (req, res) => {
         if (priceMonthly !== undefined) { updates.push(`price_monthly = $${++idx}`); params.push(Math.round(priceMonthly)); }
         if (priceQuarterly !== undefined) { updates.push(`price_quarterly = $${++idx}`); params.push(Math.round(priceQuarterly)); }
         if (priceAnnual !== undefined) { updates.push(`price_annual = $${++idx}`); params.push(Math.round(priceAnnual)); }
+        if (perUserPurchaseLimit !== undefined) {
+            const normalizedLimit = perUserPurchaseLimit === null || perUserPurchaseLimit === ''
+                ? null
+                : Math.floor(Number(perUserPurchaseLimit));
+            updates.push(`per_user_purchase_limit = $${++idx}`);
+            params.push(normalizedLimit);
+        }
         if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
 
         if (updates.length === 0) return res.status(400).json({ error: '没有要更新的字段' });
@@ -2046,6 +2060,7 @@ function serializeAiCreditPackage(row) {
         credits: Number(row.credits || 0),
         priceYuan,
         description: row.description || '',
+        perUserPurchaseLimit: row?.perUserPurchaseLimit ? Number(row.perUserPurchaseLimit) : null,
         isActive: Boolean(row.isActive),
         createdAt: row.createdAt || null
     };
@@ -2055,7 +2070,7 @@ function serializeAiCreditPackage(row) {
 router.get('/ai-credit-packages', async (req, res) => {
     try {
         const packages = await db.all(
-            'SELECT id, name, credits, price_cents, description, is_active, created_at FROM ai_credit_packages ORDER BY credits'
+            'SELECT id, name, credits, price_cents, description, per_user_purchase_limit, is_active, created_at FROM ai_credit_packages ORDER BY credits'
         );
         res.json({ packages: packages.map(serializeAiCreditPackage) });
     } catch (err) { res.status(500).json({ error: '获取失败' }); }
@@ -2066,14 +2081,18 @@ router.post('/ai-credit-packages', [
     body('name').trim().notEmpty(),
     body('credits').isInt({ min: 1 }),
     body('priceYuan').isInt({ min: 0 }).withMessage('价格必须是非负整数元'),
+    body('perUserPurchaseLimit').optional({ nullable: true }).isInt({ min: 1 }),
 ], async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
     try {
-        const { name, credits, priceYuan, description } = req.body;
+        const { name, credits, priceYuan, description, perUserPurchaseLimit } = req.body;
+        const normalizedLimit = perUserPurchaseLimit === null || perUserPurchaseLimit === undefined || perUserPurchaseLimit === ''
+            ? null
+            : Math.floor(Number(perUserPurchaseLimit));
         await db.run(
-            'INSERT INTO ai_credit_packages (name, credits, price_cents, description) VALUES (?, ?, ?, ?)',
-            [name, credits, Number(priceYuan) * 100, description || '']
+            'INSERT INTO ai_credit_packages (name, credits, price_cents, description, per_user_purchase_limit) VALUES (?, ?, ?, ?, ?)',
+            [name, credits, Number(priceYuan) * 100, description || '', normalizedLimit]
         );
         res.status(201).json({ message: '创建成功' });
     } catch (err) { res.status(500).json({ error: '创建失败' }); }
@@ -2082,7 +2101,7 @@ router.post('/ai-credit-packages', [
 /** PUT /api/admin/ai-credit-packages/:id */
 router.put('/ai-credit-packages/:id', async (req, res) => {
     try {
-        const { name, credits, priceYuan, description, isActive } = req.body;
+        const { name, credits, priceYuan, description, isActive, perUserPurchaseLimit } = req.body;
         const updates = []; const params = []; let idx = 0;
         if (name !== undefined) { updates.push(`name = $${++idx}`); params.push(name); }
         if (credits !== undefined) { updates.push(`credits = $${++idx}`); params.push(credits); }
@@ -2095,6 +2114,16 @@ router.put('/ai-credit-packages/:id', async (req, res) => {
             params.push(normalizedPriceYuan * 100);
         }
         if (description !== undefined) { updates.push(`description = $${++idx}`); params.push(description); }
+        if (perUserPurchaseLimit !== undefined) {
+            if (perUserPurchaseLimit !== null && perUserPurchaseLimit !== '' && (!Number.isFinite(Number(perUserPurchaseLimit)) || Number(perUserPurchaseLimit) < 1)) {
+                return res.status(400).json({ error: '单账户限购次数必须大于 0' });
+            }
+            const normalizedLimit = perUserPurchaseLimit === null || perUserPurchaseLimit === ''
+                ? null
+                : Math.floor(Number(perUserPurchaseLimit));
+            updates.push(`per_user_purchase_limit = $${++idx}`);
+            params.push(normalizedLimit);
+        }
         if (isActive !== undefined) { updates.push(`is_active = $${++idx}`); params.push(isActive); }
         if (updates.length === 0) return res.status(400).json({ error: '无更新' });
         params.push(req.params.id);

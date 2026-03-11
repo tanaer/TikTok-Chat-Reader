@@ -2,6 +2,7 @@
  * Database module - PostgreSQL
  * Production-grade database with connection pooling
  */
+require('dotenv').config();
 const { Pool } = require('pg');
 const path = require('path');
 
@@ -485,6 +486,10 @@ async function initDb() {
         // Migration: 套餐每日新建房间次数限制
         await pool.query(`ALTER TABLE subscription_plans ADD COLUMN IF NOT EXISTS daily_room_create_limit INTEGER DEFAULT -1`);
 
+        // Migration: 扩容包单账户限购次数（NULL/0 表示不限购）
+        await pool.query(`ALTER TABLE room_addon_packages ADD COLUMN IF NOT EXISTS per_user_purchase_limit INTEGER`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_room_addons_user_package ON user_room_addons(user_id, package_id)`);
+
         // Per-user quota overrides for admin adjustments
         await pool.query(`
             CREATE TABLE IF NOT EXISTS user_quota_overrides (
@@ -829,10 +834,12 @@ async function initDb() {
                 credits INTEGER NOT NULL,
                 price_cents INTEGER NOT NULL,
                 description TEXT,
+                per_user_purchase_limit INTEGER,
                 is_active BOOLEAN DEFAULT true,
                 created_at TIMESTAMP DEFAULT NOW()
             )
         `);
+        await pool.query(`ALTER TABLE ai_credit_packages ADD COLUMN IF NOT EXISTS per_user_purchase_limit INTEGER`);
 
         // AI usage log table
         await pool.query(`
