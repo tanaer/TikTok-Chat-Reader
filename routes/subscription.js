@@ -194,9 +194,7 @@ router.get('/ai-credit-packages', optionalAuth, async (req, res) => {
                 purchasePreview,
             };
         }));
-        res.json({
-            packages: packagesWithPreview
-        });
+        res.json({ packages: packagesWithPreview });
     } catch (err) {
         res.status(500).json({ error: '获取AI额度包失败' });
     }
@@ -227,8 +225,11 @@ router.post('/purchase-ai-credits', authenticate, [
                  WHERE user_id = ?
                    AND type = 'ai_credits'
                    AND status = 'paid'
-                   AND item_name = ?`,
-                [req.user.id, pkg.name]
+                   AND (
+                        (metadata IS NOT NULL AND metadata->>'packageId' = ?)
+                        OR item_name = ?
+                   )`,
+                [req.user.id, String(pkg.id), pkg.name]
             );
             const purchaseCount = Number(purchaseCountRow?.total || 0);
             if (purchaseCount >= purchaseLimit) {

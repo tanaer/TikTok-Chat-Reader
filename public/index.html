@@ -229,13 +229,13 @@
     <section class="hero-bg min-h-[80vh] flex items-center">
         <div class="max-w-5xl mx-auto px-6 py-20 text-center">
             <div id="hero-kicker" class="inline-block px-4 py-1.5 rounded-full bg-primary/10 text-primary text-sm font-medium mb-6">
-                TikTok 直播数据监控平台
+                TikTok 直播数据监控分析平台
             </div>
             <h1 id="hero-title" class="text-4xl md:text-6xl font-extrabold leading-tight mb-6">
                 实时掌握<span class="text-primary">直播间</span>每一刻
             </h1>
             <p id="hero-description" class="text-lg md:text-xl text-base-content/60 max-w-2xl mx-auto mb-10 leading-relaxed">
-                自动监控多个 TikTok 直播间，实时采集礼物、弹幕、进场等全量数据，助你深度了解主播与用户行为。
+                监控多个 TikTok 直播间，实时显示礼物、弹幕、进场等全量数据，AI复盘&客户情报深度挖掘，助你深度了解直播间用户行为。
             </p>
             <div class="flex flex-col sm:flex-row gap-4 justify-center">
                 <a id="hero-primary-btn" href="/register.html" class="btn btn-primary btn-lg px-10 shadow-lg shadow-primary/20">免费注册</a>
@@ -682,6 +682,7 @@
                         </div>
                         <ul id="free-plan-feature-list" class="text-left text-sm space-y-2 mb-6">
                             <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> <span id="free-rooms">1</span> 个监控房间</li>
+                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 基础数据查看</li>
                             <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 实时弹幕监控</li>
                             <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 实时礼物监控</li>
                             <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 实时点赞监控</li>
@@ -742,6 +743,7 @@
                 '用户数据分析'
             ];
 
+            // Redirect logged-in users to monitor center
             if (typeof Auth !== 'undefined') {
                 if (Auth.isLoggedIn()) {
                     if (heroPrimaryBtn) {
