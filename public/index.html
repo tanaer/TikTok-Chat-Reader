@@ -206,39 +206,77 @@
             line-height: 1.65;
         }
 
-        .executive-summary {
-            display: grid;
-            gap: 0.8rem;
-            margin-top: 1.25rem;
+        .customer-data-shell {
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            border-radius: 1.9rem;
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            background:
+                radial-gradient(circle at 18% 50%, rgba(96, 165, 250, 0.14), transparent 28%),
+                radial-gradient(circle at 82% 50%, rgba(250, 204, 21, 0.08), transparent 22%),
+                linear-gradient(135deg, rgba(24, 32, 45, 0.98), rgba(13, 18, 28, 0.98));
+            padding: 1.35rem 1.4rem;
+            box-shadow: 0 24px 56px rgba(2, 6, 23, 0.24);
         }
 
-        @media (min-width: 640px) {
-            .executive-summary {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
+        .customer-data-shell::after {
+            content: '';
+            position: absolute;
+            inset: 1px;
+            border-radius: inherit;
+            border: 1px solid rgba(255, 255, 255, 0.04);
+            pointer-events: none;
+        }
+
+        .customer-data-chip {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-wrap: nowrap;
+            justify-content: center;
+            align-items: baseline;
+            gap: 0.45rem;
+            text-align: center;
+        }
+
+        .customer-data-number {
+            display: inline-block;
+            min-width: 10ch;
+            text-align: right;
+            white-space: nowrap;
+            font-size: clamp(2rem, 5vw, 3.8rem);
+            line-height: 0.98;
+            font-weight: 800;
+            letter-spacing: -0.06em;
+            font-variant-numeric: tabular-nums;
+            font-feature-settings: "tnum" 1, "lnum" 1;
+            color: transparent;
+            background: linear-gradient(180deg, #ffffff 0%, #dbeafe 78%, #bfdbfe 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            text-shadow: 0 0 28px rgba(96, 165, 250, 0.16);
+        }
+
+        .customer-data-unit {
+            color: rgba(191, 219, 254, 0.78);
+            font-size: clamp(0.95rem, 1.4vw, 1.08rem);
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        @media (max-width: 640px) {
+            .customer-data-shell {
+                border-radius: 1.5rem;
+                padding: 1.2rem 1rem;
             }
-        }
 
-        .summary-chip {
-            border-radius: 1rem;
-            border: 1px solid rgba(148, 163, 184, 0.12);
-            background: rgba(255, 255, 255, 0.03);
-            padding: 0.9rem 1rem;
-        }
-
-        .summary-chip span {
-            display: block;
-            color: rgba(148, 163, 184, 0.72);
-            font-size: 0.74rem;
-            text-transform: uppercase;
-            letter-spacing: 0.08em;
-        }
-
-        .summary-chip strong {
-            display: block;
-            margin-top: 0.42rem;
-            color: rgba(248, 250, 252, 0.95);
-            font-size: 0.95rem;
-            line-height: 1.5;
+            .customer-data-number {
+                min-width: 8.6ch;
+                font-size: clamp(1.7rem, 8vw, 2.5rem);
+            }
         }
 
         .plan-card {
@@ -309,7 +347,7 @@
         .feature-showcase-head {
             display: flex;
             align-items: flex-start;
-            justify-content: space-between;
+            justify-content: flex-start;
             gap: 1rem;
         }
 
@@ -327,21 +365,6 @@
             font-weight: 800;
             letter-spacing: 0.08em;
             flex-shrink: 0;
-        }
-
-        .feature-showcase-kicker {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.45rem;
-            padding: 0.38rem 0.72rem;
-            border-radius: 999px;
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(148, 163, 184, 0.16);
-            color: rgba(203, 213, 225, 0.82);
-            font-size: 0.72rem;
-            letter-spacing: 0.08em;
-            text-transform: uppercase;
-            white-space: nowrap;
         }
 
         .feature-showcase-title {
@@ -547,74 +570,56 @@
         <div class="max-w-7xl mx-auto px-6 py-16 md:py-24">
             <div class="hero-grid">
                 <div class="max-w-3xl">
-                    <div id="hero-kicker" class="business-badge mb-6">TikTok 直播数据监控分析平台</div>
+                    <div id="hero-kicker" class="business-badge mb-6">TikTok 直播数据平台</div>
                     <h1 id="hero-title" class="text-4xl md:text-6xl font-extrabold leading-tight tracking-tight mb-6">
                         实时掌握<span class="text-primary">直播间</span>每一刻
                     </h1>
                     <p id="hero-description"
                         class="text-lg md:text-xl text-base-content/70 max-w-2xl leading-relaxed mb-8">
-                        监控任意直播间礼物、弹幕、进场等全量数据，AI 深度挖掘客户情报，帮助主播、MCN 与运营团队做出更快、更稳的决策。
+                        礼物、弹幕、进场这些数据直接看，重点客户也能更快找出来，盯盘和复盘都省事。
                     </p>
                     <div class="hero-actions flex flex-col sm:flex-row gap-4">
                         <a id="hero-primary-btn" href="/register.html"
                             class="btn btn-primary btn-lg px-10 shadow-xl shadow-primary/15">免费注册</a>
                         <a id="hero-secondary-btn" href="/login.html" class="btn btn-outline btn-lg px-10">登录账户</a>
                     </div>
-                    <div class="hero-metric-grid mt-10">
-                        <div class="hero-metric">
-                            <span class="hero-metric-label">覆盖场景</span>
-                            <strong>竞对监控</strong>
-                            <p>实时榜单、互动轨迹与场次状态集中查看</p>
-                        </div>
-                        <div class="hero-metric">
-                            <span class="hero-metric-label">关键能力</span>
-                            <strong>高价值客户挖掘</strong>
-                            <p>自动提炼重点客户、风险信号与建议动作</p>
-                        </div>
-                        <div class="hero-metric">
-                            <span class="hero-metric-label">团队价值</span>
-                            <strong>运营效率提升</strong>
-                            <p>减少人工盯盘、复盘与客户整理的重复工作</p>
-                        </div>
-                    </div>
                 </div>
                 <aside class="executive-panel">
-                    <div class="executive-kicker">Business Dashboard</div>
-                    <h2 class="executive-title"></h2>
+                    <div class="executive-kicker">直播运营</div>
+                    <h2 class="executive-title">看数据、找重点、做复盘</h2>
                     <div class="executive-list">
                         <div class="executive-point">
                             <span class="executive-dot"></span>
                             <div>
-                                <strong>实时房间概览</strong>
-                                <p>在线状态、礼物产出、互动热度与异常波动同屏呈现</p>
+                                <strong>看直播间情况</strong>
+                                <p>礼物、弹幕、进场变化放在一起看</p>
                             </div>
                         </div>
                         <div class="executive-point">
                             <span class="executive-dot"></span>
                             <div>
-                                <strong>客户分层与建议</strong>
-                                <p>识别核心客户、潜力客户与流失风险，输出后续动作</p>
+                                <strong>看重点客户</strong>
+                                <p>谁更活跃、谁值得跟进，一眼能看出来</p>
                             </div>
                         </div>
                         <div class="executive-point">
                             <span class="executive-dot"></span>
                             <div>
-                                <strong>下播快速复盘</strong>
-                                <p>保留榜单、场次轨迹及 AI 解读，团队快速复用和回顾</p>
+                                <strong>下播后复盘</strong>
+                                <p>关键数据自动留存，下次回看更方便</p>
                             </div>
-                        </div>
-                    </div>
-                    <div class="executive-summary">
-                        <div class="summary-chip">
-                            <span>适合团队</span>
-                            <strong>主播 / MCN / 运营主管</strong>
-                        </div>
-                        <div class="summary-chip">
-                            <span>目标导向</span>
-                            <strong>留存、转化、复盘效率</strong>
                         </div>
                     </div>
                 </aside>
+            </div>
+        </div>
+    </section>
+
+    <section id="landing-customer-data" class="landing-section max-w-6xl mx-auto px-6 py-8 md:py-12">
+        <div class="customer-data-shell">
+            <div class="customer-data-chip">
+                <span id="customer-data-number" class="customer-data-number" aria-live="polite" aria-atomic="true">0</span>
+                <span class="customer-data-unit">客户事件</span>
             </div>
         </div>
     </section>
@@ -628,7 +633,6 @@
                 <div class="card-body p-6 md:p-7 relative z-[1]">
                     <div class="feature-showcase-head">
                         <div class="feature-showcase-index">01</div>
-                        <span class="feature-showcase-kicker">房间监控</span>
                     </div>
                     <h3 class="feature-showcase-title">多房间工作台总览</h3>
                     <p class="feature-showcase-desc">把排序、筛选、状态开关与快捷操作集中在一张监控台里，方便同时管理多个直播间。</p>
@@ -762,7 +766,6 @@
                 <div class="card-body p-6 md:p-7 relative z-[1]">
                     <div class="feature-showcase-head">
                         <div class="feature-showcase-index">02</div>
-                        <span class="feature-showcase-kicker">互动详情</span>
                     </div>
                     <h3 class="feature-showcase-title">单房互动榜单与主播面板</h3>
                     <p class="feature-showcase-desc">将互动排行、顶部场次摘要、主播信息和历史榜单整合到同一页面，便于盯盘与快速判断。</p>
@@ -883,7 +886,6 @@
                 <div class="card-body p-6 md:p-7 relative z-[1]">
                     <div class="feature-showcase-head">
                         <div class="feature-showcase-index">03</div>
-                        <span class="feature-showcase-kicker">AI 客户分析</span>
                     </div>
                     <h3 class="feature-showcase-title">AI 洞察与建议动作</h3>
                     <p class="feature-showcase-desc">用结构化面板呈现客户总结、价值标签、关键风险与建议动作，让运营信息一眼可读、结论一眼可用。</p>
@@ -980,7 +982,6 @@
                 <div class="card-body p-6 md:p-7 relative z-[1]">
                     <div class="feature-showcase-head">
                         <div class="feature-showcase-index">04</div>
-                        <span class="feature-showcase-kicker">场次复盘</span>
                     </div>
                     <h3 class="feature-showcase-title">回放、榜单与历史对比</h3>
                     <p class="feature-showcase-desc">下播后快速回看单场结构、互动榜和历史榜单变化，用统一面板完成复盘与追踪。</p>
@@ -1167,10 +1168,7 @@
     <!-- CTA -->
     <section class="landing-cta px-6 py-20">
         <div class="cta-shell max-w-4xl mx-auto text-center">
-            <div class="business-badge mb-5">Ready to deploy</div>
-            <h2 id="landing-cta-title" class="text-3xl md:text-4xl font-bold mb-4">准备好让直播运营更有章法了吗？</h2>
-            <p id="landing-cta-text" class="text-base-content/65 mb-8 max-w-2xl mx-auto">
-                注册后即可体验实时监控、客户洞察和复盘工作台，用更统一的方式管理直播数据与运营动作。</p>
+            <h2 id="landing-cta-title" class="text-3xl md:text-4xl font-bold mb-8">现在就开始</h2>
             <a id="landing-cta-btn" href="/register.html"
                 class="btn btn-primary btn-lg px-12 shadow-xl shadow-primary/15">立即注册</a>
         </div>
@@ -1206,6 +1204,7 @@
             const toolPrimary = document.getElementById('tool-entry-primary');
             const heroPrimaryBtn = document.getElementById('hero-primary-btn');
             const heroSecondaryBtn = document.getElementById('hero-secondary-btn');
+            const customerDataNumber = document.getElementById('customer-data-number');
             const ctaText = document.getElementById('landing-cta-text');
             const ctaBtn = document.getElementById('landing-cta-btn');
             const freePlanBtn = document.getElementById('free-plan-btn');
@@ -1217,6 +1216,92 @@
                 '团播运营计算器',
                 '用户数据分析'
             ];
+            const customerDataFormatter = new Intl.NumberFormat('zh-CN');
+            const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+            let customerDataValue = 0;
+            let customerDataFrame = null;
+
+            function renderCustomerDataValue(value) {
+                if (!customerDataNumber) return;
+                customerDataNumber.textContent = customerDataFormatter.format(Math.max(0, Math.floor(value)));
+            }
+
+            function animateCustomerDataTo(targetValue, duration = 1100) {
+                const nextValue = Math.max(0, Math.floor(Number(targetValue) || 0));
+                const startValue = customerDataValue;
+
+                if (customerDataFrame) {
+                    cancelAnimationFrame(customerDataFrame);
+                    customerDataFrame = null;
+                }
+
+                if (prefersReducedMotion || startValue === nextValue) {
+                    customerDataValue = nextValue;
+                    renderCustomerDataValue(customerDataValue);
+                    return;
+                }
+
+                const animationStart = performance.now();
+
+                const tick = (now) => {
+                    const progress = Math.min((now - animationStart) / duration, 1);
+                    const easedProgress = 1 - Math.pow(1 - progress, 3);
+                    customerDataValue = Math.round(startValue + ((nextValue - startValue) * easedProgress));
+                    renderCustomerDataValue(customerDataValue);
+
+                    if (progress < 1) {
+                        customerDataFrame = requestAnimationFrame(tick);
+                    } else {
+                        customerDataValue = nextValue;
+                        renderCustomerDataValue(customerDataValue);
+                        customerDataFrame = null;
+                    }
+                };
+
+                customerDataFrame = requestAnimationFrame(tick);
+            }
+
+            async function fetchCustomerDataBaseValue() {
+                const endpoints = ['/api/landing/metrics', '/api/landing/stats'];
+                const baseMultiplier = 10;
+
+                for (const endpoint of endpoints) {
+                    try {
+                        const response = await fetch(endpoint, { cache: 'no-store' });
+                        if (!response.ok) continue;
+                        const payload = await response.json();
+                        const nextValue = Number(payload?.eventCount ?? payload?.customerDataCount ?? 0);
+                        if (Number.isFinite(nextValue) && nextValue > 0) {
+                            return Math.floor(nextValue * baseMultiplier);
+                        }
+                    } catch (error) {
+                        console.error(`Failed to load ${endpoint}:`, error);
+                    }
+                }
+
+                return null;
+            }
+
+            function scheduleCustomerDataGrowth() {
+                if (!customerDataNumber) return;
+
+                const delay = 3000 + Math.floor(Math.random() * 2001);
+                window.setTimeout(() => {
+                    const increment = 180 + Math.floor(Math.random() * 720);
+                    animateCustomerDataTo(customerDataValue + increment, 950);
+                    scheduleCustomerDataGrowth();
+                }, delay);
+            }
+
+            customerDataValue = 0;
+            renderCustomerDataValue(customerDataValue);
+
+            fetchCustomerDataBaseValue().then((baseValue) => {
+                if (Number.isFinite(baseValue) && baseValue >= 0) {
+                    animateCustomerDataTo(baseValue, 1600);
+                }
+                scheduleCustomerDataGrowth();
+            });
 
             // Redirect logged-in users to monitor center
             if (typeof Auth !== 'undefined') {

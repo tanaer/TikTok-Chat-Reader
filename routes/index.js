@@ -2,6 +2,7 @@ const express = require('express');
 const authRoutes = require('./auth');
 const userRoutes = require('./user');
 const subscriptionRoutes = require('./subscription');
+const landingRoutes = require('./landing');
 const roomsRoutes = require('./rooms');
 const adminRoutes = require('./admin');
 const paymentRoutes = require('./payment');
@@ -19,6 +20,9 @@ router.use('/api/user', userRoutes);
 
 // Subscription routes (mixed public/authenticated)
 router.use('/api/subscription', subscriptionRoutes);
+
+// Landing routes (public)
+router.use('/api/landing', landingRoutes);
 
 // Payment routes (recharge + callbacks)
 router.use('/api/payment', paymentRoutes);

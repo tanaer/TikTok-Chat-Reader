@@ -400,8 +400,10 @@ const ROOM_SESSIONS_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 15000);
 const ARCHIVED_STATS_DETAIL_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 30000);
 const ANALYSIS_CACHE_TTL_MS = Math.max(ROOM_LIST_CACHE_TTL_MS, 20000);
 const SESSION_RECAP_CACHE_TTL_MS = Math.max(ARCHIVED_STATS_DETAIL_CACHE_TTL_MS, 30000);
+const LANDING_METRICS_CACHE_TTL_MS = Math.max(30000, parseInt(process.env.LANDING_METRICS_CACHE_TTL_MS || '60000', 10) || 60000);
 const ROOM_LIST_CACHE_MAX_ENTRIES = 200;
 const roomListResponseCache = new Map();
+let landingMetricsCache = null;
 const ROOM_LIST_CACHE_NAMESPACE = 'room_list';
 const ROOM_LIST_CACHE_VERSION_KEY = cacheService.buildCacheKey(ROOM_LIST_CACHE_NAMESPACE, 'version');
 let roomListCacheVersion = 0;
@@ -503,6 +505,36 @@ async function getCachedAnalysisPayload(cacheKey, loader) {
     const payload = await loader();
     await cacheService.setJson(cacheKey, payload, { ttlMs: ANALYSIS_CACHE_TTL_MS });
     return payload;
+}
+
+function readLandingMetricsCache() {
+    if (!landingMetricsCache) return null;
+    if (landingMetricsCache.expiresAt <= Date.now()) {
+        landingMetricsCache = null;
+        return null;
+    }
+    return landingMetricsCache.payload;
+}
+
+function writeLandingMetricsCache(payload) {
+    landingMetricsCache = {
+        payload,
+        expiresAt: Date.now() + LANDING_METRICS_CACHE_TTL_MS,
+    };
+    return payload;
+}
+
+async function loadLandingMetricsPayload() {
+    const cached = readLandingMetricsCache();
+    if (cached) return cached;
+
+    // MAX(id) is cheap on the primary key index and remains monotonic for the landing counter.
+    const row = await db.get('SELECT COALESCE(MAX(id), 0) AS total FROM event');
+    const payload = {
+        eventCount: Number(row?.total || 0),
+        updatedAt: new Date().toISOString(),
+    };
+    return writeLandingMetricsCache(payload);
 }
 
 function buildUserAnalysisDetailVersionKey(targetUserId) {
@@ -3867,6 +3899,21 @@ app.get('/api/analysis/stats', optionalAuth, async (req, res) => {
         res.json(stats);
     } catch (err) {
         res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/landing/metrics', async (_req, res) => {
+    try {
+        const payload = await loadLandingMetricsPayload();
+        res.json({
+            eventCount: payload.eventCount,
+            updatedAt: payload.updatedAt,
+        });
+    } catch (err) {
+        console.error('[API] /api/landing/metrics error:', err.message);
+        res.status(500).json({
+            error: '获取首页指标失败',
+        });
     }
 });
 
