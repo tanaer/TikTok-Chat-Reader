@@ -41,6 +41,11 @@
             box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
         }
 
+        .landing-logo:hover,
+        .landing-logo:focus-visible {
+            background-color: transparent;
+        }
+
         .hero-bg {
             position: relative;
             overflow: hidden;
@@ -516,7 +521,7 @@
     <div
         class="navbar landing-navbar bg-base-100/85 backdrop-blur-md sticky top-0 z-50 flex-wrap gap-2 px-4 py-3 md:px-6">
         <div class="flex-1 min-w-0">
-            <a class="btn btn-ghost text-xl text-primary font-bold tracking-tight px-2" href="/">TikTok Monitor</a>
+            <a class="btn btn-ghost landing-logo text-xl text-primary font-bold tracking-tight px-2" href="/">TikTok Monitor</a>
         </div>
         <div class="hidden md:flex flex-1 justify-center">
             <div class="flex items-center gap-1 rounded-full border border-base-content/10 bg-base-100/55 p-1">
