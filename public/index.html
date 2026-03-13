@@ -544,7 +544,7 @@
     <div
         class="navbar landing-navbar bg-base-100/85 backdrop-blur-md sticky top-0 z-50 flex-wrap gap-2 px-4 py-3 md:px-6">
         <div class="flex-1 min-w-0">
-            <a class="btn btn-ghost landing-logo text-xl text-primary font-bold tracking-tight px-2" href="/">TikTok
+            <a class="btn btn-ghost landing-logo text-xl text-white font-bold tracking-tight px-2" href="/">TikTok
                 Monitor</a>
         </div>
         <div class="hidden md:flex flex-1 justify-center">
@@ -1297,8 +1297,12 @@
             fetchCustomerDataBaseValue().then((baseValue) => {
                 if (Number.isFinite(baseValue) && baseValue >= 0) {
                     animateCustomerDataTo(baseValue, 1600);
+                    scheduleCustomerDataGrowth();
+                } else {
+                    // 接口全部失败，隐藏客户事件区域
+                    const section = document.getElementById('landing-customer-data');
+                    if (section) section.style.display = 'none';
                 }
-                scheduleCustomerDataGrowth();
             });
 
             // Redirect logged-in users to monitor center
