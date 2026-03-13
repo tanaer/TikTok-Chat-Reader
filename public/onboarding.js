@@ -93,8 +93,21 @@
             id: 'aiRecap',
             title: '③ 生成 AI 直播复盘',
             desc: '在详情页中：<br>1. 用顶部下拉框选择一个<b>历史场次</b><br>2. 切换到「<b>AI 直播复盘</b>」标签页<br>3. 点击「<b>生成 AI 复盘</b>」按钮',
-            targets: ['#sessionSelect', '#generateSessionRecapBtn'],
+            targets: ['#sessionSelect'],
             section: 'roomDetail',
+            // Progressive highlight: session select → AI recap tab → recap button
+            activeTargets: function () {
+                var sel = document.getElementById('sessionSelect');
+                if (!sel || !sel.value || sel.value === 'live') {
+                    return ['#sessionSelect'];
+                }
+                // Session selected — check if AI recap tab is active
+                var tabPanel = document.getElementById('tab-timeStats');
+                if (tabPanel && !tabPanel.classList.contains('hidden')) {
+                    return ['#generateSessionRecapBtn'];
+                }
+                return ['#tabBtn-timeStats'];
+            },
             check: function () {
                 return _recapTriggered;
             }
@@ -188,6 +201,7 @@
             step.targets.forEach(function (selector) {
                 var el = document.querySelector(selector);
                 if (el) {
+                    el._obSelector = selector;
                     el.classList.add('ob-pulse');
                     currentHighlights.push(el);
                 }
@@ -213,9 +227,39 @@
                     setTimeout(function () {
                         showStep(idx + 1);
                     }, 1200);
+                    return;
                 }
-                // Re-apply highlights if elements appeared later
-                if (step.targets && currentHighlights.length < step.targets.length) {
+                // Progressive highlight: if step defines activeTargets(), update pulse dynamically
+                if (typeof step.activeTargets === 'function') {
+                    var wanted = step.activeTargets();
+                    // Build set of currently pulsing selectors
+                    var currentSet = {};
+                    currentHighlights.forEach(function (el) {
+                        currentSet[el._obSelector] = el;
+                    });
+                    var wantedSet = {};
+                    wanted.forEach(function (s) { wantedSet[s] = true; });
+                    // Remove pulse from elements no longer wanted
+                    currentHighlights = currentHighlights.filter(function (el) {
+                        if (!wantedSet[el._obSelector]) {
+                            el.classList.remove('ob-pulse');
+                            return false;
+                        }
+                        return true;
+                    });
+                    // Add pulse to newly wanted elements
+                    wanted.forEach(function (selector) {
+                        if (!currentSet[selector]) {
+                            var el = document.querySelector(selector);
+                            if (el) {
+                                el._obSelector = selector;
+                                el.classList.add('ob-pulse');
+                                currentHighlights.push(el);
+                            }
+                        }
+                    });
+                } else if (step.targets && currentHighlights.length < step.targets.length) {
+                    // Re-apply highlights if elements appeared later
                     step.targets.forEach(function (selector) {
                         var el = document.querySelector(selector);
                         if (el && !el.classList.contains('ob-pulse')) {

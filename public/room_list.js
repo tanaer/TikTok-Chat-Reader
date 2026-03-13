@@ -36,6 +36,36 @@ roomListViewMode = loadRoomViewModePreference();
 
 const MONTHLY_GIFT_TOOLTIP = '自然月累计（从每月1日开始统计）；括号内按26天折算日均';
 
+// Column header tooltips for list view
+const COL_TIPS = {
+    duration:    '当前场次的开播时长',
+    visits:      '本场进入直播间的总人次',
+    comments:    '本场弹幕总条数',
+    giftNow:     '本场礼物总价值（钻石）',
+    giftMonth:   MONTHLY_GIFT_TOOLTIP,
+    giftDaily:   '有效日均：仅统计开播超过2小时的日期',
+    giftEff:     '赚钱效率 = 礼物总价值 ÷ 进房人次，衡量单个观众的付费贡献',
+    interact:    '话题度 = 弹幕数 ÷ 进房人次，衡量观众互动活跃程度',
+    quality:     '账号质量 = 进房人次 ÷ 开播分钟数，衡量流量获取能力',
+    top1:        'TOP1 用户贡献占总礼物价值的百分比，越高说明越依赖头部用户',
+    top3:        'TOP3 用户贡献占比',
+    top10:       'TOP10 用户贡献占比',
+    top30:       'TOP30 用户贡献占比',
+    monitor:     '监控开关：开启后系统会连接该直播间采集数据',
+};
+
+/** Render a table header cell with optional tooltip question mark */
+function thWithTip(label, tipKey, extraClass) {
+    var cls = 'p-2 text-center' + (extraClass ? ' ' + extraClass : '');
+    if (!tipKey || !COL_TIPS[tipKey]) {
+        return '<th class="' + cls + '">' + label + '</th>';
+    }
+    return '<th class="' + cls + '">' +
+        '<span class="inline-flex items-center gap-0.5 cursor-help tooltip tooltip-bottom" data-tip="' +
+        COL_TIPS[tipKey].replace(/"/g, '&quot;') + '">' +
+        label + '<span class="opacity-30 text-[10px] font-normal">?</span></span></th>';
+}
+
 // Helper to format monthly total with daily average: "260（10）"
 // Total = current calendar month; average in parentheses = total / 26 (fixed divisor)
 const formatMonthlyWithAvg = (total) => {
@@ -388,20 +418,20 @@ async function renderRoomList() {
                         <tr class="bg-base-200">
                             <th class="p-2 text-center">#</th>
                             <th class="p-2">房间</th>
-                            <th class="p-2 text-center">时长</th>
-                            <th class="p-2 text-center">进房</th>
-                            <th class="p-2 text-center">弹幕</th>
-                            <th class="p-2 text-center">💎本场</th>
-                            <th class="p-2 text-center" title="${MONTHLY_GIFT_TOOLTIP}">💎月</th>
-                            ${roomListSort.includes('daily_avg') ? '<th class="p-2 text-center" title="有效日均 (开播>2h的日期)">💎日均</th>' : ''}
-                            <th class="p-2 text-center">💰效率</th>
-                            <th class="p-2 text-center">💬话题度</th>
-                            <th class="p-2 text-center">👥质量</th>
-                            <th class="p-2 text-center">T1</th>
-                            <th class="p-2 text-center">T3</th>
-                            <th class="p-2 text-center">T10</th>
-                            <th class="p-2 text-center">T30</th>
-                            ${isAdminUser ? '<th class="p-2 text-center">LZ</th>' : ''}
+                            ${thWithTip('时长', 'duration')}
+                            ${thWithTip('进房', 'visits')}
+                            ${thWithTip('弹幕', 'comments')}
+                            ${thWithTip('💎本场', 'giftNow')}
+                            ${thWithTip('💎月', 'giftMonth')}
+                            ${roomListSort.includes('daily_avg') ? thWithTip('💎日均', 'giftDaily') : ''}
+                            ${thWithTip('💰效率', 'giftEff')}
+                            ${thWithTip('💬话题度', 'interact')}
+                            ${thWithTip('👥质量', 'quality')}
+                            ${thWithTip('T1', 'top1')}
+                            ${thWithTip('T3', 'top3')}
+                            ${thWithTip('T10', 'top10')}
+                            ${thWithTip('T30', 'top30')}
+                            ${isAdminUser ? thWithTip('LZ', 'monitor') : ''}
                             <th class="p-2 text-center">操作</th>
                         </tr>
                     </thead>

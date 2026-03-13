@@ -42,9 +42,11 @@
             <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1 ml-0 md:ml-2"></ul>
         </div>
         <div class="w-full md:w-auto flex items-center gap-2">
-            <button id="startTourBtn" class="btn btn-ghost btn-sm btn-circle tooltip tooltip-bottom" data-tip="新手引导" onclick="startOnboardingTour()">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-            </button>
+            <span class="tooltip tooltip-bottom" data-tip="新手引导">
+                <button id="startTourBtn" class="btn btn-ghost btn-sm btn-circle" onclick="startOnboardingTour()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8.228 9c.549-1.165 2.03-2 3.772-2 2.21 0 4 1.343 4 3 0 1.4-1.278 2.575-3.006 2.907-.542.104-.994.54-.994 1.093m0 3h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                </button>
+            </span>
             <ul id="auth-nav-area" class="menu menu-horizontal flex-wrap justify-start md:justify-end px-0 gap-2"></ul>
         </div>
     </div>
@@ -74,34 +76,29 @@
                     <h2 class="text-2xl font-bold">监控房间列表</h2>
                     <div id="roomSortGroup" class="join join-horizontal flex-wrap">
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn active btn-primary"
-                            onclick="setRoomSort('default', this)" title="按最近更新时间排序">默认</button>
+                            onclick="setRoomSort('default', this)">默认</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('priority_desc', this)" title="手动设定的优先级数值，越高越靠前">优先级</button>
+                            onclick="setRoomSort('priority_desc', this)">优先级</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('gift_desc', this)" title="当前场次收到的礼物钻石总价值">本场💎</button>
+                            onclick="setRoomSort('gift_desc', this)">本场💎</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('total_gift_desc', this)" title="历史所有场次累计的礼物钻石总价值">总💎</button>
+                            onclick="setRoomSort('total_gift_desc', this)">总💎</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('gift_eff_desc', this)"
-                            title="赚钱效率 = 总钻石 / 总进场人数，数值越高说明每个访客贡献越多">赚钱效率</button>
+                            onclick="setRoomSort('gift_eff_desc', this)">赚钱效率</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('interact_eff_desc', this)"
-                            title="话题度 = 总弹幕数 / 总进场人数，数值越高说明直播间互动越活跃">话题度</button>
+                            onclick="setRoomSort('interact_eff_desc', this)">话题度</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('account_quality_desc', this)"
-                            title="账号质量 = 总进场人数 / 总开播分钟数，数值越高说明越能吸引新观众">账号质量</button>
+                            onclick="setRoomSort('account_quality_desc', this)">账号质量</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('top1_ratio_desc', this)"
-                            title="Top1用户贡献占总礼物价值的百分比，越高说明越依赖大哥">T1</button>
+                            onclick="setRoomSort('top1_ratio_desc', this)">T1</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('top3_ratio_desc', this)" title="Top3用户贡献占总礼物价值的百分比">T3</button>
+                            onclick="setRoomSort('top3_ratio_desc', this)">T3</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('top10_ratio_desc', this)" title="Top10用户贡献占总礼物价值的百分比">T10</button>
+                            onclick="setRoomSort('top10_ratio_desc', this)">T10</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('top30_ratio_desc', this)"
-                            title="Top30用户贡献占总礼物价值的百分比，越低说明长尾用户越多">T30</button>
+                            onclick="setRoomSort('top30_ratio_desc', this)">T30</button>
                         <button class="btn btn-xs md:btn-sm join-item room-sort-btn btn-ghost"
-                            onclick="setRoomSort('daily_avg_desc', this)" title="有效日均钻石收入，仅统计开播超过2小时的日期">💎日均</button>
+                            onclick="setRoomSort('daily_avg_desc', this)">💎日均</button>
                     </div>
                 </div>
                 <button id="addRoomBtn" class="btn btn-primary btn-sm md:btn-md gap-2" onclick="openAddRoomModal()">
@@ -174,7 +171,7 @@
                             <a role="tab" class="tab tab-active" onclick="switchDetailTab('currentLive', this)">实时弹幕</a>
                             <a role="tab" class="tab" onclick="switchDetailTab('giftStats', this)">礼物明细</a>
                             <a role="tab" class="tab" onclick="switchDetailTab('interactStats', this)">互动榜单</a>
-                            <a role="tab" class="tab" onclick="switchDetailTab('timeStats', this)">AI直播复盘</a>
+                            <a role="tab" class="tab" id="tabBtn-timeStats" onclick="switchDetailTab('timeStats', this)">AI直播复盘</a>
                         </div>
 
                         <div id="tab-currentLive"
