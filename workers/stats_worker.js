@@ -6,6 +6,7 @@ const { getSchemeAConfig } = require('../services/featureFlagService');
 const {
     STATS_WORKER_SCHEDULE,
     runRoomStatsRefreshJob,
+    runDirtyRoomStatsRepairJob,
     runUserStatsRefreshJob,
     runGlobalStatsRefreshJob,
     runIncrementalStatsAggregationJob,
@@ -84,6 +85,7 @@ class StatsWorker {
         }
 
         this.scheduleJob('room_stats_refresh', STATS_WORKER_SCHEDULE.room.startupDelayMs, STATS_WORKER_SCHEDULE.room.intervalMs, () => runRoomStatsRefreshJob('stats-worker'));
+        this.scheduleJob('room_stats_dirty_repair', STATS_WORKER_SCHEDULE.roomDirty.startupDelayMs, STATS_WORKER_SCHEDULE.roomDirty.intervalMs, () => runDirtyRoomStatsRepairJob('stats-worker'));
         this.scheduleJob('user_stats_refresh', STATS_WORKER_SCHEDULE.user.startupDelayMs, STATS_WORKER_SCHEDULE.user.intervalMs, () => runUserStatsRefreshJob('stats-worker'));
         this.scheduleJob('global_stats_refresh', STATS_WORKER_SCHEDULE.global.startupDelayMs, STATS_WORKER_SCHEDULE.global.intervalMs, () => runGlobalStatsRefreshJob('stats-worker'));
 

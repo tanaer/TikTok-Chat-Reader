@@ -9,9 +9,6 @@ const metricsService = require('./services/metricsService');
 const { getSchemeAConfig } = require('./services/featureFlagService');
 
 const PRICE_FILE = path.join(__dirname, 'prices.json');
-const ROOM_STATS_STALE_EVENT_THRESHOLD_MS = 15 * 60 * 1000;
-const backgroundRoomStatsRepairQueue = new Set();
-let isBackgroundRoomStatsRepairScheduled = false;
 
 function getNowBeijing() {
     // Return YYYY-MM-DD HH:mm:ss in Beijing Time (UTC+8)
@@ -284,6 +281,10 @@ class Manager {
                 recording_account_id = excluded.recording_account_id
         `, [roomId, finalName, finalAddress, finalLanguage, now, monitorVal, finalPriority, recordingVal, recAccountVal]);
 
+        if (!existing) {
+            await this.markRoomStatsDirty([roomId], 'room-created');
+        }
+
         return {
             room_id: roomId,
             name: finalName,
@@ -426,6 +427,7 @@ class Manager {
 
         await run('INSERT INTO session (session_id, room_id, snapshot_json) VALUES (?, ?, ?)',
             [sessionId, roomId, JSON.stringify(snapshotData)]);
+        await this.markRoomStatsDirty([roomId], 'session-created');
         return sessionId;
     }
 
@@ -668,6 +670,7 @@ class Manager {
             await run(`UPDATE event SET session_id = ? WHERE room_id = ? AND session_id IS NULL AND DATE(timestamp) = ?`,
                 [sessionId, room_id, event_date]);
             eventsFixed += cnt;
+            await this.markRoomStatsDirty([room_id], 'fix-orphaned-events');
         }
 
         console.log(`[Manager] Fixed ${eventsFixed} orphaned events, created ${sessionsCreated} sessions`);
@@ -757,6 +760,7 @@ class Manager {
 
             collisionsFixed++;
             sessionsCreated++;
+            await this.markRoomStatsDirty([c.room_id], 'rebuild-missing-session-collision');
         }
 
         // Fix Missing
@@ -772,6 +776,7 @@ class Manager {
                 })
             ]);
             sessionsCreated++;
+            await this.markRoomStatsDirty([ms.room_id], 'rebuild-missing-session');
         }
 
         return { sessionsCreated, collisionsFixed };
@@ -916,6 +921,7 @@ class Manager {
                     prev.endTime = currEndTime;
                 }
                 mergedCount++;
+                await this.markRoomStatsDirty([prev.room_id || prev.roomId], 'merge-sessions');
             } else {
                 // No merge, advance prev
                 prev = curr;
@@ -3039,24 +3045,6 @@ class Manager {
             };
         }
 
-        const shouldRepairStatsOnRead = Boolean(search && search.trim());
-        if (shouldRepairStatsOnRead) {
-            const repairedRoomIds = await this.ensureRoomStatsForRoomIds(rooms.map(r => r.roomId), {
-                missingOnly: true,
-            });
-            if (repairedRoomIds.length > 0 && useRoomStatsJoin) {
-                rooms = await query(mainSql, mainParams);
-                if (rooms.length === 0) {
-                    return {
-                        data: [],
-                        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
-                    };
-                }
-            }
-        } else {
-            this.scheduleMissingRoomStatsRepair(rooms.map(r => r.roomId));
-        }
-
         // Get room IDs for batch queries
         const roomIds = normalizeRoomIdList(rooms.map(r => r.roomId));
         const placeholders = roomIds.map(() => '?').join(',');
@@ -3261,42 +3249,81 @@ class Manager {
         return staleRoomIds;
     }
 
-    scheduleMissingRoomStatsRepair(roomIds = []) {
+    async markRoomStatsDirty(roomIds = [], reason = 'manual') {
+        await this.ensureDb();
         const normalizedRoomIds = normalizeRoomIdList(roomIds);
         if (normalizedRoomIds.length === 0) {
-            return;
+            return { queued: 0 };
         }
 
+        let queued = 0;
         for (const roomId of normalizedRoomIds) {
-            backgroundRoomStatsRepairQueue.add(roomId);
+            await run(`
+                INSERT INTO room_stats_dirty_queue (
+                    room_id, last_reason, enqueue_count, queued_at, last_enqueued_at, updated_at
+                )
+                VALUES (?, ?, 1, NOW(), NOW(), NOW())
+                ON CONFLICT (room_id) DO UPDATE SET
+                    last_reason = EXCLUDED.last_reason,
+                    enqueue_count = COALESCE(room_stats_dirty_queue.enqueue_count, 0) + 1,
+                    last_enqueued_at = NOW(),
+                    updated_at = NOW()
+            `, [roomId, String(reason || 'manual').slice(0, 120)]);
+            queued += 1;
         }
 
-        if (isBackgroundRoomStatsRepairScheduled) {
-            return;
+        return { queued, roomIds: normalizedRoomIds };
+    }
+
+    async getDirtyRoomStatsRoomIds(limit = 50) {
+        await this.ensureDb();
+        const safeLimit = Math.max(1, Math.min(200, parseInt(limit, 10) || 50));
+        const rows = await query(`
+            SELECT room_id
+            FROM room_stats_dirty_queue
+            ORDER BY queued_at ASC, last_enqueued_at ASC
+            LIMIT ?
+        `, [safeLimit]);
+        return rows.map(row => row.roomId);
+    }
+
+    async processDirtyRoomStatsQueue(limit = 50) {
+        await this.ensureDb();
+        const roomIds = await this.getDirtyRoomStatsRoomIds(limit);
+        if (roomIds.length === 0) {
+            return { processed: 0, refreshed: 0, roomIds: [] };
         }
 
-        isBackgroundRoomStatsRepairScheduled = true;
-        setImmediate(async () => {
-            try {
-                const queuedRoomIds = Array.from(backgroundRoomStatsRepairQueue);
-                backgroundRoomStatsRepairQueue.clear();
+        const refreshResult = await this.refreshRoomStats({ roomIds });
+        const placeholders = roomIds.map(() => '?').join(',');
+        await run(`DELETE FROM room_stats_dirty_queue WHERE room_id IN (${placeholders})`, roomIds);
 
-                const missingRoomIds = await this.getRoomIdsNeedingStatsRefresh(queuedRoomIds, {
-                    missingOnly: true,
-                });
-                if (missingRoomIds.length > 0) {
-                    console.log(`[Manager] Background repairing missing room_stats for ${missingRoomIds.length} room(s)`);
-                    await this.refreshRoomStats({ roomIds: missingRoomIds });
-                }
-            } catch (err) {
-                console.error('[Manager] Background room_stats repair failed:', err.message);
-            } finally {
-                isBackgroundRoomStatsRepairScheduled = false;
-                if (backgroundRoomStatsRepairQueue.size > 0) {
-                    this.scheduleMissingRoomStatsRepair([]);
-                }
-            }
-        });
+        return {
+            processed: roomIds.length,
+            refreshed: Number(refreshResult?.refreshed || 0),
+            roomIds,
+            scope: 'dirty_queue'
+        };
+    }
+
+    async enqueueMissingRoomStats(limit = 100, reason = 'missing-room-stats-scan') {
+        await this.ensureDb();
+        const safeLimit = Math.max(1, Math.min(500, parseInt(limit, 10) || 100));
+        const rows = await query(`
+            SELECT r.room_id
+            FROM room r
+            LEFT JOIN room_stats rs ON rs.room_id = r.room_id
+            LEFT JOIN room_stats_dirty_queue dq ON dq.room_id = r.room_id
+            WHERE rs.room_id IS NULL
+              AND dq.room_id IS NULL
+            ORDER BY r.updated_at DESC, r.room_id ASC
+            LIMIT ?
+        `, [safeLimit]);
+        const roomIds = rows.map(row => row.roomId);
+        if (roomIds.length === 0) {
+            return { queued: 0, roomIds: [] };
+        }
+        return this.markRoomStatsDirty(roomIds, reason);
     }
 
 
@@ -3455,10 +3482,12 @@ class Manager {
 
         // 4. Update room stats (delete old, let it regenerate for new)
         await run(`DELETE FROM room_stats WHERE room_id = ?`, [oldRoomId]);
+        await run(`DELETE FROM room_stats_dirty_queue WHERE room_id = ?`, [oldRoomId]);
 
         // 5. Delete old room
         console.log(`[Manager] Deleting old room...`);
         await run(`DELETE FROM room WHERE room_id = ?`, [oldRoomId]);
+        await this.markRoomStatsDirty([newRoomId], 'room-migrated');
 
         console.log(`[Manager] Migration complete: ${oldRoomId} -> ${newRoomId}`);
         return true;
@@ -3811,6 +3840,7 @@ class Manager {
                 SET session_id = ?
                 WHERE room_id = ? AND session_id IS NULL AND timestamp <= ?
             `, [finalSessionId, roomId, lastT]);
+            await this.markRoomStatsDirty([roomId], 'archive-stale-live-events');
 
             return {
                 archived: staleEvents.length,

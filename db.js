@@ -257,6 +257,23 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_gift ON room_stats(all_time_gift_value DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_top10 ON room_stats(top10_ratio)`);
 
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS room_stats_dirty_queue (
+                room_id TEXT PRIMARY KEY REFERENCES room(room_id) ON DELETE CASCADE,
+                last_reason TEXT,
+                enqueue_count INTEGER DEFAULT 1,
+                queued_at TIMESTAMP DEFAULT NOW(),
+                last_enqueued_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`ALTER TABLE room_stats_dirty_queue ADD COLUMN IF NOT EXISTS last_reason TEXT`);
+        await pool.query(`ALTER TABLE room_stats_dirty_queue ADD COLUMN IF NOT EXISTS enqueue_count INTEGER DEFAULT 1`);
+        await pool.query(`ALTER TABLE room_stats_dirty_queue ADD COLUMN IF NOT EXISTS queued_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`ALTER TABLE room_stats_dirty_queue ADD COLUMN IF NOT EXISTS last_enqueued_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`ALTER TABLE room_stats_dirty_queue ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT NOW()`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_dirty_queue_queued_at ON room_stats_dirty_queue(queued_at ASC, last_enqueued_at ASC)`);
+
         // User statistics cache table (pre-aggregated for performance)
         // This dramatically improves /api/analysis/users performance
         await pool.query(`

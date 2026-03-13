@@ -1548,6 +1548,7 @@ class AutoRecorder {
             });
 
             await manager.tagEventsWithSession(uniqueId, sessionId, startIso);
+            await manager.markRoomStatsDirty([uniqueId], 'auto-recorder-archive');
             console.log(`[AutoRecorder] ✅ Session saved: ${sessionId}`);
             await this.recordSessionMaintenanceEventSafe({
                 taskKey: 'execute_archive_session',

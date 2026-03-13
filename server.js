@@ -76,6 +76,7 @@ const {
 } = require('./services/aiStructuredDataSourceService');
 const {
     runRoomStatsRefreshJob,
+    runDirtyRoomStatsRepairJob,
     runUserStatsRefreshJob,
     runGlobalStatsRefreshJob,
 } = require('./services/statsRefreshService');
@@ -5219,6 +5220,14 @@ httpServer.listen(PORT, async () => {
                 console.error('[CRON] User stats refresh error:', err.message);
             }
         }, 30 * 60 * 1000); // Every 30 minutes
+    } else if (shouldRunStatsJobsInWebProcess()) {
+        setInterval(async () => {
+            try {
+                await runDirtyRoomStatsRepairJob('web-fallback-interval');
+            } catch (err) {
+                console.error('[CRON] Dirty room_stats repair error:', err.message);
+            }
+        }, 2 * 60 * 1000);
     } else {
         console.log('[CRON] Periodic room_stats/user_stats refresh disabled in web process');
     }
@@ -5253,6 +5262,14 @@ httpServer.listen(PORT, async () => {
                 console.error('[CRON] Initial user stats refresh error:', err.message);
             }
         }, 15000); // 15 seconds after startup
+    } else if (shouldRunStatsJobsInWebProcess()) {
+        setTimeout(async () => {
+            try {
+                await runDirtyRoomStatsRepairJob('web-fallback-startup');
+            } catch (err) {
+                console.error('[CRON] Initial dirty room_stats repair error:', err.message);
+            }
+        }, 12000);
     } else {
         console.log('[CRON] Startup room_stats/user_stats warmup disabled in web process');
     }

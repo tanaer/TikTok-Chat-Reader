@@ -7,6 +7,10 @@ const STATS_WORKER_SCHEDULE = {
         startupDelayMs: 10000,
         intervalMs: 30 * 60 * 1000,
     },
+    roomDirty: {
+        startupDelayMs: 15000,
+        intervalMs: 2 * 60 * 1000,
+    },
     user: {
         startupDelayMs: 15000,
         intervalMs: 30 * 60 * 1000,
@@ -27,6 +31,24 @@ async function runRoomStatsRefreshJob(trigger = 'manual') {
         lockKey: 'stats.room_refresh',
         trigger,
         handler: async () => manager.refreshRoomStats(),
+    });
+}
+
+async function runDirtyRoomStatsRepairJob(trigger = 'manual') {
+    return runJob({
+        jobName: 'stats.room_dirty_repair',
+        lockKey: 'stats.room_dirty_repair',
+        trigger,
+        handler: async () => {
+            const enqueueResult = await manager.enqueueMissingRoomStats(100, `${trigger}:missing-scan`);
+            const processResult = await manager.processDirtyRoomStatsQueue(50);
+            return {
+                enqueued: Number(enqueueResult?.queued || 0),
+                processed: Number(processResult?.processed || 0),
+                refreshed: Number(processResult?.refreshed || 0),
+                roomIds: Array.isArray(processResult?.roomIds) ? processResult.roomIds : [],
+            };
+        },
     });
 }
 
@@ -60,6 +82,7 @@ async function runIncrementalStatsAggregationJob(trigger = 'manual') {
 module.exports = {
     STATS_WORKER_SCHEDULE,
     runRoomStatsRefreshJob,
+    runDirtyRoomStatsRepairJob,
     runUserStatsRefreshJob,
     runGlobalStatsRefreshJob,
     runIncrementalStatsAggregationJob,
