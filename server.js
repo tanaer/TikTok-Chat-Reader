@@ -2049,7 +2049,10 @@ function serializeUserAnalysisDetail(data = {}) {
         aiAnalysis: data.aiAnalysis || null,
         aiAnalysisJson: safeParseJsonObject(data.aiAnalysisJson),
         aiJob: data.aiJob ? serializeSessionAiWorkJobForClient(data.aiJob) : null,
-        moderatorRooms: Array.isArray(data.moderatorRooms) ? data.moderatorRooms : []
+        moderatorRooms: Array.isArray(data.moderatorRooms) ? data.moderatorRooms : [],
+        historyUniqueIds: Array.isArray(data.historyUniqueIds) ? data.historyUniqueIds : [],
+        historyNicknames: Array.isArray(data.historyNicknames) ? data.historyNicknames : [],
+        historyAliasCount: Number(data.historyAliasCount || 0)
     };
 }
 

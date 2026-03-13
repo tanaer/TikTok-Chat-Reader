@@ -191,6 +191,8 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_type_session ON event(type, session_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_type_room ON event(type, room_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_gift_agg ON event(room_id, type, user_id) WHERE type = 'gift'`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_unique_id_lower ON event(LOWER(unique_id)) WHERE unique_id IS NOT NULL AND unique_id <> ''`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_nickname_lower ON event(LOWER(nickname)) WHERE nickname IS NOT NULL AND nickname <> ''`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_room_created ON session(room_id, created_at DESC)`);
         await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS gift_name TEXT`);
         await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS gift_image TEXT`);
@@ -274,6 +276,8 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_gift ON user_stats(total_gift_value DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_room_count ON user_stats(room_count)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_last_active ON user_stats(last_active DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_unique_id_lower ON "user"(LOWER(unique_id)) WHERE unique_id IS NOT NULL AND unique_id <> ''`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_nickname_lower ON "user"(LOWER(nickname)) WHERE nickname IS NOT NULL AND nickname <> ''`);
 
         // Global statistics cache table (pre-aggregated for /api/analysis/stats performance)
         // Stores hourly and daily aggregations to avoid expensive 4-query JOINs on event table

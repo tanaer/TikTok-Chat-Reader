@@ -28,7 +28,7 @@
     <script src="connection.js?v=20260308f"></script>
     <script src="config.js?v=20260308f"></script>
     <script src="room_list.js?v=20260308h"></script>
-    <script src="user_analysis.js?v=20260309c"></script>
+    <script src="user_analysis.js?v=20260313b"></script>
     <script src="room_analysis.js?v=20260308f"></script>
     <script src="recording_ui.js?v=20260308g"></script>
     <script src="app.js?v=20260309c"></script>
@@ -1535,6 +1535,44 @@
         </div>
         <form method="dialog" class="modal-backdrop">
             <button onclick="closeRoomCustomerAnalysisModal()">关闭</button>
+        </form>
+    </dialog>
+
+    <dialog id="historyAliasModal" class="modal">
+        <div class="modal-box w-11/12 max-w-2xl">
+            <div class="flex items-start justify-between gap-3">
+                <div>
+                    <h3 id="historyAliasTitle" class="font-bold text-lg">历史账号</h3>
+                    <p class="text-sm opacity-60 mt-1">这里展示该用户在历史事件中出现过的账号ID与昵称，便于识别改名用户。</p>
+                </div>
+                <form method="dialog">
+                    <button class="btn btn-sm btn-ghost">✕</button>
+                </form>
+            </div>
+
+            <div id="historyAliasEmpty" class="alert mt-4">
+                <span>暂无历史账号信息</span>
+            </div>
+
+            <div class="mt-4 space-y-4">
+                <div>
+                    <div class="text-sm font-semibold opacity-70 mb-2">历史账号ID</div>
+                    <div id="historyAliasUniqueIdList" class="flex flex-wrap gap-2"></div>
+                </div>
+                <div>
+                    <div class="text-sm font-semibold opacity-70 mb-2">历史昵称</div>
+                    <div id="historyAliasNicknameList" class="flex flex-wrap gap-2"></div>
+                </div>
+            </div>
+
+            <div class="modal-action">
+                <form method="dialog">
+                    <button class="btn">关闭</button>
+                </form>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop">
+            <button>关闭</button>
         </form>
     </dialog>
 

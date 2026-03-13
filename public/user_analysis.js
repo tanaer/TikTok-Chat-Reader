@@ -5,11 +5,28 @@
 let userListPage = 1;
 let userListTotalCount = 0;
 let userListPageSize = 50;  // Now mutable for dynamic page size
+let userSearchAutoRetried = false;
+let currentUserHistoryMeta = { uniqueIds: [], nicknames: [], title: '', userId: '' };
 let currentDetailAiUserId = '';
 let currentDetailAiJobId = 0;
 let aiAnalysisJobPollTimer = null;
 const DEFAULT_PERSONALITY_ANALYSIS_POINTS = 1;
 let currentDetailAiPointCost = DEFAULT_PERSONALITY_ANALYSIS_POINTS;
+
+function escapeUserAnalysisHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function escapeUserAnalysisInlineJsString(value) {
+    return String(value ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/'/g, "\\'");
+}
 
 function confirmPersonalityAnalysisConsumption(pointCost = DEFAULT_PERSONALITY_ANALYSIS_POINTS, { force = false, batchSize = 0 } = {}) {
     const safePointCost = Math.max(0, Number(pointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS));
@@ -181,9 +198,21 @@ function fetchUserAnalysis() {
             renderPagination(userListPage, totalPages);
 
             if (!users || users.length === 0) {
+                const normalizedSearch = String(search || '').trim();
+                const normalizedMode = String(searchMode || '').trim();
+                const looksLikeAccountSearch = /^[a-z0-9._-]{4,}$/i.test(normalizedSearch);
+                if (normalizedSearch && normalizedMode !== 'exact' && looksLikeAccountSearch && !userSearchAutoRetried) {
+                    userSearchAutoRetried = true;
+                    $('#userSearchMode').val('exact');
+                    fetchUserAnalysis();
+                    return;
+                }
+                userSearchAutoRetried = false;
                 tbody.append('<tr><td colspan="10" class="text-center opacity-50">暂无用户数据</td></tr>');
                 return;
             }
+
+            userSearchAutoRetried = false;
 
             users.forEach((u, index) => {
                 u.pointCost = Number(u?.pointCost || pagePointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS);
@@ -227,6 +256,18 @@ function fetchUserAnalysis() {
                 const accountLink = u.uniqueId ?
                     `<a href="https://www.tiktok.com/@${u.uniqueId}" target="_blank" class="link link-hover">${u.uniqueId}</a>` :
                     u.userId;
+                const historyAliasCount = Number(u.historyAliasCount || 0);
+                const historyMetaEncoded = historyAliasCount > 0
+                    ? encodeURIComponent(JSON.stringify({
+                        uniqueIds: Array.isArray(u.historyUniqueIds) ? u.historyUniqueIds : [],
+                        nicknames: Array.isArray(u.historyNicknames) ? u.historyNicknames : [],
+                        title: u.uniqueId || u.nickname || u.userId || '该用户',
+                        userId: u.userId || ''
+                    }))
+                    : '';
+                const historyAliasTrigger = historyAliasCount > 0
+                    ? `<button class="btn btn-ghost btn-xs px-2 h-6 min-h-6 border border-base-300 hover:border-primary/50" title="查看该用户历史账号与昵称" onclick="showUserHistoryAliases('${escapeUserAnalysisInlineJsString(historyMetaEncoded)}')">历史账号 ${historyAliasCount}</button>`
+                    : '';
 
                 const rowNum = (userListPage - 1) * userListPageSize + index + 1;
 
@@ -261,9 +302,9 @@ function fetchUserAnalysis() {
                         <th>${rowNum}</th>
                         <td class="font-mono text-xs opacity-70">${accountLink}</td>
                         <td>
-                            <div class="flex items-center gap-1">
-                                <span class="font-bold">${u.nickname || '匿名'}</span>
-                                ${roleIcons}${fanBadge}
+                            <div class="flex items-center gap-1 flex-wrap">
+                                <span class="font-bold">${escapeUserAnalysisHtml(u.nickname || '匿名')}</span>
+                                ${roleIcons}${fanBadge}${historyAliasTrigger}
                             </div>
                             ${languages}
                         </td>
@@ -282,6 +323,7 @@ function fetchUserAnalysis() {
             });
         })
         .fail((err) => {
+            userSearchAutoRetried = false;
             console.error('User list fetch error:', err);
             $('#userListTable tbody').html('<tr><td colspan="10" class="text-center text-error">加载失败</td></tr>');
         });
@@ -457,6 +499,19 @@ function showUserDetails(userId, nickname, uniqueId) {
             ).join(''));
         }
 
+        const detailRoleBadges = document.getElementById('detailRoleBadges');
+        if (detailRoleBadges && Number(data.historyAliasCount || 0) > 0) {
+            const encodedPayload = encodeURIComponent(JSON.stringify({
+                uniqueIds: Array.isArray(data.historyUniqueIds) ? data.historyUniqueIds : [],
+                nicknames: Array.isArray(data.historyNicknames) ? data.historyNicknames : [],
+                title: uniqueId || safeNickname || userId,
+                userId: userId
+            }));
+            detailRoleBadges.insertAdjacentHTML('beforeend',
+                ` <button class="btn btn-ghost btn-xs border border-base-300 hover:border-primary/50" onclick="showUserHistoryAliases('${escapeUserAnalysisInlineJsString(encodedPayload)}')">历史账号 ${Number(data.historyAliasCount || 0)}</button>`
+            );
+        }
+
         // Display existing AI analysis if available
         if (data.aiAnalysis) {
             renderAiAnalysisResult(data.aiAnalysis, null);
@@ -476,6 +531,60 @@ function closeUserDetailPanel() {
     currentDetailAiUserId = '';
     $('#userDetailPanel').addClass('translate-x-full');
 }
+
+function showUserHistoryAliases(encodedPayload) {
+    let payload = null;
+    try {
+        payload = JSON.parse(decodeURIComponent(String(encodedPayload || '')));
+    } catch (err) {
+        payload = null;
+    }
+
+    const uniqueIds = Array.isArray(payload?.uniqueIds)
+        ? payload.uniqueIds.map(item => String(item || '').trim()).filter(Boolean)
+        : [];
+    const nicknames = Array.isArray(payload?.nicknames)
+        ? payload.nicknames.map(item => String(item || '').trim()).filter(Boolean)
+        : [];
+
+    currentUserHistoryMeta = {
+        uniqueIds,
+        nicknames,
+        title: String(payload?.title || payload?.userId || '该用户').trim(),
+        userId: String(payload?.userId || '').trim()
+    };
+
+    const titleEl = document.getElementById('historyAliasTitle');
+    const uniqueListEl = document.getElementById('historyAliasUniqueIdList');
+    const nicknameListEl = document.getElementById('historyAliasNicknameList');
+    const emptyEl = document.getElementById('historyAliasEmpty');
+    const modal = document.getElementById('historyAliasModal');
+
+    if (titleEl) {
+        titleEl.textContent = `${currentUserHistoryMeta.title || '该用户'} 的历史账号`;
+    }
+
+    if (uniqueListEl) {
+        uniqueListEl.innerHTML = uniqueIds.length
+            ? uniqueIds.map(item => `<span class="badge badge-outline badge-sm">${escapeUserAnalysisHtml(item)}</span>`).join('')
+            : '<span class="text-base-content/50 text-sm">暂无历史账号ID</span>';
+    }
+
+    if (nicknameListEl) {
+        nicknameListEl.innerHTML = nicknames.length
+            ? nicknames.map(item => `<span class="badge badge-ghost badge-sm">${escapeUserAnalysisHtml(item)}</span>`).join('')
+            : '<span class="text-base-content/50 text-sm">暂无历史昵称</span>';
+    }
+
+    if (emptyEl) {
+        emptyEl.style.display = uniqueIds.length || nicknames.length ? 'none' : '';
+    }
+
+    if (modal?.showModal) {
+        modal.showModal();
+    }
+}
+window.showUserHistoryAliases = showUserHistoryAliases;
 
 function isPendingAiWorkJob(job) {
     const status = String(job?.status || '').toLowerCase();
