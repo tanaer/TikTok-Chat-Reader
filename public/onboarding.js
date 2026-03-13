@@ -44,6 +44,17 @@
             };
             window.runRoomCustomerAnalysis._obHooked = true;
         }
+
+        // Hook switchSection to react to page changes
+        var origSwitch = window.switchSection;
+        if (typeof origSwitch === 'function' && !origSwitch._obHooked) {
+            window.switchSection = function () {
+                var result = origSwitch.apply(this, arguments);
+                onSectionChanged();
+                return result;
+            };
+            window.switchSection._obHooked = true;
+        }
     }
 
     // ── Step definitions ──
@@ -53,26 +64,27 @@
             id: 'welcome',
             title: '欢迎使用 TikTok 直播监控',
             desc: '我们已为你准备了 1 个默认直播间、1 次 AI 直播复盘、1 次客户深度分析。跟着下面的步骤快速体验核心功能吧！',
-            target: null,
-            check: function () { return true; } // always pass, user clicks "开始"
+            targets: null,
+            section: null,
+            check: function () { return true; }
         },
         {
             id: 'addRoom',
             title: '① 添加你的直播间',
             desc: '点击右上角「<b>+ 添加直播间</b>」按钮，输入你想监控的 TikTok 主播用户名。',
-            target: '#addRoomBtn',
+            targets: ['#addRoomBtn'],
+            section: null,
             check: function () {
-                // Pass when there are 2+ room cards (default + new)
                 return document.querySelectorAll('#roomListContainer [data-room-id]').length >= 2;
             }
         },
         {
             id: 'enterRoom',
             title: '② 进入直播间',
-            desc: '点击任意直播间卡片，进入详情页查看实时数据和历史记录。',
-            target: '#roomListContainer [data-room-id]',
+            desc: '点击任意直播间卡片的「<b>进入</b>」按钮，进入详情页查看实时数据和历史记录。',
+            targets: ['#roomListContainer [data-room-id]:first-child'],
+            section: null,
             check: function () {
-                // switchSection uses jQuery .show()/.hide() for visibility
                 var s = document.getElementById('section-roomDetail');
                 return s && s.offsetHeight > 0;
             }
@@ -81,7 +93,8 @@
             id: 'aiRecap',
             title: '③ 生成 AI 直播复盘',
             desc: '在详情页中：<br>1. 用顶部下拉框选择一个<b>历史场次</b><br>2. 切换到「<b>AI 直播复盘</b>」标签页<br>3. 点击「<b>生成 AI 复盘</b>」按钮',
-            target: '#generateSessionRecapBtn',
+            targets: ['#sessionSelect', '#generateSessionRecapBtn'],
+            section: 'roomDetail',
             check: function () {
                 return _recapTriggered;
             }
@@ -90,7 +103,8 @@
             id: 'aiCustomer',
             title: '④ AI 客户深度分析',
             desc: '在右侧「<b>历史排行榜</b>」中，找到送礼榜排名靠前的用户，点击他旁边的「<b>AI</b>」按钮，然后点击「<b>开始挖掘</b>」。',
-            target: '#leaderboard-alltime',
+            targets: ['#leaderboard-alltime'],
+            section: 'roomDetail',
             check: function () {
                 return _customerAnalysisTriggered;
             }
@@ -104,11 +118,15 @@
     function getStep()   { return parseInt(localStorage.getItem(STEP_KEY) || '0', 10); }
     function setStep(n)  { localStorage.setItem(STEP_KEY, String(n)); }
 
+    function getCurrentSection() {
+        return window.currentSection || 'roomList';
+    }
+
     // ── UI: Floating card ──
 
     var panel = null;
     var pollTimer = null;
-    var currentHighlight = null;
+    var currentHighlights = [];
 
     function createPanel() {
         if (panel) return;
@@ -132,12 +150,25 @@
         panel.querySelector('.ob-next').onclick   = function () { onNextClick(); };
     }
 
+    /** Check if the step's required section is currently active */
+    function isSectionMatch(step) {
+        if (!step.section) return true;
+        return getCurrentSection() === step.section;
+    }
+
     function showStep(idx) {
         if (idx >= STEPS.length) { finish(); return; }
         setStep(idx);
         createPanel();
 
         var step = STEPS[idx];
+
+        // If step requires a specific section and we're not there, hide and wait
+        if (!isSectionMatch(step)) {
+            hidePanel();
+            return;
+        }
+
         panel.querySelector('.ob-title').textContent = step.title;
         panel.querySelector('.ob-desc').innerHTML = step.desc;
 
@@ -146,22 +177,27 @@
             nextBtn.textContent = '开始体验';
             nextBtn.style.display = '';
         } else {
-            // Hide next button — step auto-advances when check() passes
             nextBtn.style.display = 'none';
         }
 
         panel.classList.add('ob-visible');
 
-        // Highlight target
+        // Highlight all targets
         clearHighlight();
-        if (step.target) {
-            var el = document.querySelector(step.target);
-            if (el) {
-                el.classList.add('ob-pulse');
-                currentHighlight = el;
-                // Scroll into view if needed
-                if (el.getBoundingClientRect().top < 0 || el.getBoundingClientRect().bottom > window.innerHeight) {
-                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (step.targets) {
+            step.targets.forEach(function (selector) {
+                var el = document.querySelector(selector);
+                if (el) {
+                    el.classList.add('ob-pulse');
+                    currentHighlights.push(el);
+                }
+            });
+            // Scroll first target into view if needed
+            if (currentHighlights.length > 0) {
+                var first = currentHighlights[0];
+                var rect = first.getBoundingClientRect();
+                if (rect.top < 0 || rect.bottom > window.innerHeight) {
+                    first.scrollIntoView({ behavior: 'smooth', block: 'center' });
                 }
             }
         }
@@ -173,34 +209,53 @@
                 if (step.check()) {
                     stopPoll();
                     clearHighlight();
-                    // Brief success flash
                     panel.querySelector('.ob-title').textContent = '✓ ' + step.title;
                     setTimeout(function () {
                         showStep(idx + 1);
                     }, 1200);
                 }
-                // Re-apply highlight if element appeared later
-                if (step.target && !currentHighlight) {
-                    var el = document.querySelector(step.target);
-                    if (el) { el.classList.add('ob-pulse'); currentHighlight = el; }
+                // Re-apply highlights if elements appeared later
+                if (step.targets && currentHighlights.length < step.targets.length) {
+                    step.targets.forEach(function (selector) {
+                        var el = document.querySelector(selector);
+                        if (el && !el.classList.contains('ob-pulse')) {
+                            el.classList.add('ob-pulse');
+                            currentHighlights.push(el);
+                        }
+                    });
                 }
             }, 1000);
+        }
+    }
+
+    /** Called when switchSection fires — re-evaluate current step visibility */
+    function onSectionChanged() {
+        if (isDone()) return;
+        var idx = getStep();
+        if (idx < 0 || idx >= STEPS.length) return;
+
+        var step = STEPS[idx];
+        if (isSectionMatch(step)) {
+            // Section now matches, show the step
+            showStep(idx);
+        } else {
+            // Section doesn't match, hide panel and clear highlights
+            hidePanel();
         }
     }
 
     function onNextClick() {
         var idx = getStep();
         if (idx === 0) {
-            // Welcome → go to step 1
             showStep(1);
         }
     }
 
     function clearHighlight() {
-        if (currentHighlight) {
-            currentHighlight.classList.remove('ob-pulse');
-            currentHighlight = null;
-        }
+        currentHighlights.forEach(function (el) {
+            el.classList.remove('ob-pulse');
+        });
+        currentHighlights = [];
         // Also clean up any stale ones
         document.querySelectorAll('.ob-pulse').forEach(function (el) {
             el.classList.remove('ob-pulse');
@@ -224,7 +279,6 @@
         var btn = document.getElementById('startTourBtn');
         if (btn) btn.classList.remove('tour-hint');
 
-        // Show completion toast
         showToast('新手引导完成！AI 分析结果会在 1-3 分钟后通过右上角消息通知推送给你。');
     }
 
