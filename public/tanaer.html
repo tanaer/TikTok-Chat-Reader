@@ -99,12 +99,56 @@
             border-top: 1px solid hsl(var(--bc) / 0.12);
             margin: 1.2rem 0;
         }
+
+        /* ── Mobile drawer for sidebar ── */
+        #sidebar-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            z-index: 39;
+            background: rgba(0, 0, 0, 0.5);
+            backdrop-filter: blur(2px);
+        }
+        #sidebar-backdrop.open { display: block; }
+
+        #mobile-menu-btn { display: none; }
+
+        @media (max-width: 768px) {
+            body.admin-body { display: block !important; }
+
+            #admin-sidebar {
+                position: fixed;
+                top: 0; left: 0; bottom: 0;
+                z-index: 40;
+                transform: translateX(-100%);
+                transition: transform 0.25s ease;
+                width: 16rem;
+            }
+            #admin-sidebar.open { transform: translateX(0); }
+
+            #mobile-menu-btn { display: inline-flex; }
+
+            .admin-main { min-height: 100vh; }
+            .admin-main > main { padding: 1rem !important; }
+
+            .admin-main .navbar { padding-left: 1rem; padding-right: 1rem; }
+
+            /* Fix fixed-width inputs */
+            #user-search, #order-search,
+            #admin-ai-work-search { width: 100% !important; min-width: 0 !important; }
+        }
+
+        @media (max-width: 480px) {
+            .admin-main > main { padding: 0.75rem !important; }
+        }
     </style>
 </head>
 
-<body class="bg-base-300 min-h-screen flex">
+<body class="bg-base-300 min-h-screen flex admin-body">
+    <!-- Sidebar backdrop (mobile) -->
+    <div id="sidebar-backdrop" onclick="toggleAdminSidebar(false)"></div>
     <!-- Sidebar -->
-    <aside class="w-64 bg-base-100 min-h-screen shadow-lg flex-shrink-0">
+    <aside id="admin-sidebar" class="w-64 bg-base-100 min-h-screen shadow-lg flex-shrink-0">
         <div class="p-4 border-b border-base-300">
             <a href="/" class="text-xl font-bold text-primary">TikTok Monitor</a>
             <p class="text-xs text-base-content/60 mt-1">管理后台</p>
@@ -184,10 +228,13 @@
     </aside>
 
     <!-- Main Content -->
-    <div class="flex-1 flex flex-col min-h-screen">
+    <div class="flex-1 flex flex-col min-h-screen admin-main">
         <!-- Top bar -->
         <div class="navbar app-shell-nav px-6 py-3 flex-wrap gap-3">
             <div class="flex-1 min-w-0 flex flex-wrap items-center gap-3">
+                <button id="mobile-menu-btn" class="btn btn-ghost btn-sm btn-square" onclick="toggleAdminSidebar()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/></svg>
+                </button>
                 <h2 id="section-title" class="text-lg font-bold shrink-0">系统概览</h2>
                 <ul id="global-top-nav" class="menu menu-horizontal flex-wrap gap-1"></ul>
             </div>
@@ -1675,6 +1722,21 @@
         </div>
     </dialog>
 
+    <script>
+    function toggleAdminSidebar(force) {
+        var sb = document.getElementById('admin-sidebar');
+        var bd = document.getElementById('sidebar-backdrop');
+        var open = typeof force === 'boolean' ? force : !sb.classList.contains('open');
+        sb.classList.toggle('open', open);
+        bd.classList.toggle('open', open);
+    }
+    // Auto-close sidebar on mobile when a menu item is clicked
+    document.getElementById('sidebar-menu').addEventListener('click', function(e) {
+        if (e.target.closest('a[data-admin-section]') && window.innerWidth <= 768) {
+            toggleAdminSidebar(false);
+        }
+    });
+    </script>
     <script src="/js/admin.js?v=20260310b"></script>
 </body>
 
