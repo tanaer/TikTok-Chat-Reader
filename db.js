@@ -19,21 +19,24 @@ const pool = new Pool({
 });
 
 let isInitialized = false;
+let initPromise = null;
 
 /**
  * Initialize the database - create tables if needed
  */
 async function initDb() {
     if (isInitialized) return;
+    if (initPromise) return initPromise;
 
-    try {
-        // Test connection
-        const client = await pool.connect();
-        console.log('[DB] Connected to PostgreSQL.');
-        client.release();
+    initPromise = (async () => {
+        try {
+            // Test connection
+            const client = await pool.connect();
+            console.log('[DB] Connected to PostgreSQL.');
+            client.release();
 
-        // Create tables
-        await pool.query(`
+            // Create tables
+            await pool.query(`
             CREATE TABLE IF NOT EXISTS room (
                 id SERIAL PRIMARY KEY,
                 room_id TEXT UNIQUE NOT NULL,
@@ -947,16 +950,20 @@ async function initDb() {
             console.warn('[DB] Migration note:', migErr.message);
         }
 
-        console.log('[DB] Tables and indexes created.');
-        isInitialized = true;
+            console.log('[DB] Tables and indexes created.');
+            isInitialized = true;
 
-        // Setup graceful shutdown
-        setupShutdownHandlers();
+            // Setup graceful shutdown
+            setupShutdownHandlers();
+        } catch (e) {
+            console.error('[DB] Initialization error:', e);
+            throw e;
+        } finally {
+            initPromise = null;
+        }
+    })();
 
-    } catch (e) {
-        console.error('[DB] Initialization error:', e);
-        throw e;
-    }
+    return initPromise;
 }
 
 /**

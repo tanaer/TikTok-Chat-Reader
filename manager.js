@@ -10,6 +10,8 @@ const { getSchemeAConfig } = require('./services/featureFlagService');
 
 const PRICE_FILE = path.join(__dirname, 'prices.json');
 const ROOM_STATS_STALE_EVENT_THRESHOLD_MS = 15 * 60 * 1000;
+const backgroundRoomStatsRepairQueue = new Set();
+let isBackgroundRoomStatsRepairScheduled = false;
 
 function getNowBeijing() {
     // Return YYYY-MM-DD HH:mm:ss in Beijing Time (UTC+8)
@@ -3037,15 +3039,22 @@ class Manager {
             };
         }
 
-        const repairedRoomIds = await this.ensureRoomStatsForRoomIds(rooms.map(r => r.roomId));
-        if (repairedRoomIds.length > 0 && useRoomStatsJoin) {
-            rooms = await query(mainSql, mainParams);
-            if (rooms.length === 0) {
-                return {
-                    data: [],
-                    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
-                };
+        const shouldRepairStatsOnRead = Boolean(search && search.trim());
+        if (shouldRepairStatsOnRead) {
+            const repairedRoomIds = await this.ensureRoomStatsForRoomIds(rooms.map(r => r.roomId), {
+                missingOnly: true,
+            });
+            if (repairedRoomIds.length > 0 && useRoomStatsJoin) {
+                rooms = await query(mainSql, mainParams);
+                if (rooms.length === 0) {
+                    return {
+                        data: [],
+                        pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+                    };
+                }
             }
+        } else {
+            this.scheduleMissingRoomStatsRepair(rooms.map(r => r.roomId));
         }
 
         // Get room IDs for batch queries
@@ -3169,11 +3178,23 @@ class Manager {
         };
     }
 
-    async getRoomIdsNeedingStatsRefresh(roomIds = []) {
+    async getRoomIdsNeedingStatsRefresh(roomIds = [], options = {}) {
         await this.ensureDb();
         const normalizedRoomIds = normalizeRoomIdList(roomIds);
         if (normalizedRoomIds.length === 0) {
             return [];
+        }
+
+        if (options.missingOnly) {
+            const placeholders = normalizedRoomIds.map(() => '?').join(',');
+            const rows = await query(`
+                SELECT r.room_id
+                FROM room r
+                LEFT JOIN room_stats rs ON rs.room_id = r.room_id
+                WHERE r.room_id IN (${placeholders})
+                  AND rs.room_id IS NULL
+            `, normalizedRoomIds);
+            return rows.map(row => row.roomId);
         }
 
         const placeholders = normalizedRoomIds.map(() => '?').join(',');
@@ -3228,9 +3249,9 @@ class Manager {
             .map(row => row.roomId);
     }
 
-    async ensureRoomStatsForRoomIds(roomIds = []) {
+    async ensureRoomStatsForRoomIds(roomIds = [], options = {}) {
         await this.ensureDb();
-        const staleRoomIds = await this.getRoomIdsNeedingStatsRefresh(roomIds);
+        const staleRoomIds = await this.getRoomIdsNeedingStatsRefresh(roomIds, options);
         if (staleRoomIds.length === 0) {
             return [];
         }
@@ -3238,6 +3259,44 @@ class Manager {
         console.log(`[Manager] Repairing room_stats for ${staleRoomIds.length} room(s): ${staleRoomIds.join(', ')}`);
         await this.refreshRoomStats({ roomIds: staleRoomIds });
         return staleRoomIds;
+    }
+
+    scheduleMissingRoomStatsRepair(roomIds = []) {
+        const normalizedRoomIds = normalizeRoomIdList(roomIds);
+        if (normalizedRoomIds.length === 0) {
+            return;
+        }
+
+        for (const roomId of normalizedRoomIds) {
+            backgroundRoomStatsRepairQueue.add(roomId);
+        }
+
+        if (isBackgroundRoomStatsRepairScheduled) {
+            return;
+        }
+
+        isBackgroundRoomStatsRepairScheduled = true;
+        setImmediate(async () => {
+            try {
+                const queuedRoomIds = Array.from(backgroundRoomStatsRepairQueue);
+                backgroundRoomStatsRepairQueue.clear();
+
+                const missingRoomIds = await this.getRoomIdsNeedingStatsRefresh(queuedRoomIds, {
+                    missingOnly: true,
+                });
+                if (missingRoomIds.length > 0) {
+                    console.log(`[Manager] Background repairing missing room_stats for ${missingRoomIds.length} room(s)`);
+                    await this.refreshRoomStats({ roomIds: missingRoomIds });
+                }
+            } catch (err) {
+                console.error('[Manager] Background room_stats repair failed:', err.message);
+            } finally {
+                isBackgroundRoomStatsRepairScheduled = false;
+                if (backgroundRoomStatsRepairQueue.size > 0) {
+                    this.scheduleMissingRoomStatsRepair([]);
+                }
+            }
+        });
     }
 
 

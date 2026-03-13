@@ -5089,13 +5089,13 @@ function readOptionalBooleanEnv(name) {
 function isPeriodicStatsRefreshEnabled() {
     const explicit = readOptionalBooleanEnv('ENABLE_PERIODIC_STATS_REFRESH');
     if (explicit !== null) return explicit;
-    return shouldRunStatsJobsInWebProcess();
+    return false;
 }
 
 function isStartupStatsWarmupEnabled() {
     const explicit = readOptionalBooleanEnv('ENABLE_STARTUP_STATS_WARMUP');
     if (explicit !== null) return explicit;
-    return shouldRunStatsJobsInWebProcess();
+    return false;
 }
 
 function buildAcceptedAdminJobMessage(defaultMessage, queuedJob) {
