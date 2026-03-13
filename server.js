@@ -5074,11 +5074,28 @@ app.post('/api/rebuild-missing-sessions', authenticate, requireAdmin, requireAdm
     }
 });
 
-const ENABLE_PERIODIC_STATS_REFRESH = String(process.env.ENABLE_PERIODIC_STATS_REFRESH || 'false').toLowerCase() === 'true';
-const ENABLE_STARTUP_STATS_WARMUP = String(process.env.ENABLE_STARTUP_STATS_WARMUP || 'false').toLowerCase() === 'true';
-
 function shouldRunStatsJobsInWebProcess() {
     return !schemeAConfig.worker.enableStats;
+}
+
+function readOptionalBooleanEnv(name) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === null || String(raw).trim() === '') {
+        return null;
+    }
+    return String(raw).trim().toLowerCase() === 'true';
+}
+
+function isPeriodicStatsRefreshEnabled() {
+    const explicit = readOptionalBooleanEnv('ENABLE_PERIODIC_STATS_REFRESH');
+    if (explicit !== null) return explicit;
+    return shouldRunStatsJobsInWebProcess();
+}
+
+function isStartupStatsWarmupEnabled() {
+    const explicit = readOptionalBooleanEnv('ENABLE_STARTUP_STATS_WARMUP');
+    if (explicit !== null) return explicit;
+    return shouldRunStatsJobsInWebProcess();
 }
 
 function buildAcceptedAdminJobMessage(defaultMessage, queuedJob) {
@@ -5182,7 +5199,7 @@ httpServer.listen(PORT, async () => {
         }
     }, 60 * 60 * 1000); // Every hour
 
-    if (ENABLE_PERIODIC_STATS_REFRESH) {
+    if (isPeriodicStatsRefreshEnabled()) {
         // Refresh room_stats cache every 30 minutes (for fast API responses)
         setInterval(async () => {
             if (!shouldRunStatsJobsInWebProcess()) return;
@@ -5216,7 +5233,7 @@ httpServer.listen(PORT, async () => {
         }
     }, 30000); // 30 seconds after startup
 
-    if (ENABLE_STARTUP_STATS_WARMUP) {
+    if (isStartupStatsWarmupEnabled()) {
         // Refresh room stats on startup (for API performance)
         setTimeout(async () => {
             if (!shouldRunStatsJobsInWebProcess()) return;

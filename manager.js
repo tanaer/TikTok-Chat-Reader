@@ -9,6 +9,7 @@ const metricsService = require('./services/metricsService');
 const { getSchemeAConfig } = require('./services/featureFlagService');
 
 const PRICE_FILE = path.join(__dirname, 'prices.json');
+const ROOM_STATS_STALE_EVENT_THRESHOLD_MS = 15 * 60 * 1000;
 
 function getNowBeijing() {
     // Return YYYY-MM-DD HH:mm:ss in Beijing Time (UTC+8)
@@ -34,6 +35,19 @@ function convertToBeijingTimeString(input) {
 
 function isLikelyExactRoomIdSearch(value) {
     return typeof value === 'string' && /^[A-Za-z0-9._@-]+$/.test(value.trim());
+}
+
+function normalizeRoomIdList(roomIds = []) {
+    const list = Array.isArray(roomIds) ? roomIds : [roomIds];
+    const seen = new Set();
+    const normalized = [];
+    for (const roomId of list) {
+        const value = String(roomId || '').trim();
+        if (!value || seen.has(value)) continue;
+        seen.add(value);
+        normalized.push(value);
+    }
+    return normalized;
 }
 
 function toOptionalText(value) {
@@ -3014,7 +3028,7 @@ class Manager {
             mainParams.push(limit, offset);
         }
 
-        const rooms = await query(mainSql, mainParams);
+        let rooms = await query(mainSql, mainParams);
 
         if (rooms.length === 0) {
             return {
@@ -3023,8 +3037,19 @@ class Manager {
             };
         }
 
+        const repairedRoomIds = await this.ensureRoomStatsForRoomIds(rooms.map(r => r.roomId));
+        if (repairedRoomIds.length > 0 && useRoomStatsJoin) {
+            rooms = await query(mainSql, mainParams);
+            if (rooms.length === 0) {
+                return {
+                    data: [],
+                    pagination: { page, limit, total, totalPages: Math.ceil(total / limit) }
+                };
+            }
+        }
+
         // Get room IDs for batch queries
-        const roomIds = rooms.map(r => r.roomId);
+        const roomIds = normalizeRoomIdList(rooms.map(r => r.roomId));
         const placeholders = roomIds.map(() => '?').join(',');
 
         // Fetch current session stats only for live rooms on the current page
@@ -3142,6 +3167,77 @@ class Manager {
                 totalPages: Math.ceil(total / limit)
             }
         };
+    }
+
+    async getRoomIdsNeedingStatsRefresh(roomIds = []) {
+        await this.ensureDb();
+        const normalizedRoomIds = normalizeRoomIdList(roomIds);
+        if (normalizedRoomIds.length === 0) {
+            return [];
+        }
+
+        const placeholders = normalizedRoomIds.map(() => '?').join(',');
+        const rows = await query(`
+            SELECT
+                r.room_id,
+                rs.room_id AS cached_room_id,
+                rs.updated_at AS stats_updated_at,
+                rs.last_session_time AS cached_last_session_time,
+                s.last_session_time AS latest_session_time,
+                e.latest_event_time
+            FROM room r
+            LEFT JOIN room_stats rs ON rs.room_id = r.room_id
+            LEFT JOIN (
+                SELECT room_id, MAX(created_at) AS last_session_time
+                FROM session
+                WHERE room_id IN (${placeholders})
+                GROUP BY room_id
+            ) s ON s.room_id = r.room_id
+            LEFT JOIN (
+                SELECT room_id, MAX(timestamp) AS latest_event_time
+                FROM event
+                WHERE room_id IN (${placeholders})
+                GROUP BY room_id
+            ) e ON e.room_id = r.room_id
+            WHERE r.room_id IN (${placeholders})
+        `, [...normalizedRoomIds, ...normalizedRoomIds, ...normalizedRoomIds]);
+
+        return rows
+            .filter((row) => {
+                if (!row.cachedRoomId) return true;
+
+                const statsUpdatedAt = new Date(row.statsUpdatedAt || 0).getTime();
+                const latestEventTime = new Date(row.latestEventTime || 0).getTime();
+                if (!Number.isFinite(statsUpdatedAt)) {
+                    return true;
+                }
+
+                if (Number.isFinite(latestEventTime) && (latestEventTime - statsUpdatedAt) > ROOM_STATS_STALE_EVENT_THRESHOLD_MS) {
+                    return true;
+                }
+
+                if (!row.latestSessionTime) return false;
+                if (!row.cachedLastSessionTime) return true;
+                const cachedLastSessionTime = new Date(row.cachedLastSessionTime).getTime();
+                const latestSessionTime = new Date(row.latestSessionTime).getTime();
+                if (!Number.isFinite(cachedLastSessionTime) || !Number.isFinite(latestSessionTime)) {
+                    return true;
+                }
+                return cachedLastSessionTime < latestSessionTime;
+            })
+            .map(row => row.roomId);
+    }
+
+    async ensureRoomStatsForRoomIds(roomIds = []) {
+        await this.ensureDb();
+        const staleRoomIds = await this.getRoomIdsNeedingStatsRefresh(roomIds);
+        if (staleRoomIds.length === 0) {
+            return [];
+        }
+
+        console.log(`[Manager] Repairing room_stats for ${staleRoomIds.length} room(s): ${staleRoomIds.join(', ')}`);
+        await this.refreshRoomStats({ roomIds: staleRoomIds });
+        return staleRoomIds;
     }
 
 
@@ -3770,14 +3866,23 @@ class Manager {
 
     // Refresh room_stats table with pre-aggregated statistics
     // This dramatically improves getRoomStats performance for calculated sorts
-    async refreshRoomStats() {
+    async refreshRoomStats(options = {}) {
         await this.ensureDb();
-        console.log('[Manager] Refreshing room_stats cache...');
+        const requestedRoomIds = normalizeRoomIdList(
+            Array.isArray(options.roomIds) && options.roomIds.length > 0 ? options.roomIds : options.roomId
+        );
+        const refreshScope = requestedRoomIds.length > 0 ? 'partial' : 'full';
+        console.log(`[Manager] Refreshing room_stats cache (${refreshScope})...`);
         const startTime = Date.now();
 
         try {
-            // Get all room IDs
-            const rooms = await query(`SELECT room_id FROM room`);
+            let rooms = [];
+            if (requestedRoomIds.length > 0) {
+                const requestedPlaceholders = requestedRoomIds.map(() => '?').join(',');
+                rooms = await query(`SELECT room_id FROM room WHERE room_id IN (${requestedPlaceholders})`, requestedRoomIds);
+            } else {
+                rooms = await query(`SELECT room_id FROM room`);
+            }
             if (rooms.length === 0) {
                 console.log('[Manager] No rooms to refresh');
                 const elapsed = Date.now() - startTime;
@@ -3788,11 +3893,12 @@ class Manager {
                     durationMs: elapsed,
                     refreshed: 0,
                     roomCount: 0,
+                    scope: refreshScope,
                 });
-                return { refreshed: 0 };
+                return { refreshed: 0, roomCount: 0, scope: refreshScope };
             }
 
-            const roomIds = rooms.map(r => r.roomId);
+            const roomIds = normalizeRoomIdList(rooms.map(r => r.roomId));
             const placeholders = roomIds.map(() => '?').join(',');
 
             // 1. Basic stats (all-time gift value, visit count, chat count)
@@ -3960,8 +4066,9 @@ class Manager {
                 durationMs: elapsed,
                 refreshed,
                 roomCount: roomIds.length,
+                scope: refreshScope,
             });
-            return { refreshed, elapsedMs: elapsed };
+            return { refreshed, elapsedMs: elapsed, roomCount: roomIds.length, scope: refreshScope };
 
         } catch (err) {
             const elapsed = Date.now() - startTime;
@@ -3971,6 +4078,7 @@ class Manager {
                 status: 'error',
                 durationMs: elapsed,
                 error: metricsService.safeErrorMessage(err),
+                scope: refreshScope,
             });
             console.error('[Manager] Error refreshing room_stats:', err);
             throw err;
