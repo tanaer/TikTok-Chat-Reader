@@ -1,5 +1,314 @@
 /* Minimal overrides for DaisyUI */
 
+/* ── Sub-nav polish ── */
+#sub-nav-container {
+    background: rgba(20, 27, 40, 0.65);
+    backdrop-filter: blur(10px);
+    border-color: rgba(148, 163, 184, 0.1);
+}
+
+#sub-nav-container .sub-nav-btn {
+    transition: all 0.18s ease;
+    border-radius: 0.75rem;
+    font-weight: 500;
+}
+
+#sub-nav-container .sub-nav-btn:not(.active):hover {
+    background: rgba(96, 165, 250, 0.1);
+    color: #93c5fd;
+}
+
+/* ── Sort button group polish ── */
+#roomSortGroup {
+    gap: 1px;
+}
+
+#roomSortGroup .room-sort-btn {
+    transition: all 0.15s ease;
+    font-size: 0.75rem;
+    letter-spacing: 0.01em;
+}
+
+#roomSortGroup .room-sort-btn:not(.btn-primary):hover {
+    background: rgba(96, 165, 250, 0.12);
+    color: #93c5fd;
+}
+
+/* ── Room card hover lift ── */
+#roomListContainer > div:not(.col-span-full) {
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+#roomListContainer > div:not(.col-span-full):hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* ── Detail stats bar glow ── */
+#detailStats .stat {
+    transition: background 0.2s ease;
+}
+
+#detailStats .stat:hover {
+    background: rgba(96, 165, 250, 0.06);
+}
+
+/* ── Detail tab indicator ── */
+.tabs-boxed .tab-active {
+    position: relative;
+}
+
+.tabs-boxed .tab-active::after {
+    content: '';
+    position: absolute;
+    bottom: -1px;
+    left: 25%;
+    width: 50%;
+    height: 2px;
+    background: currentColor;
+    border-radius: 1px;
+    opacity: 0.5;
+}
+
+/* ── Chat message entrance ── */
+.chat-message {
+    animation: chatSlideIn 0.15s ease-out;
+}
+
+@keyframes chatSlideIn {
+    from { opacity: 0; transform: translateX(-4px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ── Driver.js theme overrides for dark mode ── */
+.driver-popover {
+    background: rgba(22, 28, 42, 0.97) !important;
+    border: 1px solid rgba(96, 165, 250, 0.25) !important;
+    border-radius: 1rem !important;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(96, 165, 250, 0.1) !important;
+    color: #e2e8f0 !important;
+    backdrop-filter: blur(12px);
+}
+
+.driver-popover .driver-popover-title {
+    color: #f1f5f9 !important;
+    font-size: 1rem !important;
+    font-weight: 700 !important;
+}
+
+.driver-popover .driver-popover-description {
+    color: #cbd5e1 !important;
+    font-size: 0.875rem !important;
+    line-height: 1.6 !important;
+}
+
+.driver-popover .driver-popover-progress-text {
+    color: #94a3b8 !important;
+    font-size: 0.75rem !important;
+}
+
+.driver-popover .driver-popover-navigation-btns {
+    gap: 0.5rem;
+}
+
+.driver-popover .driver-popover-prev-btn {
+    background: transparent !important;
+    border: 1px solid rgba(148, 163, 184, 0.3) !important;
+    color: #94a3b8 !important;
+    border-radius: 0.5rem !important;
+    padding: 0.35rem 0.85rem !important;
+    font-size: 0.8rem !important;
+}
+
+.driver-popover .driver-popover-prev-btn:hover {
+    background: rgba(148, 163, 184, 0.1) !important;
+    color: #e2e8f0 !important;
+}
+
+.driver-popover .driver-popover-next-btn,
+.driver-popover .driver-popover-close-btn-text {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8) !important;
+    border: none !important;
+    color: #fff !important;
+    border-radius: 0.5rem !important;
+    padding: 0.35rem 0.85rem !important;
+    font-size: 0.8rem !important;
+    font-weight: 500 !important;
+}
+
+.driver-popover .driver-popover-next-btn:hover,
+.driver-popover .driver-popover-close-btn-text:hover {
+    background: linear-gradient(135deg, #3b82f6, #2563eb) !important;
+}
+
+.driver-popover-arrow-side-left .driver-popover-arrow,
+.driver-popover-arrow-side-right .driver-popover-arrow,
+.driver-popover-arrow-side-top .driver-popover-arrow,
+.driver-popover-arrow-side-bottom .driver-popover-arrow {
+    border-color: rgba(22, 28, 42, 0.97) !important;
+}
+
+/* ── Onboarding floating panel ── */
+#onboardingPanel {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    width: 340px;
+    max-width: calc(100vw - 2rem);
+    background: rgba(22, 28, 42, 0.97);
+    border: 1px solid rgba(96, 165, 250, 0.25);
+    border-radius: 1rem;
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45), 0 0 0 1px rgba(96, 165, 250, 0.1);
+    backdrop-filter: blur(14px);
+    padding: 1rem 1.25rem;
+    z-index: 9999;
+    opacity: 0;
+    transform: translateY(20px) scale(0.96);
+    pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    font-family: inherit;
+}
+
+#onboardingPanel.ob-visible {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    pointer-events: auto;
+}
+
+#onboardingPanel .ob-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 0.6rem;
+}
+
+#onboardingPanel .ob-badge {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #60a5fa;
+    background: rgba(96, 165, 250, 0.12);
+    padding: 0.15rem 0.55rem;
+    border-radius: 999px;
+    letter-spacing: 0.03em;
+}
+
+#onboardingPanel .ob-close {
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 1.25rem;
+    cursor: pointer;
+    line-height: 1;
+    padding: 0 0.15rem;
+    transition: color 0.15s;
+}
+
+#onboardingPanel .ob-close:hover {
+    color: #e2e8f0;
+}
+
+#onboardingPanel .ob-title {
+    color: #f1f5f9;
+    font-size: 0.95rem;
+    font-weight: 700;
+    margin-bottom: 0.4rem;
+}
+
+#onboardingPanel .ob-desc {
+    color: #94a3b8;
+    font-size: 0.82rem;
+    line-height: 1.65;
+    margin-bottom: 0.85rem;
+}
+
+#onboardingPanel .ob-desc b {
+    color: #cbd5e1;
+    font-weight: 600;
+}
+
+#onboardingPanel .ob-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+#onboardingPanel .ob-skip {
+    background: none;
+    border: none;
+    color: #64748b;
+    font-size: 0.78rem;
+    cursor: pointer;
+    padding: 0.25rem 0;
+    transition: color 0.15s;
+}
+
+#onboardingPanel .ob-skip:hover {
+    color: #94a3b8;
+}
+
+#onboardingPanel .ob-next {
+    background: linear-gradient(135deg, #2563eb, #1d4ed8);
+    border: none;
+    color: #fff;
+    border-radius: 0.5rem;
+    padding: 0.4rem 1rem;
+    font-size: 0.82rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+#onboardingPanel .ob-next:hover {
+    background: linear-gradient(135deg, #3b82f6, #2563eb);
+}
+
+/* ── Onboarding pulse ring on target elements ── */
+@keyframes obPulseRing {
+    0%   { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.5); }
+    70%  { box-shadow: 0 0 0 10px rgba(96, 165, 250, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0); }
+}
+
+.ob-pulse {
+    animation: obPulseRing 2s ease-in-out infinite !important;
+    position: relative;
+    z-index: 1;
+}
+
+/* ── Onboarding completion toast ── */
+.ob-toast {
+    position: fixed;
+    top: 1rem;
+    left: 50%;
+    transform: translateX(-50%) translateY(-20px);
+    background: rgba(22, 28, 42, 0.97);
+    border: 1px solid rgba(96, 165, 250, 0.3);
+    color: #e2e8f0;
+    padding: 0.75rem 1.25rem;
+    border-radius: 0.75rem;
+    font-size: 0.85rem;
+    z-index: 10000;
+    opacity: 0;
+    transition: opacity 0.35s ease, transform 0.35s ease;
+    pointer-events: none;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.3);
+}
+
+.ob-toast.ob-toast-show {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+
+/* ── Help button pulse on first visit ── */
+@keyframes helpPulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.5); }
+    50% { box-shadow: 0 0 0 8px rgba(96, 165, 250, 0); }
+}
+
+#startTourBtn.tour-hint {
+    animation: helpPulse 2s ease-in-out 3;
+}
+
 /* Scrollbar styling for Webkit */
 ::-webkit-scrollbar {
     width: 6px;
