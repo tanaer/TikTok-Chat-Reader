@@ -297,6 +297,268 @@
             box-shadow: 0 22px 60px rgba(37, 99, 235, 0.14);
         }
 
+        .pricing-shell {
+            max-width: 106rem;
+            margin: 0 auto;
+        }
+
+        .pricing-period-switch {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.45rem;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.16);
+            background: linear-gradient(135deg, rgba(15, 23, 42, 0.94), rgba(17, 24, 39, 0.9));
+            box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 18px 34px rgba(2, 6, 23, 0.2);
+        }
+
+        .pricing-period-btn {
+            position: relative;
+            border: none;
+            min-width: 6rem;
+            padding: 0.82rem 1.2rem;
+            border-radius: 999px;
+            background: transparent;
+            color: rgba(226, 232, 240, 0.68);
+            font-size: 0.92rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            transition: transform 0.2s ease, background 0.2s ease, color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .pricing-period-btn:hover:not(.is-active) {
+            color: rgba(248, 250, 252, 0.96);
+            background: rgba(255, 255, 255, 0.04);
+        }
+
+        .pricing-period-btn.is-active {
+            color: #111827;
+            background: linear-gradient(135deg, rgba(254, 240, 138, 0.98), rgba(147, 197, 253, 0.98));
+            box-shadow: 0 10px 24px rgba(59, 130, 246, 0.22);
+            transform: translateY(-1px);
+        }
+
+        .pricing-period-btn:disabled {
+            display: none;
+        }
+
+        .pricing-grid {
+            display: grid;
+            grid-template-columns: repeat(1, minmax(0, 1fr));
+            gap: 1.5rem;
+            align-items: stretch;
+        }
+
+        .pricing-card {
+            position: relative;
+            overflow: hidden;
+            min-height: 100%;
+            border-radius: 1.6rem;
+        }
+
+        .pricing-card::before {
+            content: '';
+            position: absolute;
+            inset: -30% 28% auto auto;
+            width: 8rem;
+            height: 8rem;
+            border-radius: 999px;
+            background: radial-gradient(circle, rgba(96, 165, 250, 0.18), transparent 70%);
+            pointer-events: none;
+        }
+
+        .pricing-card-body {
+            position: relative;
+            z-index: 1;
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+            padding: 1.55rem;
+            text-align: left;
+        }
+
+        .pricing-card-top {
+            display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            gap: 0.9rem;
+        }
+
+        .pricing-plan-kicker {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.35rem;
+            padding: 0.38rem 0.72rem;
+            border-radius: 999px;
+            border: 1px solid rgba(148, 163, 184, 0.14);
+            background: rgba(15, 23, 42, 0.56);
+            color: rgba(191, 219, 254, 0.78);
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .pricing-room-badge {
+            flex-shrink: 0;
+            padding: 0.48rem 0.72rem;
+            border-radius: 0.9rem;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid rgba(148, 163, 184, 0.12);
+            color: rgba(226, 232, 240, 0.74);
+            font-size: 0.76rem;
+            font-weight: 700;
+            text-align: center;
+        }
+
+        .pricing-plan-name {
+            margin-top: 1rem;
+            color: rgba(248, 250, 252, 0.98);
+            font-size: 1.22rem;
+            font-weight: 800;
+            letter-spacing: -0.02em;
+        }
+
+        .pricing-plan-desc {
+            margin-top: 0.42rem;
+            color: rgba(203, 213, 225, 0.68);
+            font-size: 0.9rem;
+            line-height: 1.6;
+            min-height: 2.9rem;
+        }
+
+        .pricing-price-wrap {
+            margin-top: 1.35rem;
+            padding: 1rem 1.05rem;
+            border-radius: 1.2rem;
+            background: linear-gradient(160deg, rgba(15, 23, 42, 0.8), rgba(15, 23, 42, 0.46));
+            border: 1px solid rgba(148, 163, 184, 0.12);
+        }
+
+        .pricing-price-line {
+            display: flex;
+            align-items: flex-end;
+            gap: 0.25rem;
+        }
+
+        .pricing-price-line .price-main {
+            font-size: 2.6rem;
+            font-weight: 800;
+            line-height: 1;
+            color: rgba(248, 250, 252, 0.98);
+        }
+
+        .pricing-price-line .price-unit {
+            color: rgba(203, 213, 225, 0.68);
+            font-size: 0.92rem;
+            margin-bottom: 0.28rem;
+        }
+
+        .pricing-price-sub {
+            margin-top: 0.45rem;
+            color: rgba(191, 219, 254, 0.72);
+            font-size: 0.82rem;
+            line-height: 1.5;
+            min-height: 1.3rem;
+        }
+
+        .pricing-feature-list {
+            display: grid;
+            gap: 0.72rem;
+            margin-top: 1.25rem;
+            margin-bottom: 1.5rem;
+        }
+
+        .pricing-feature-item {
+            display: flex;
+            align-items: center;
+            gap: 0.68rem;
+            min-width: 0;
+            color: rgba(226, 232, 240, 0.82);
+            font-size: 0.9rem;
+            line-height: 1.45;
+        }
+
+        .pricing-feature-item .feature-mark {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1.35rem;
+            height: 1.35rem;
+            border-radius: 999px;
+            flex-shrink: 0;
+            font-size: 0.82rem;
+            font-weight: 800;
+        }
+
+        .pricing-feature-item.is-included .feature-mark {
+            color: #082f49;
+            background: linear-gradient(135deg, rgba(125, 211, 252, 0.94), rgba(167, 243, 208, 0.94));
+            box-shadow: 0 8px 18px rgba(34, 211, 238, 0.16);
+        }
+
+        .pricing-feature-item.is-muted {
+            color: rgba(148, 163, 184, 0.68);
+        }
+
+        .pricing-feature-item.is-muted .feature-mark {
+            color: rgba(148, 163, 184, 0.66);
+            background: rgba(148, 163, 184, 0.12);
+            border: 1px solid rgba(148, 163, 184, 0.12);
+        }
+
+        .pricing-cta {
+            margin-top: auto;
+        }
+
+        .pricing-popular-badge {
+            position: absolute;
+            top: 1rem;
+            right: 1rem;
+            z-index: 2;
+            border: none;
+            color: #111827;
+            background: linear-gradient(135deg, rgba(254, 240, 138, 0.96), rgba(147, 197, 253, 0.96));
+            box-shadow: 0 14px 28px rgba(59, 130, 246, 0.18);
+        }
+
+        @media (min-width: 768px) {
+            .pricing-grid {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .pricing-grid {
+                grid-template-columns: repeat(3, minmax(0, 1fr));
+            }
+        }
+
+        @media (min-width: 1280px) {
+            .pricing-grid {
+                grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr));
+            }
+        }
+
+        @media (max-width: 767px) {
+            .pricing-period-switch {
+                width: 100%;
+                justify-content: space-between;
+            }
+
+            .pricing-period-btn {
+                flex: 1;
+                min-width: 0;
+                padding-left: 0.9rem;
+                padding-right: 0.9rem;
+            }
+
+            .pricing-card-body {
+                padding: 1.3rem;
+            }
+        }
+
         .stat-num {
             font-variant-numeric: tabular-nums;
         }
@@ -1121,41 +1383,46 @@
 
     <!-- Pricing -->
     <section id="landing-pricing" class="landing-pricing py-24 scroll-mt-24">
-        <div class="max-w-5xl mx-auto px-6">
+        <div class="pricing-shell px-6">
             <h2 class="text-3xl font-bold text-center mb-2">选择适合你的方案</h2>
-            <p class="text-center text-base-content/50 mb-4">所有套餐均包含实时弹幕监控、实时礼物监控、实时点赞监控、直播间排行榜、团播运营计算器、用户数据分析</p>
 
             <!-- Period Tabs -->
             <div class="flex justify-center mb-10">
-                <div class="join">
-                    <button class="join-item btn btn-sm period-btn btn-active" data-period="monthly">月付</button>
-                    <button class="join-item btn btn-sm period-btn" data-period="quarterly">季付</button>
-                    <button class="join-item btn btn-sm period-btn" data-period="annual">年付</button>
+                <div class="pricing-period-switch" role="tablist" aria-label="付款周期">
+                    <button class="pricing-period-btn period-btn is-active" data-period="monthly" aria-pressed="true">月付</button>
+                    <button class="pricing-period-btn period-btn" data-period="quarterly" aria-pressed="false">季付</button>
+                    <button class="pricing-period-btn period-btn" data-period="annual" aria-pressed="false">年付</button>
                 </div>
             </div>
 
             <!-- Free tier + Dynamic plans -->
-            <div id="pricing-grid" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 items-start">
+            <div id="pricing-grid" class="pricing-grid">
                 <!-- Free tier (static) -->
-                <div class="card bg-base-100 shadow plan-card">
-                    <div class="card-body text-center">
-                        <h3 class="text-lg font-bold">体验版</h3>
-                        <p class="text-base-content/50 text-sm mt-1">注册即可使用</p>
-                        <div class="my-6">
-                            <span class="text-4xl font-extrabold">免费</span>
+                <div class="card bg-base-100 shadow plan-card pricing-card">
+                    <div class="pricing-card-body">
+                        <div class="pricing-card-top">
+                            <span class="pricing-plan-kicker">Free</span>
+                            <span class="pricing-room-badge"><span data-free-rooms>1</span> 房间</span>
                         </div>
-                        <ul id="free-plan-feature-list" class="text-left text-sm space-y-2 mb-6">
-                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> <span
-                                    id="free-rooms">1</span> 个监控房间</li>
-                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 基础数据查看</li>
-                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 实时弹幕监控</li>
-                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 实时礼物监控</li>
-                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 实时点赞监控</li>
-                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 直播间排行榜</li>
-                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 团播运营计算器</li>
-                            <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> 用户数据分析</li>
+                        <h3 class="pricing-plan-name">体验版</h3>
+                        <p class="pricing-plan-desc">注册即可使用，适合先体验监控与基础数据能力。</p>
+                        <div class="pricing-price-wrap">
+                            <div class="pricing-price-line">
+                                <span class="price-main">免费</span>
+                            </div>
+                            <div class="pricing-price-sub">无需付费，立即开始使用</div>
+                        </div>
+                        <ul id="free-plan-feature-list" class="pricing-feature-list">
+                            <li class="pricing-feature-item is-included"><span class="feature-mark">&#10003;</span><span><span data-free-rooms>1</span> 个监控房间</span></li>
+                            <li class="pricing-feature-item is-included"><span class="feature-mark">&#10003;</span><span>基础数据查看</span></li>
+                            <li class="pricing-feature-item is-included"><span class="feature-mark">&#10003;</span><span>实时弹幕监控</span></li>
+                            <li class="pricing-feature-item is-included"><span class="feature-mark">&#10003;</span><span>实时礼物监控</span></li>
+                            <li class="pricing-feature-item is-included"><span class="feature-mark">&#10003;</span><span>实时点赞监控</span></li>
+                            <li class="pricing-feature-item is-included"><span class="feature-mark">&#10003;</span><span>直播间排行榜</span></li>
+                            <li class="pricing-feature-item is-included"><span class="feature-mark">&#10003;</span><span>团播运营计算器</span></li>
+                            <li class="pricing-feature-item is-included"><span class="feature-mark">&#10003;</span><span>用户数据分析</span></li>
                         </ul>
-                        <a id="free-plan-btn" href="/register.html" class="btn btn-outline btn-block">免费注册</a>
+                        <a id="free-plan-btn" href="/register.html" class="btn btn-outline btn-block pricing-cta">免费注册</a>
                     </div>
                 </div>
                 <!-- Plans loaded by JS -->
@@ -1214,10 +1481,73 @@
                 '团播运营计算器',
                 '用户数据分析'
             ];
+            const planNarratives = [
+                '适合刚开始搭建监控流程的小团队。',
+                '适合高频跟播与复盘协同的运营团队。',
+                '适合需要更高容量和更完整协作能力的团队。',
+                '适合多房间并行盯盘的成熟团队。',
+                '适合追求高密度数据协同和稳定支持的大团队。'
+            ];
             const customerDataFormatter = new Intl.NumberFormat('zh-CN');
             const prefersReducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
             let customerDataValue = 0;
             let customerDataFrame = null;
+
+            function updateFreeRoomDisplays(value) {
+                document.querySelectorAll('[data-free-rooms]').forEach((element) => {
+                    element.textContent = String(value);
+                });
+            }
+
+            function normalizeFlags(rawFlags) {
+                if (!rawFlags) return {};
+                if (typeof rawFlags === 'string') {
+                    try {
+                        return JSON.parse(rawFlags);
+                    } catch (error) {
+                        console.warn('Parse feature flags error:', error);
+                        return {};
+                    }
+                }
+                return rawFlags;
+            }
+
+            function hasFeature(flags, ...keys) {
+                return keys.some((key) => Boolean(flags?.[key]));
+            }
+
+            function renderPlanFeatureItem(label, included = true) {
+                return `
+                    <li class="pricing-feature-item ${included ? 'is-included' : 'is-muted'}">
+                        <span class="feature-mark">${included ? '&#10003;' : '&#10007;'}</span>
+                        <span>${label}</span>
+                    </li>`;
+            }
+
+            function getPlanFeatureItems(plan, roomText) {
+                const flags = normalizeFlags(plan?.featureFlags);
+                const dynamicBenefits = [
+                    {
+                        label: 'AI直播复盘',
+                        enabled: hasFeature(flags, 'ai_live_recap', 'aiLiveRecap')
+                    },
+                    {
+                        label: '数据导出',
+                        enabled: hasFeature(flags, 'export', 'data_export')
+                    },
+                    {
+                        label: '优先支持',
+                        enabled: hasFeature(flags, 'priority_support', 'prioritySupport')
+                    }
+                ];
+
+                return [
+                    renderPlanFeatureItem(`${roomText} 个监控房间`),
+                    renderPlanFeatureItem(`AI 额度 ${plan.aiCreditsMonthly || 0} 点/月`),
+                    ...commonPlanBenefits.map((benefit) => renderPlanFeatureItem(benefit)),
+                    ...dynamicBenefits.map((benefit) => renderPlanFeatureItem(benefit.enabled ? benefit.label : `${benefit.label} 未包含`, benefit.enabled))
+                ].join('');
+            }
 
             function renderCustomerDataValue(value) {
                 if (!customerDataNumber) return;
@@ -1352,7 +1682,7 @@
                     const cfgRes = await fetch('/api/config');
                     const cfg = await cfgRes.json();
                     const freeRooms = cfg.gift_room_limit || cfg.default_room_limit || 1;
-                    document.getElementById('free-rooms').textContent = freeRooms;
+                    updateFreeRoomDisplays(freeRooms);
                 } catch (e) { }
 
                 function getPlanAvailablePeriods(plan) {
@@ -1369,12 +1699,14 @@
                     const hasComparablePeriods = comparablePeriods.length > 0;
                     document.querySelectorAll('.period-btn').forEach(btn => {
                         const enabled = comparablePeriods.includes(btn.dataset.period);
-                        btn.classList.toggle('hidden', hasComparablePeriods && !enabled);
                         if (!hasComparablePeriods) {
-                            btn.classList.add('hidden');
+                            btn.hidden = true;
+                        } else {
+                            btn.hidden = !enabled;
                         }
                         btn.disabled = hasComparablePeriods ? !enabled : true;
-                        btn.classList.toggle('btn-active', hasComparablePeriods && btn.dataset.period === currentPeriod);
+                        btn.classList.toggle('is-active', hasComparablePeriods && btn.dataset.period === currentPeriod);
+                        btn.setAttribute('aria-pressed', hasComparablePeriods && btn.dataset.period === currentPeriod ? 'true' : 'false');
                     });
                 }
 
@@ -1401,34 +1733,37 @@
                         const monthlyPrice = periodMeta.monthCount > 0 ? Math.round(price / periodMeta.monthCount) : price;
                         const isPopular = idx === 1; // Second plan = popular
                         const roomText = plan.roomLimit === -1 ? '无限' : plan.roomLimit;
+                        const planNarrative = planNarratives[idx] || '适合需要更稳定监控节奏与数据协作的团队。';
                         const subscribeHref = (typeof Auth !== 'undefined' && Auth.isLoggedIn())
                             ? '/user-center.html?tab=subscription'
                             : '/register.html';
                         const periodSummary = periodMeta.monthCount > 1
-                            ? `<div class="text-xs text-base-content/40 mt-1">${periodMeta.label} &yen;${price}</div>`
-                            : '';
-                        const benefitItems = [
-                            `<li class="flex items-center gap-2"><span class="text-success">&#10003;</span> AI 额度 ${plan.aiCreditsMonthly || 0} 点/月</li>`,
-                            ...commonPlanBenefits.map((benefit) => `<li class="flex items-center gap-2"><span class="text-success">&#10003;</span> ${benefit}</li>`)
-                        ].join('');
+                            ? `${periodMeta.label} 总价 &yen;${price}`
+                            : '按月灵活订阅';
+                        const benefitItems = getPlanFeatureItems(plan, roomText);
 
                         const card = document.createElement('div');
-                        card.className = `card bg-base-100 shadow plan-card ${isPopular ? 'plan-popular relative' : ''}`;
+                        card.className = `card bg-base-100 shadow plan-card pricing-card ${isPopular ? 'plan-popular' : ''}`;
                         card.innerHTML = `
-                            ${isPopular ? '<div class="absolute -top-3 left-1/2 -translate-x-1/2 badge badge-primary badge-sm">推荐</div>' : ''}
-                            <div class="card-body text-center">
-                                <h3 class="text-lg font-bold">${plan.name}</h3>
-                                <p class="text-base-content/50 text-sm mt-1">${roomText} 个监控房间</p>
-                                <div class="my-6">
-                                    <span class="text-4xl font-extrabold stat-num">&yen;${monthlyPrice}</span>
-                                    <span class="text-base-content/50">/月</span>
-                                    ${periodSummary}
+                            ${isPopular ? '<div class="badge badge-primary badge-sm pricing-popular-badge">推荐</div>' : ''}
+                            <div class="pricing-card-body">
+                                <div class="pricing-card-top">
+                                    <span class="pricing-plan-kicker">${periodMeta.label}</span>
+                                    <span class="pricing-room-badge">${roomText} 房间</span>
                                 </div>
-                                <ul class="text-left text-sm space-y-2 mb-6">
-                                    <li class="flex items-center gap-2"><span class="text-success">&#10003;</span> ${roomText} 个监控房间</li>
+                                <h3 class="pricing-plan-name">${plan.name}</h3>
+                                <p class="pricing-plan-desc">${planNarrative}</p>
+                                <div class="pricing-price-wrap">
+                                    <div class="pricing-price-line">
+                                        <span class="price-main stat-num">&yen;${monthlyPrice}</span>
+                                        <span class="price-unit">/月</span>
+                                    </div>
+                                    <div class="pricing-price-sub">${periodSummary}</div>
+                                </div>
+                                <ul class="pricing-feature-list">
                                     ${benefitItems}
                                 </ul>
-                                <a href="${subscribeHref}" class="btn ${isPopular ? 'btn-primary' : 'btn-outline'} btn-block">立即订阅</a>
+                                <a href="${subscribeHref}" class="btn ${isPopular ? 'btn-primary' : 'btn-outline'} btn-block pricing-cta">立即订阅</a>
                             </div>
                         `;
                         grid.appendChild(card);
@@ -1440,8 +1775,12 @@
                 // Period tab switching
                 document.querySelectorAll('.period-btn').forEach(btn => {
                     btn.addEventListener('click', function () {
-                        document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('btn-active'));
-                        this.classList.add('btn-active');
+                        document.querySelectorAll('.period-btn').forEach(b => {
+                            b.classList.remove('is-active');
+                            b.setAttribute('aria-pressed', 'false');
+                        });
+                        this.classList.add('is-active');
+                        this.setAttribute('aria-pressed', 'true');
                         currentPeriod = this.dataset.period;
                         renderPlans();
                     });
