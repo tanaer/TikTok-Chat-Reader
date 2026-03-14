@@ -7,11 +7,13 @@ let userListTotalCount = 0;
 let userListPageSize = 50;  // Now mutable for dynamic page size
 let userSearchAutoRetried = false;
 let currentUserHistoryMeta = { uniqueIds: [], nicknames: [], title: '', userId: '' };
+let currentUserListRenderToken = 0;
 let currentDetailAiUserId = '';
 let currentDetailAiJobId = 0;
 let aiAnalysisJobPollTimer = null;
 const DEFAULT_PERSONALITY_ANALYSIS_POINTS = 1;
 let currentDetailAiPointCost = DEFAULT_PERSONALITY_ANALYSIS_POINTS;
+const userListEnrichmentCache = new Map();
 
 function escapeUserAnalysisHtml(value) {
     return String(value ?? '')
@@ -27,6 +29,279 @@ function escapeUserAnalysisInlineJsString(value) {
         .replace(/\\/g, '\\\\')
         .replace(/'/g, "\\'");
 }
+
+function buildUserAnalysisDomId(value) {
+    return String(value ?? '').replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+function formatDiamondValue(value) {
+    const n = Number(value) || 0;
+    if (n >= 1e8) return (n / 1e8).toFixed(1).replace(/\.0$/, '') + '亿';
+    if (n >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, '') + '万';
+    return n.toLocaleString();
+}
+
+function buildUserHistoryTitle(user = {}) {
+    return String(user?.uniqueId || user?.nickname || user?.userId || '该用户').trim() || '该用户';
+}
+
+function renderUserTopGiftsHtml(allGifts = [], { loading = false } = {}) {
+    if (loading) {
+        return '<span class="loading loading-spinner loading-xs opacity-40"></span>';
+    }
+
+    const otherGifts = (Array.isArray(allGifts) ? allGifts : []).filter((gift) => {
+        const name = String(gift?.name || '').toLowerCase();
+        return name !== 'rose' && name !== 'tiktok';
+    }).slice(0, 6);
+
+    return otherGifts.map((gift) => {
+        const icon = gift.icon ? `<img src="${gift.icon}" class="w-4 h-4 inline-block" alt="${escapeUserAnalysisHtml(gift.name || '礼物')}">` : '🎁';
+        return `<span class="tooltip cursor-help" data-tip="${escapeUserAnalysisHtml(gift.name || '礼物')} x${Number(gift.count || 0)} (${Number(gift.totalValue || 0)}💎)">${icon}</span>`;
+    }).join('') || '<span class="opacity-30 text-xs">-</span>';
+}
+
+function buildUserHistoryAliasTriggerHtml(meta = {}) {
+    const userId = String(meta?.userId || '').trim();
+    const hasKnownCount = meta?.historyAliasCount !== undefined && meta?.historyAliasCount !== null && meta?.historyAliasCount !== '';
+    const historyAliasCount = hasKnownCount ? Number(meta.historyAliasCount || 0) : null;
+    if (!userId) {
+        return '';
+    }
+    if (hasKnownCount && historyAliasCount <= 0 && !meta?.forceShow) {
+        return '';
+    }
+
+    const title = String(meta?.title || userId || '该用户').trim() || '该用户';
+
+    // Build tooltip content from cached data
+    const uniqueIds = Array.isArray(meta?.historyUniqueIds) ? meta.historyUniqueIds.filter(Boolean) : [];
+    const nicknames = Array.isArray(meta?.historyNicknames) ? meta.historyNicknames.filter(Boolean) : [];
+    const parts = [];
+    if (uniqueIds.length) parts.push('ID: ' + uniqueIds.join(', '));
+    if (nicknames.length) parts.push('昵称: ' + nicknames.join(', '));
+    const tooltipText = parts.length ? parts.join(' | ') : '点击查看历史账号';
+
+    const countBadge = hasKnownCount && historyAliasCount > 0 ? `<span class="badge badge-warning badge-xs absolute -top-1 -right-1">${historyAliasCount}</span>` : '';
+    return `<span class="tooltip tooltip-bottom relative inline-flex" data-tip="${escapeUserAnalysisHtml(tooltipText)}"><button class="btn btn-ghost btn-xs btn-circle h-6 w-6 min-h-6 p-0" onclick="showUserHistoryAliasesByUser('${escapeUserAnalysisInlineJsString(userId)}', '${escapeUserAnalysisInlineJsString(title)}')"><svg xmlns="http://www.w3.org/2000/svg" class="h-3.5 w-3.5 opacity-60" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>${countBadge}</button></span>`;
+}
+
+function mergeUserListEnrichment(meta = {}) {
+    const userId = String(meta?.userId || '').trim();
+    if (!userId) return null;
+
+    const existing = userListEnrichmentCache.get(userId) || { userId };
+    const next = {
+        ...existing,
+        ...meta,
+        userId,
+        title: String(meta?.title || existing?.title || userId || '该用户').trim() || '该用户'
+    };
+    userListEnrichmentCache.set(userId, next);
+    return next;
+}
+
+function applyUserListEnrichment(items = [], renderToken = currentUserListRenderToken) {
+    if (renderToken !== currentUserListRenderToken) return;
+
+    (Array.isArray(items) ? items : []).forEach((item) => {
+        const merged = mergeUserListEnrichment(item);
+        if (!merged) return;
+
+        const domId = buildUserAnalysisDomId(merged.userId);
+        const topGiftsEl = document.getElementById(`user-top-gifts-${domId}`);
+        if (topGiftsEl && Object.prototype.hasOwnProperty.call(merged, 'topGifts')) {
+            topGiftsEl.innerHTML = renderUserTopGiftsHtml(merged.topGifts);
+        }
+
+        const historyEl = document.getElementById(`user-history-trigger-${domId}`);
+        if (historyEl && Object.prototype.hasOwnProperty.call(merged, 'historyAliasCount')) {
+            historyEl.innerHTML = buildUserHistoryAliasTriggerHtml(merged);
+        }
+    });
+}
+
+function requestUserListEnrichment(userIds = [], options = {}) {
+    const normalizedUserIds = [...new Set((Array.isArray(userIds) ? userIds : [])
+        .map((userId) => String(userId || '').trim())
+        .filter(Boolean))];
+    if (normalizedUserIds.length === 0) {
+        return Promise.resolve([]);
+    }
+
+    const includeTopGifts = options.includeTopGifts !== false;
+    const includeHistoryMeta = options.includeHistoryMeta !== false;
+    const timeoutMs = Math.max(1000, Number(options.timeoutMs || 8000));
+    const query = [
+        `userIds=${normalizedUserIds.map((userId) => encodeURIComponent(userId)).join(',')}`,
+        `includeTopGifts=${includeTopGifts ? 'true' : 'false'}`,
+        `includeHistoryMeta=${includeHistoryMeta ? 'true' : 'false'}`
+    ].join('&');
+
+    return new Promise((resolve, reject) => {
+        $.ajax({
+            url: `/api/analysis/users/enrichment?${query}`,
+            method: 'GET',
+            timeout: timeoutMs
+        })
+            .done((data) => resolve(Array.isArray(data?.users) ? data.users : []))
+            .fail(reject);
+    });
+}
+
+function hydrateUserListEnrichment(users = [], renderToken = currentUserListRenderToken) {
+    const normalizedUsers = Array.isArray(users) ? users : [];
+    const ids = normalizedUsers
+        .map((user) => String(user?.userId || '').trim())
+        .filter(Boolean);
+    if (ids.length === 0) return;
+
+    const BATCH_SIZE = 10;
+    const batches = [];
+    for (let i = 0; i < ids.length; i += BATCH_SIZE) {
+        batches.push(ids.slice(i, i + BATCH_SIZE));
+    }
+
+    (async () => {
+        for (const batch of batches) {
+            if (renderToken !== currentUserListRenderToken) return;
+            try {
+                const items = await requestUserListEnrichment(batch, {
+                    includeTopGifts: true,
+                    includeHistoryMeta: false,
+                    timeoutMs: 8000
+                });
+                applyUserListEnrichment(items, renderToken);
+            } catch (err) {
+                console.error('User list enrichment error:', err);
+                if (renderToken !== currentUserListRenderToken) return;
+                batch.forEach((userId) => {
+                    const domId = buildUserAnalysisDomId(userId);
+                    const topGiftsEl = document.getElementById(`user-top-gifts-${domId}`);
+                    if (topGiftsEl) {
+                        topGiftsEl.innerHTML = '<span class="opacity-30 text-xs">-</span>';
+                    }
+                });
+            }
+        }
+    })();
+}
+
+function renderHistoryAliasModal(payload = {}, options = {}) {
+    const uniqueIds = Array.isArray(payload?.uniqueIds)
+        ? payload.uniqueIds.map((item) => String(item || '').trim()).filter(Boolean)
+        : [];
+    const nicknames = Array.isArray(payload?.nicknames)
+        ? payload.nicknames.map((item) => String(item || '').trim()).filter(Boolean)
+        : [];
+    const title = String(payload?.title || payload?.userId || '该用户').trim() || '该用户';
+    const isLoading = Boolean(options.loading);
+    const isError = Boolean(options.error);
+
+    currentUserHistoryMeta = {
+        uniqueIds,
+        nicknames,
+        title,
+        userId: String(payload?.userId || '').trim()
+    };
+
+    const titleEl = document.getElementById('historyAliasTitle');
+    const uniqueListEl = document.getElementById('historyAliasUniqueIdList');
+    const nicknameListEl = document.getElementById('historyAliasNicknameList');
+    const emptyEl = document.getElementById('historyAliasEmpty');
+    const modal = document.getElementById('historyAliasModal');
+
+    if (titleEl) {
+        titleEl.textContent = `${title} 的历史账号`;
+    }
+
+    if (uniqueListEl) {
+        if (isLoading) {
+            uniqueListEl.innerHTML = '<span class="text-base-content/50 text-sm">加载中...</span>';
+        } else if (isError) {
+            uniqueListEl.innerHTML = '<span class="text-error text-sm">加载失败，请稍后重试</span>';
+        } else {
+            uniqueListEl.innerHTML = uniqueIds.length
+                ? uniqueIds.map((item) => `<span class="badge badge-outline badge-sm">${escapeUserAnalysisHtml(item)}</span>`).join('')
+                : '<span class="text-base-content/50 text-sm">暂无历史账号ID</span>';
+        }
+    }
+
+    if (nicknameListEl) {
+        if (isLoading) {
+            nicknameListEl.innerHTML = '<span class="text-base-content/50 text-sm">加载中...</span>';
+        } else if (isError) {
+            nicknameListEl.innerHTML = '<span class="text-error text-sm">加载失败，请稍后重试</span>';
+        } else {
+            nicknameListEl.innerHTML = nicknames.length
+                ? nicknames.map((item) => `<span class="badge badge-ghost badge-sm">${escapeUserAnalysisHtml(item)}</span>`).join('')
+                : '<span class="text-base-content/50 text-sm">暂无历史昵称</span>';
+        }
+    }
+
+    if (emptyEl) {
+        emptyEl.style.display = (!isLoading && !isError && (uniqueIds.length || nicknames.length)) ? 'none' : '';
+    }
+
+    if (modal?.showModal) {
+        modal.showModal();
+    }
+}
+
+async function showUserHistoryAliasesByUser(userId, title = '') {
+    const normalizedUserId = String(userId || '').trim();
+    if (!normalizedUserId) return;
+
+    const cached = userListEnrichmentCache.get(normalizedUserId);
+    if (cached && Object.prototype.hasOwnProperty.call(cached, 'historyAliasCount')) {
+        renderHistoryAliasModal({
+            userId: normalizedUserId,
+            title: title || cached.title || normalizedUserId,
+            uniqueIds: Array.isArray(cached.historyUniqueIds) ? cached.historyUniqueIds : [],
+            nicknames: Array.isArray(cached.historyNicknames) ? cached.historyNicknames : []
+        });
+        return;
+    }
+
+    renderHistoryAliasModal({
+        userId: normalizedUserId,
+        title: title || normalizedUserId,
+        uniqueIds: [],
+        nicknames: []
+    }, { loading: true });
+
+    try {
+        const items = await requestUserListEnrichment([normalizedUserId], {
+            includeTopGifts: false,
+            includeHistoryMeta: true,
+            timeoutMs: 10000
+        });
+        const item = Array.isArray(items) ? items[0] : null;
+        const merged = mergeUserListEnrichment({
+            userId: normalizedUserId,
+            title: title || normalizedUserId,
+            historyUniqueIds: Array.isArray(item?.historyUniqueIds) ? item.historyUniqueIds : [],
+            historyNicknames: Array.isArray(item?.historyNicknames) ? item.historyNicknames : [],
+            historyAliasCount: Number(item?.historyAliasCount || 0)
+        }) || {};
+        applyUserListEnrichment([merged], currentUserListRenderToken);
+        renderHistoryAliasModal({
+            userId: normalizedUserId,
+            title: title || merged.title || normalizedUserId,
+            uniqueIds: Array.isArray(merged.historyUniqueIds) ? merged.historyUniqueIds : [],
+            nicknames: Array.isArray(merged.historyNicknames) ? merged.historyNicknames : []
+        });
+    } catch (err) {
+        console.error('User history fetch error:', err);
+        renderHistoryAliasModal({
+            userId: normalizedUserId,
+            title: title || normalizedUserId,
+            uniqueIds: [],
+            nicknames: []
+        }, { error: true });
+    }
+}
+window.showUserHistoryAliasesByUser = showUserHistoryAliasesByUser;
 
 function confirmPersonalityAnalysisConsumption(pointCost = DEFAULT_PERSONALITY_ANALYSIS_POINTS, { force = false, batchSize = 0 } = {}) {
     const safePointCost = Math.max(0, Number(pointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS));
@@ -163,7 +438,7 @@ function fetchUserAnalysis() {
     // Show loading state
     tbody.html('<tr><td colspan="10" class="text-center py-8"><span class="loading loading-spinner loading-lg"></span><p class="mt-2 opacity-50">加载中...</p></td></tr>');
 
-    let url = `/api/analysis/users?minRooms=${minRooms}&page=${userListPage}&pageSize=${userListPageSize}`;
+    let url = `/api/analysis/users?minRooms=${minRooms}&page=${userListPage}&pageSize=${userListPageSize}&includeTopGifts=false&includeHistoryMeta=false`;
     if (langFilter) {
         url += `&languageFilter=${encodeURIComponent(langFilter)}`;
     }
@@ -183,8 +458,12 @@ function fetchUserAnalysis() {
         url += `&giftPreference=${giftPreference}`;
     }
 
+    const requestToken = ++currentUserListRenderToken;
+
     $.get(url)
         .done((data) => {
+            if (requestToken !== currentUserListRenderToken) return;
+            const renderToken = requestToken;
             tbody.empty();
 
             // Handle new response format { users, totalCount, page, pageSize }
@@ -216,11 +495,16 @@ function fetchUserAnalysis() {
 
             users.forEach((u, index) => {
                 u.pointCost = Number(u?.pointCost || pagePointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS);
+                mergeUserListEnrichment({
+                    userId: u.userId,
+                    title: buildUserHistoryTitle(u)
+                });
                 const val = u.totalValue || 0;
                 const chats = u.chatCount || 0;
                 const score = Math.floor((val / 100) + chats); // Contribution Index
                 const roomCount = u.roomCount || 0;
                 const lastActive = formatRelativeTime(u.lastActive);
+                const userDomId = buildUserAnalysisDomId(u.userId);
 
                 // Build role icons
                 let roleIcons = '';
@@ -256,32 +540,14 @@ function fetchUserAnalysis() {
                 const accountLink = u.uniqueId ?
                     `<a href="https://www.tiktok.com/@${u.uniqueId}" target="_blank" class="link link-hover">${u.uniqueId}</a>` :
                     u.userId;
-                const historyAliasCount = Number(u.historyAliasCount || 0);
-                const historyMetaEncoded = historyAliasCount > 0
-                    ? encodeURIComponent(JSON.stringify({
-                        uniqueIds: Array.isArray(u.historyUniqueIds) ? u.historyUniqueIds : [],
-                        nicknames: Array.isArray(u.historyNicknames) ? u.historyNicknames : [],
-                        title: u.uniqueId || u.nickname || u.userId || '该用户',
-                        userId: u.userId || ''
-                    }))
-                    : '';
-                const historyAliasTrigger = historyAliasCount > 0
-                    ? `<button class="btn btn-ghost btn-xs px-2 h-6 min-h-6 border border-base-300 hover:border-primary/50" title="查看该用户历史账号与昵称" onclick="showUserHistoryAliases('${escapeUserAnalysisInlineJsString(historyMetaEncoded)}')">历史账号 ${historyAliasCount}</button>`
-                    : '';
+                const historyAliasTrigger = `<span id="user-history-trigger-${userDomId}">${buildUserHistoryAliasTriggerHtml({
+                    userId: u.userId,
+                    title: buildUserHistoryTitle(u),
+                    forceShow: true
+                })}</span>`;
 
                 const rowNum = (userListPage - 1) * userListPageSize + index + 1;
-
-                // Render top 6 gifts with icons (exclude Rose and TikTok from topGifts)
-                const allGifts = u.topGifts || [];
-                const otherGifts = allGifts.filter(g => {
-                    const name = (g.name || '').toLowerCase();
-                    return name !== 'rose' && name !== 'tiktok';
-                }).slice(0, 6);
-
-                const topGiftsHtml = otherGifts.map(g => {
-                    const icon = g.icon ? `<img src="${g.icon}" class="w-4 h-4 inline-block" alt="${g.name}">` : '🎁';
-                    return `<span class="tooltip cursor-help" data-tip="${g.name} x${g.count} (${g.totalValue}💎)">${icon}</span>`;
-                }).join('') || '<span class="opacity-30 text-xs">-</span>';
+                const topGiftsHtml = `<div id="user-top-gifts-${userDomId}">${renderUserTopGiftsHtml([], { loading: true })}</div>`;
 
                 // Rose vs TikTok comparison: use dedicated roseStats/tiktokStats from backend
                 let roseVsTiktokHtml = '';
@@ -308,7 +574,7 @@ function fetchUserAnalysis() {
                             </div>
                             ${languages}
                         </td>
-                        <td class="font-mono text-warning font-bold">💎 ${val.toLocaleString()}</td>
+                        <td class="font-mono text-warning font-bold" title="💎 ${val.toLocaleString()}">💎 ${formatDiamondValue(val)}</td>
                         <td class="max-w-[120px]">
                             <div class="flex gap-0.5 flex-wrap">${topGiftsHtml}</div>
                             ${roseVsTiktokHtml}
@@ -321,8 +587,11 @@ function fetchUserAnalysis() {
                     </tr>
                 `);
             });
+
+            hydrateUserListEnrichment(users, renderToken);
         })
         .fail((err) => {
+            if (requestToken !== currentUserListRenderToken) return;
             userSearchAutoRetried = false;
             console.error('User list fetch error:', err);
             $('#userListTable tbody').html('<tr><td colspan="10" class="text-center text-error">加载失败</td></tr>');
@@ -422,8 +691,10 @@ function showUserDetails(userId, nickname, uniqueId) {
 
     $.get('/api/analysis/user/' + userId, (data) => {
         currentDetailAiPointCost = Number(data.pointCost || currentDetailAiPointCost || DEFAULT_PERSONALITY_ANALYSIS_POINTS);
-        $('#detailTotalValue').text('💎 ' + (data.totalValue || 0).toLocaleString());
-        $('#detailDailyAvg').text('💎 ' + Math.round(data.dailyAvg || 0).toLocaleString());
+        const totalVal = data.totalValue || 0;
+        const dailyVal = Math.round(data.dailyAvg || 0);
+        $('#detailTotalValue').attr('title', '💎 ' + totalVal.toLocaleString()).text('💎 ' + formatDiamondValue(totalVal));
+        $('#detailDailyAvg').attr('title', '💎 ' + dailyVal.toLocaleString()).text('💎 ' + formatDiamondValue(dailyVal));
         const aiPointHint = document.getElementById('aiPointHint');
         if (aiPointHint) {
             const isAdminUser = typeof Auth !== 'undefined' && Auth.isAdmin && Auth.isAdmin();
@@ -539,50 +810,12 @@ function showUserHistoryAliases(encodedPayload) {
     } catch (err) {
         payload = null;
     }
-
-    const uniqueIds = Array.isArray(payload?.uniqueIds)
-        ? payload.uniqueIds.map(item => String(item || '').trim()).filter(Boolean)
-        : [];
-    const nicknames = Array.isArray(payload?.nicknames)
-        ? payload.nicknames.map(item => String(item || '').trim()).filter(Boolean)
-        : [];
-
-    currentUserHistoryMeta = {
-        uniqueIds,
-        nicknames,
+    renderHistoryAliasModal({
+        userId: String(payload?.userId || '').trim(),
         title: String(payload?.title || payload?.userId || '该用户').trim(),
-        userId: String(payload?.userId || '').trim()
-    };
-
-    const titleEl = document.getElementById('historyAliasTitle');
-    const uniqueListEl = document.getElementById('historyAliasUniqueIdList');
-    const nicknameListEl = document.getElementById('historyAliasNicknameList');
-    const emptyEl = document.getElementById('historyAliasEmpty');
-    const modal = document.getElementById('historyAliasModal');
-
-    if (titleEl) {
-        titleEl.textContent = `${currentUserHistoryMeta.title || '该用户'} 的历史账号`;
-    }
-
-    if (uniqueListEl) {
-        uniqueListEl.innerHTML = uniqueIds.length
-            ? uniqueIds.map(item => `<span class="badge badge-outline badge-sm">${escapeUserAnalysisHtml(item)}</span>`).join('')
-            : '<span class="text-base-content/50 text-sm">暂无历史账号ID</span>';
-    }
-
-    if (nicknameListEl) {
-        nicknameListEl.innerHTML = nicknames.length
-            ? nicknames.map(item => `<span class="badge badge-ghost badge-sm">${escapeUserAnalysisHtml(item)}</span>`).join('')
-            : '<span class="text-base-content/50 text-sm">暂无历史昵称</span>';
-    }
-
-    if (emptyEl) {
-        emptyEl.style.display = uniqueIds.length || nicknames.length ? 'none' : '';
-    }
-
-    if (modal?.showModal) {
-        modal.showModal();
-    }
+        uniqueIds: payload?.uniqueIds,
+        nicknames: payload?.nicknames
+    });
 }
 window.showUserHistoryAliases = showUserHistoryAliases;
 

@@ -1867,6 +1867,12 @@ app.get('/api/history', optionalAuth, async (req, res) => {
 app.get('/api/analysis/users', optionalAuth, async (req, res) => {
     try {
         const personalityPointCost = await getAiPointCost(AI_POINT_SCENES.USER_PERSONALITY);
+        const includeTopGifts = req.query.includeTopGifts === undefined
+            ? true
+            : parseRequestBoolean(req.query.includeTopGifts);
+        const includeHistoryMeta = req.query.includeHistoryMeta === undefined
+            ? true
+            : parseRequestBoolean(req.query.includeHistoryMeta);
         const filters = {
             lang: req.query.lang || '',
             languageFilter: req.query.languageFilter || '',
@@ -1875,7 +1881,9 @@ app.get('/api/analysis/users', optionalAuth, async (req, res) => {
             activeHourEnd: req.query.activeHourEnd !== undefined ? req.query.activeHourEnd : null,
             search: req.query.search || '',
             searchExact: req.query.searchExact === 'true',
-            giftPreference: req.query.giftPreference || ''
+            giftPreference: req.query.giftPreference || '',
+            includeTopGifts,
+            includeHistoryMeta
         };
         const page = parseInt(req.query.page) || 1;
         const pageSize = parseInt(req.query.pageSize) || 50;
@@ -1893,11 +1901,62 @@ app.get('/api/analysis/users', optionalAuth, async (req, res) => {
             activeHourEnd: filters.activeHourEnd,
             search: filters.search,
             searchExact: filters.searchExact,
-            giftPreference: filters.giftPreference
+            giftPreference: filters.giftPreference,
+            includeTopGifts,
+            includeHistoryMeta
         });
         const result = await getCachedAnalysisPayload(cacheKey, () => manager.getTopGifters(page, pageSize, filters));
         result.pointCost = personalityPointCost;
         res.json(result);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.get('/api/analysis/users/enrichment', optionalAuth, async (req, res) => {
+    try {
+        const rawUserIds = String(req.query.userIds || '');
+        const userIds = rawUserIds
+            .split(',')
+            .map((value) => String(value || '').trim())
+            .filter(Boolean)
+            .slice(0, 200);
+        if (userIds.length === 0) {
+            return res.json({ users: [] });
+        }
+
+        const includeTopGifts = req.query.includeTopGifts !== 'false';
+        const includeHistoryMeta = req.query.includeHistoryMeta !== 'false';
+        const roomFilter = await getUserRoomFilter(req);
+        const cacheKey = buildAnalysisCacheKey('users_enrichment', req, roomFilter, {
+            userIds: [...userIds].sort(),
+            includeTopGifts,
+            includeHistoryMeta
+        });
+        const users = await getCachedAnalysisPayload(cacheKey, async () => {
+            const rows = await manager.getUserListEnrichment(userIds, {
+                roomFilter,
+                includeTopGifts,
+                includeHistoryMeta
+            });
+            return rows.map((row) => ({
+                userId: String(row.userId || ''),
+                topGifts: Array.isArray(row.topGifts)
+                    ? row.topGifts.map((gift) => ({
+                        name: String(gift?.name || ''),
+                        icon: String(gift?.icon || ''),
+                        unitPrice: Number(gift?.unitPrice || 0),
+                        totalValue: Number(gift?.totalValue || 0),
+                        count: Number(gift?.count || 0)
+                    }))
+                    : undefined,
+                historyUniqueIds: Array.isArray(row.historyUniqueIds) ? row.historyUniqueIds.map((item) => String(item || '')) : undefined,
+                historyNicknames: Array.isArray(row.historyNicknames) ? row.historyNicknames.map((item) => String(item || '')) : undefined,
+                historyAliasCount: row.historyAliasCount === undefined ? undefined : Number(row.historyAliasCount || 0)
+            }));
+        });
+
+        res.json({ users });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1948,7 +2007,9 @@ app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
             activeHour: req.query.activeHour !== undefined ? req.query.activeHour : null,
             activeHourEnd: req.query.activeHourEnd !== undefined ? req.query.activeHourEnd : null,
             search: req.query.search || '',
-            giftPreference: req.query.giftPreference || ''
+            giftPreference: req.query.giftPreference || '',
+            includeTopGifts: true,
+            includeHistoryMeta: false
         };
         const limit = parseInt(req.query.limit) || 1000;
         const roomFilter = await getUserRoomFilter(req);
@@ -1962,7 +2023,8 @@ app.get('/api/analysis/users/export', optionalAuth, async (req, res) => {
             activeHour: filters.activeHour,
             activeHourEnd: filters.activeHourEnd,
             search: filters.search,
-            giftPreference: filters.giftPreference
+            giftPreference: filters.giftPreference,
+            includeTopGifts: true
         });
         const result = await getCachedAnalysisPayload(exportListCacheKey, () => manager.getTopGifters(1, limit, filters));
         const memberAnalysisMap = await getLatestMemberPersonalityAnalysisMap(req.user.id, result.users.map(user => user.userId));

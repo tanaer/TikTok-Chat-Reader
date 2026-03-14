@@ -194,8 +194,11 @@ async function initDb() {
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_type_session ON event(type, session_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_type_room ON event(type, room_id)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_gift_agg ON event(room_id, type, user_id) WHERE type = 'gift'`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_gift_user ON event(user_id) WHERE type = 'gift'`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_unique_id_lower ON event(LOWER(unique_id)) WHERE unique_id IS NOT NULL AND unique_id <> ''`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_nickname_lower ON event(LOWER(nickname)) WHERE nickname IS NOT NULL AND nickname <> ''`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_user_unique_id_history ON event(user_id, unique_id, timestamp DESC) WHERE unique_id IS NOT NULL AND unique_id <> ''`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_event_user_nickname_history ON event(user_id, nickname, timestamp DESC) WHERE nickname IS NOT NULL AND nickname <> ''`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_session_room_created ON session(room_id, created_at DESC)`);
         await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS gift_name TEXT`);
         await pool.query(`ALTER TABLE event ADD COLUMN IF NOT EXISTS gift_image TEXT`);
@@ -288,16 +291,47 @@ async function initDb() {
                 tiktok_count INTEGER DEFAULT 0,
                 top_room_id TEXT,
                 top_room_value BIGINT DEFAULT 0,
+                top_gifts_json TEXT,
                 last_active TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         `);
+        await pool.query(`ALTER TABLE user_stats ADD COLUMN IF NOT EXISTS top_gifts_json TEXT`);
         // Indexes for fast sorting on user_stats columns
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_gift ON user_stats(total_gift_value DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_room_count ON user_stats(room_count)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_stats_last_active ON user_stats(last_active DESC)`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_unique_id_lower ON "user"(LOWER(unique_id)) WHERE unique_id IS NOT NULL AND unique_id <> ''`);
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_nickname_lower ON "user"(LOWER(nickname)) WHERE nickname IS NOT NULL AND nickname <> ''`);
+
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_room_stats (
+                room_id TEXT NOT NULL REFERENCES room(room_id) ON DELETE CASCADE,
+                user_id TEXT NOT NULL REFERENCES "user"(user_id) ON DELETE CASCADE,
+                total_gift_value BIGINT DEFAULT 0,
+                chat_count INTEGER DEFAULT 0,
+                rose_value BIGINT DEFAULT 0,
+                tiktok_value BIGINT DEFAULT 0,
+                rose_count INTEGER DEFAULT 0,
+                tiktok_count INTEGER DEFAULT 0,
+                top_gifts_json TEXT,
+                last_active TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT NOW(),
+                PRIMARY KEY (room_id, user_id)
+            )
+        `);
+        await pool.query(`ALTER TABLE user_room_stats ADD COLUMN IF NOT EXISTS top_gifts_json TEXT`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_room_stats_room_gift ON user_room_stats(room_id, total_gift_value DESC)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_room_stats_user ON user_room_stats(user_id)`);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_room_stats_last_active ON user_room_stats(room_id, last_active DESC)`);
+        await pool.query(`
+            CREATE TABLE IF NOT EXISTS user_room_stats_meta (
+                room_id TEXT PRIMARY KEY REFERENCES room(room_id) ON DELETE CASCADE,
+                refreshed_at TIMESTAMP DEFAULT NOW(),
+                updated_at TIMESTAMP DEFAULT NOW()
+            )
+        `);
+        await pool.query(`CREATE INDEX IF NOT EXISTS idx_user_room_stats_meta_refreshed ON user_room_stats_meta(refreshed_at DESC)`);
 
         // Global statistics cache table (pre-aggregated for /api/analysis/stats performance)
         // Stores hourly and daily aggregations to avoid expensive 4-query JOINs on event table

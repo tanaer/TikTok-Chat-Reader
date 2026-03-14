@@ -71,6 +71,52 @@ function safeJsonStringify(value, fallback = '{}') {
     }
 }
 
+function safeJsonParseArray(value) {
+    if (!value || typeof value !== 'string') return [];
+    try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+async function persistUserTopGiftsCache(topGiftsMap = {}) {
+    const entries = Object.entries(topGiftsMap).filter(([userId, gifts]) => String(userId || '').trim() && Array.isArray(gifts));
+    if (entries.length === 0) return;
+
+    for (const [userId, gifts] of entries) {
+        await run(`
+            UPDATE user_stats
+            SET top_gifts_json = ?, updated_at = NOW()
+            WHERE user_id = ?
+        `, [safeJsonStringify(gifts, '[]'), userId]);
+    }
+}
+
+function mergeTopGiftCollections(items = []) {
+    const merged = new Map();
+    for (const item of Array.isArray(items) ? items : []) {
+        const name = String(item?.name || '礼物');
+        const icon = String(item?.icon || '');
+        const key = `${name}|${icon}`;
+        const current = merged.get(key) || {
+            name,
+            icon,
+            unitPrice: 0,
+            totalValue: 0,
+            count: 0
+        };
+        current.unitPrice = Math.max(current.unitPrice, parseInt(item?.unitPrice) || 0);
+        current.totalValue += parseInt(item?.totalValue) || 0;
+        current.count += parseInt(item?.count) || 0;
+        merged.set(key, current);
+    }
+    return [...merged.values()]
+        .sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0))
+        .slice(0, 6);
+}
+
 const EVENT_GIFT_NAME_SQL = `COALESCE(NULLIF(gift_name, ''), data_json::json->>'giftName')`;
 const EVENT_GIFT_IMAGE_SQL = `COALESCE(NULLIF(gift_image, ''), data_json::json->>'giftImage', data_json::json->>'giftPictureUrl')`;
 const EVENT_GIFT_TYPE_SQL = `LOWER(COALESCE(NULLIF(gift_name, ''), data_json::json->>'giftName', ''))`;
@@ -110,6 +156,7 @@ class Manager {
         // Settings cache to avoid frequent DB queries
         this.settingsCache = null;
         this.settingsCacheTime = 0;
+        this.userRoomStatsRefreshInFlight = new Set();
     }
 
     async ensureDb() {
@@ -117,6 +164,34 @@ class Manager {
             await initDb();
             this.dbReady = true;
         }
+    }
+
+    scheduleUserRoomStatsRefresh(roomIds = []) {
+        const normalizedRoomIds = normalizeRoomIdList(roomIds);
+        if (normalizedRoomIds.length === 0) {
+            return false;
+        }
+
+        const pendingRoomIds = normalizedRoomIds.filter((roomId) => !this.userRoomStatsRefreshInFlight.has(roomId));
+        if (pendingRoomIds.length === 0) {
+            return false;
+        }
+
+        pendingRoomIds.forEach((roomId) => this.userRoomStatsRefreshInFlight.add(roomId));
+
+        Promise.resolve()
+            .then(() => this.refreshUserRoomStats(pendingRoomIds))
+            .catch((error) => {
+                console.error('Failed to refresh user_room_stats cache:', {
+                    roomIds: pendingRoomIds,
+                    error: error?.message || error
+                });
+            })
+            .finally(() => {
+                pendingRoomIds.forEach((roomId) => this.userRoomStatsRefreshInFlight.delete(roomId));
+            });
+
+        return true;
     }
 
     // Price Management
@@ -563,16 +638,17 @@ class Manager {
         }
 
         const now = getNowBeijing();
+        const isEnigma = (v) => typeof v === 'string' && v.startsWith('Enigma');
         await run(`
             INSERT INTO "user" (user_id, unique_id, nickname, avatar, updated_at, region)
             VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id) DO UPDATE SET
-                unique_id = excluded.unique_id,
-                nickname = excluded.nickname,
+                unique_id = CASE WHEN excluded.unique_id LIKE 'Enigma%' OR excluded.unique_id = '' THEN "user".unique_id ELSE excluded.unique_id END,
+                nickname  = CASE WHEN excluded.nickname  LIKE 'Enigma%' OR excluded.nickname  = '' THEN "user".nickname  ELSE excluded.nickname  END,
                 avatar = excluded.avatar,
                 updated_at = excluded.updated_at,
                 region = COALESCE(excluded.region, "user".region)
-        `, [u.userId, u.uniqueId || '', u.nickname || '', u.avatar || '', now, u.region || null]);
+        `, [u.userId, isEnigma(u.uniqueId) ? '' : (u.uniqueId || ''), isEnigma(u.nickname) ? '' : (u.nickname || ''), u.avatar || '', now, u.region || null]);
     }
 
     // Get count of untagged events for a room (to check if session should be saved)
@@ -1598,19 +1674,48 @@ class Manager {
     async getTopGifters(page = 1, pageSize = 50, filters = {}) {
         await this.ensureDb();
 
-        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '', roomFilter = null, dataStartTimes = null } = filters;
+        const {
+            lang: langFilter = '',
+            languageFilter = '',
+            minRooms = 1,
+            activeHour = null,
+            activeHourEnd = null,
+            search = '',
+            searchExact = false,
+            giftPreference = '',
+            roomFilter = null,
+            dataStartTimes = null,
+            includeTopGifts = true,
+            includeHistoryMeta = true
+        } = filters;
         const offset = (page - 1) * pageSize;
         const hasSearch = !!String(search || '').trim();
         const isExactSearch = hasSearch && (searchExact === true || searchExact === 'true');
+        const shouldIncludeTopGifts = includeTopGifts !== false && includeTopGifts !== 'false';
+        const shouldIncludeHistoryMeta = includeHistoryMeta !== false && includeHistoryMeta !== 'false';
 
         // If roomFilter is empty array, user has no rooms
         if (roomFilter !== null && roomFilter !== undefined && roomFilter.length === 0) {
             return { users: [], totalCount: 0, page, pageSize };
         }
 
+        const canUseRoomScopedCache = Array.isArray(roomFilter)
+            && roomFilter.length > 0
+            && (activeHour === null || activeHour === '')
+            && (dataStartTimes === null || dataStartTimes === undefined);
+        if (canUseRoomScopedCache) {
+            const roomScopedResult = await this._getTopGiftersRoomScopedFromCache(page, pageSize, filters);
+            if (roomScopedResult) {
+                if (isExactSearch && (!Array.isArray(roomScopedResult.users) || roomScopedResult.users.length === 0)) {
+                    return await this._getTopGiftersExactFallback(page, pageSize, filters);
+                }
+                return roomScopedResult;
+            }
+        }
+
         // OPTIMIZED: Use pre-aggregated user_stats table instead of expensive event aggregation
         // Filters that require real-time event data (activeHour, dataStartTimes, roomFilter) fall back to slow path
-        const needsRealTimeData = (activeHour !== null && activeHour !== '') || (dataStartTimes !== null && dataStartTimes !== undefined) || (roomFilter !== null);
+        const needsRealTimeData = (activeHour !== null && activeHour !== '') || (dataStartTimes !== null && dataStartTimes !== undefined);
 
         if (needsRealTimeData) {
             // Fall back to original slow query for time-based filters
@@ -1705,6 +1810,7 @@ class Manager {
                 us.tiktok_value as tiktok_value,
                 us.chat_count as chatCount,
                 us.top_room_id as topRoom,
+                us.top_gifts_json as topGiftsJson,
                 us.rose_count,
                 us.tiktok_count
             FROM user_stats us
@@ -1732,51 +1838,63 @@ class Manager {
         }
 
         // Get top 6 gifts for displayed users (still needs event table, but only for current page)
-        const userIds = rows.map(r => r.userId);
-        const placeholders = userIds.map(() => '?').join(',');
+        let topGiftsMap = {};
+        if (shouldIncludeTopGifts) {
+            if (!roomFilter || roomFilter.length === 0) {
+                topGiftsMap = Object.fromEntries(rows.map((user) => [
+                    user.userId,
+                    safeJsonParseArray(user.topGiftsJson)
+                ]));
+            } else {
+            const userIds = rows.map(r => r.userId);
+            const placeholders = userIds.map(() => '?').join(',');
 
-        let topGiftRoomClause = '';
-        const topGiftParams = [...userIds];
-        if (roomFilter && roomFilter.length > 0) {
-            const rfp = roomFilter.map(() => '?').join(',');
-            topGiftRoomClause = `AND room_id IN (${rfp})`;
-            topGiftParams.push(...roomFilter);
-        }
-
-        const topGiftStats = await query(`
-            SELECT
-                user_id,
-                ${EVENT_GIFT_NAME_SQL} as gift_name,
-                ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
-                MAX(COALESCE(diamond_count, 0)) as unit_price,
-                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
-                SUM(COALESCE(repeat_count, 1)) as gift_count
-            FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders}) AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL ${topGiftRoomClause}
-            GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
-            ORDER BY user_id, total_value DESC
-        `, topGiftParams);
-
-        const topGiftsMap = {};
-        for (const g of topGiftStats) {
-            if (!topGiftsMap[g.userId]) {
-                topGiftsMap[g.userId] = [];
+            let topGiftRoomClause = '';
+            const topGiftParams = [...userIds];
+            if (roomFilter && roomFilter.length > 0) {
+                const rfp = roomFilter.map(() => '?').join(',');
+                topGiftRoomClause = `AND room_id IN (${rfp})`;
+                topGiftParams.push(...roomFilter);
             }
-            if (topGiftsMap[g.userId].length < 6) {
-                topGiftsMap[g.userId].push({
-                    name: g.giftName || '礼物',
-                    icon: g.giftIcon || '',
-                    unitPrice: parseInt(g.unitPrice) || 0,
-                    totalValue: parseInt(g.totalValue) || 0,
-                    count: parseInt(g.giftCount) || 0
-                });
+
+            const topGiftStats = await query(`
+                SELECT
+                    user_id,
+                    ${EVENT_GIFT_NAME_SQL} as gift_name,
+                    ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
+                    MAX(COALESCE(diamond_count, 0)) as unit_price,
+                    SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                    SUM(COALESCE(repeat_count, 1)) as gift_count
+                FROM event
+                WHERE type = 'gift' AND user_id IN (${placeholders}) AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL ${topGiftRoomClause}
+                GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
+                ORDER BY user_id, total_value DESC
+            `, topGiftParams);
+
+            topGiftsMap = {};
+            for (const g of topGiftStats) {
+                if (!topGiftsMap[g.userId]) {
+                    topGiftsMap[g.userId] = [];
+                }
+                if (topGiftsMap[g.userId].length < 6) {
+                    topGiftsMap[g.userId].push({
+                        name: g.giftName || '礼物',
+                        icon: g.giftIcon || '',
+                        unitPrice: parseInt(g.unitPrice) || 0,
+                        totalValue: parseInt(g.totalValue) || 0,
+                        count: parseInt(g.giftCount) || 0
+                    });
+                }
+            }
             }
         }
 
         // Enrich rows
         for (const user of rows) {
             user.topRoomName = roomNameMap[user.topRoom] || user.topRoom;
-            user.topGifts = topGiftsMap[user.userId] || [];
+            if (shouldIncludeTopGifts) {
+                user.topGifts = topGiftsMap[user.userId] || [];
+            }
             user.roseStats = user.roseCount > 0 ? {
                 totalValue: parseInt(user.roseValue) || 0,
                 count: parseInt(user.roseCount) || 0
@@ -1795,17 +1913,35 @@ class Manager {
             // Clean up internal fields
             delete user.roseCount;
             delete user.tiktokCount;
+            delete user.topGiftsJson;
         }
 
-        await this.attachUserHistoryMeta(rows, { roomFilter });
+        if (shouldIncludeHistoryMeta) {
+            await this.attachUserHistoryMeta(rows, { roomFilter });
+        }
 
         return { users: rows, totalCount, page, pageSize };
     }
 
     // Original slow path for time-based filters (activeHour)
     async _getTopGiftersRealtime(page = 1, pageSize = 50, filters = {}) {
-        const { lang: langFilter = '', languageFilter = '', minRooms = 1, activeHour = null, activeHourEnd = null, search = '', searchExact = false, giftPreference = '', roomFilter = null, dataStartTimes = null } = filters;
+        const {
+            lang: langFilter = '',
+            languageFilter = '',
+            minRooms = 1,
+            activeHour = null,
+            activeHourEnd = null,
+            search = '',
+            searchExact = false,
+            giftPreference = '',
+            roomFilter = null,
+            dataStartTimes = null,
+            includeTopGifts = true,
+            includeHistoryMeta = true
+        } = filters;
         const offset = (page - 1) * pageSize;
+        const shouldIncludeTopGifts = includeTopGifts !== false && includeTopGifts !== 'false';
+        const shouldIncludeHistoryMeta = includeHistoryMeta !== false && includeHistoryMeta !== 'false';
 
         let conditions = ["e.type = 'gift'"];
         let params = [];
@@ -1980,33 +2116,36 @@ class Manager {
             }
         }
 
-        const topGiftStats = await query(`
-            SELECT
-                user_id,
-                ${EVENT_GIFT_NAME_SQL} as gift_name,
-                ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
-                MAX(COALESCE(diamond_count, 0)) as unit_price,
-                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
-                SUM(COALESCE(repeat_count, 1)) as gift_count
-            FROM event
-            WHERE type = 'gift' AND user_id IN (${placeholders}) AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL ${subRoomClause}
-            GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
-            ORDER BY user_id, total_value DESC
-        `, [...userIds, ...subRoomParams]);
+        let topGiftsMap = {};
+        if (shouldIncludeTopGifts) {
+            const topGiftStats = await query(`
+                SELECT
+                    user_id,
+                    ${EVENT_GIFT_NAME_SQL} as gift_name,
+                    ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
+                    MAX(COALESCE(diamond_count, 0)) as unit_price,
+                    SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                    SUM(COALESCE(repeat_count, 1)) as gift_count
+                FROM event
+                WHERE type = 'gift' AND user_id IN (${placeholders}) AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL ${subRoomClause}
+                GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
+                ORDER BY user_id, total_value DESC
+            `, [...userIds, ...subRoomParams]);
 
-        const topGiftsMap = {};
-        for (const g of topGiftStats) {
-            if (!topGiftsMap[g.userId]) {
-                topGiftsMap[g.userId] = [];
-            }
-            if (topGiftsMap[g.userId].length < 6) {
-                topGiftsMap[g.userId].push({
-                    name: g.giftName || '礼物',
-                    icon: g.giftIcon || '',
-                    unitPrice: parseInt(g.unitPrice) || 0,
-                    totalValue: parseInt(g.totalValue) || 0,
-                    count: parseInt(g.giftCount) || 0
-                });
+            topGiftsMap = {};
+            for (const g of topGiftStats) {
+                if (!topGiftsMap[g.userId]) {
+                    topGiftsMap[g.userId] = [];
+                }
+                if (topGiftsMap[g.userId].length < 6) {
+                    topGiftsMap[g.userId].push({
+                        name: g.giftName || '礼物',
+                        icon: g.giftIcon || '',
+                        unitPrice: parseInt(g.unitPrice) || 0,
+                        totalValue: parseInt(g.totalValue) || 0,
+                        count: parseInt(g.giftCount) || 0
+                    });
+                }
             }
         }
 
@@ -2041,7 +2180,9 @@ class Manager {
             const topRoomInfo = topRoomMap[user.userId] || { roomId: null, roomName: null };
             user.topRoom = topRoomInfo.roomId;
             user.topRoomName = topRoomInfo.roomName;
-            user.topGifts = topGiftsMap[user.userId] || [];
+            if (shouldIncludeTopGifts) {
+                user.topGifts = topGiftsMap[user.userId] || [];
+            }
             user.roseStats = roseMap[user.userId] || null;
             user.tiktokStats = tiktokMap[user.userId] || null;
             user.isTopRoomModerator = false;
@@ -2052,7 +2193,221 @@ class Manager {
             user.fanClubName = null;
         }
 
-        await this.attachUserHistoryMeta(rows, { roomFilter });
+        if (shouldIncludeHistoryMeta) {
+            await this.attachUserHistoryMeta(rows, { roomFilter });
+        }
+
+        return { users: rows, totalCount, page, pageSize };
+    }
+
+    async _getTopGiftersRoomScopedFromCache(page = 1, pageSize = 50, filters = {}) {
+        const {
+            lang: langFilter = '',
+            languageFilter = '',
+            minRooms = 1,
+            search = '',
+            searchExact = false,
+            giftPreference = '',
+            roomFilter = null,
+            includeTopGifts = true,
+            includeHistoryMeta = true
+        } = filters;
+
+        if (!Array.isArray(roomFilter) || roomFilter.length === 0) {
+            return null;
+        }
+
+        const offset = (page - 1) * pageSize;
+        const shouldIncludeTopGifts = includeTopGifts !== false && includeTopGifts !== 'false';
+        const shouldIncludeHistoryMeta = includeHistoryMeta !== false && includeHistoryMeta !== 'false';
+
+        const roomPlaceholders = roomFilter.map(() => '?').join(',');
+        let cacheAvailability = await get(`
+            SELECT COUNT(*) as room_count
+            FROM user_room_stats_meta
+            WHERE room_id IN (${roomPlaceholders})
+        `, roomFilter);
+        if ((parseInt(cacheAvailability?.roomCount) || 0) < roomFilter.length) {
+            this.scheduleUserRoomStatsRefresh(roomFilter);
+            return null;
+        }
+
+        const baseParams = [...roomFilter];
+        const conditions = ['urs.room_id IN (' + roomPlaceholders + ')', 'urs.total_gift_value > 0'];
+
+        if (langFilter) {
+            conditions.push(`(u.common_language = ? OR u.mastered_languages = ? OR u.mastered_languages LIKE ?)`);
+            baseParams.push(langFilter, langFilter, `%${langFilter}%`);
+        }
+
+        if (languageFilter) {
+            conditions.push(`(u.common_language = ? OR u.mastered_languages = ? OR u.mastered_languages LIKE ?)`);
+            baseParams.push(languageFilter, languageFilter, `%${languageFilter}%`);
+        }
+
+        if (search) {
+            if (searchExact === true || searchExact === 'true') {
+                conditions.push(`(LOWER(u.nickname) = LOWER(?) OR LOWER(u.unique_id) = LOWER(?))`);
+                baseParams.push(search, search);
+            } else {
+                conditions.push(`(u.nickname ILIKE ? OR u.unique_id ILIKE ?)`);
+                baseParams.push(`%${search}%`, `%${search}%`);
+            }
+        }
+
+        const havingConditions = ['SUM(urs.total_gift_value) > 0', 'COUNT(DISTINCT urs.room_id) >= ?'];
+        const havingParams = [parseInt(minRooms) || 1];
+
+        if (giftPreference === 'true_love') {
+            havingConditions.push('SUM(urs.rose_value) > SUM(urs.tiktok_value)');
+        } else if (giftPreference === 'knife') {
+            havingConditions.push('SUM(urs.tiktok_value) > SUM(urs.rose_value)');
+        }
+
+        const whereClause = `WHERE ${conditions.join(' AND ')}`;
+        const havingClause = `HAVING ${havingConditions.join(' AND ')}`;
+
+        const countResult = await get(`
+            SELECT COUNT(*) as total FROM (
+                SELECT urs.user_id
+                FROM user_room_stats urs
+                JOIN "user" u ON urs.user_id = u.user_id
+                ${whereClause}
+                GROUP BY urs.user_id
+                ${havingClause}
+            ) sub
+        `, [...baseParams, ...havingParams]);
+        const totalCount = parseInt(countResult?.total) || 0;
+        if (totalCount === 0) {
+            return { users: [], totalCount, page, pageSize };
+        }
+
+        let orderByClause = 'ORDER BY totalValue DESC';
+        if (giftPreference === 'true_love') {
+            orderByClause = 'ORDER BY (roseValue - tiktokValue) DESC';
+        } else if (giftPreference === 'knife') {
+            orderByClause = 'ORDER BY (tiktokValue - roseValue) DESC';
+        }
+
+        const rows = await query(`
+            WITH ranked_room AS (
+                SELECT
+                    urs.user_id,
+                    urs.room_id,
+                    urs.total_gift_value,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY urs.user_id
+                        ORDER BY urs.total_gift_value DESC, urs.last_active DESC NULLS LAST, urs.room_id ASC
+                    ) as rn
+                FROM user_room_stats urs
+                WHERE urs.room_id IN (${roomPlaceholders})
+            )
+            SELECT
+                u.user_id as userId,
+                u.unique_id as uniqueId,
+                u.nickname as nickname,
+                u.common_language as commonLanguage,
+                u.mastered_languages as masteredLanguages,
+                u.region as region,
+                SUM(urs.total_gift_value) as totalValue,
+                COUNT(DISTINCT urs.room_id) as roomCount,
+                MAX(urs.last_active) as lastActive,
+                SUM(urs.rose_value) as roseValue,
+                SUM(urs.tiktok_value) as tiktokValue,
+                SUM(urs.chat_count) as chatCount,
+                SUM(urs.rose_count) as roseCount,
+                SUM(urs.tiktok_count) as tiktokCount,
+                MAX(CASE WHEN rr.rn = 1 THEN rr.room_id END) as topRoom
+            FROM user_room_stats urs
+            JOIN "user" u ON urs.user_id = u.user_id
+            LEFT JOIN ranked_room rr ON rr.user_id = urs.user_id AND rr.room_id = urs.room_id
+            ${whereClause}
+            GROUP BY u.user_id, u.unique_id, u.nickname, u.common_language, u.mastered_languages, u.region
+            ${havingClause}
+            ${orderByClause}
+            LIMIT ? OFFSET ?
+        `, [...roomFilter, ...baseParams, ...havingParams, pageSize, offset]);
+
+        if (rows.length === 0) {
+            return { users: [], totalCount, page, pageSize };
+        }
+
+        const roomIds = [...new Set(rows.map((row) => row.topRoom).filter(Boolean))];
+        let roomNameMap = {};
+        if (roomIds.length > 0) {
+            const placeholders = roomIds.map(() => '?').join(',');
+            const roomNames = await query(`SELECT room_id, name FROM room WHERE room_id IN (${placeholders})`, roomIds);
+            roomNameMap = Object.fromEntries(roomNames.map((row) => [row.roomId, row.name || row.roomId]));
+        }
+
+        const userIds = rows.map((row) => row.userId);
+        let topGiftMap = {};
+        if (shouldIncludeTopGifts) {
+            const placeholders = userIds.map(() => '?').join(',');
+            const topGiftRows = await query(`
+                SELECT user_id, top_gifts_json
+                FROM user_room_stats
+                WHERE room_id IN (${roomPlaceholders})
+                  AND user_id IN (${placeholders})
+            `, [...roomFilter, ...userIds]);
+            topGiftMap = {};
+            for (const row of topGiftRows) {
+                const gifts = safeJsonParseArray(row.topGiftsJson);
+                if (!topGiftMap[row.userId]) {
+                    topGiftMap[row.userId] = [];
+                }
+                for (const gift of gifts) {
+                    const key = `${gift.name || ''}|${gift.icon || ''}`;
+                    let current = topGiftMap[row.userId].find((item) => `${item.name || ''}|${item.icon || ''}` === key);
+                    if (!current) {
+                        current = {
+                            name: gift.name || '礼物',
+                            icon: gift.icon || '',
+                            unitPrice: parseInt(gift.unitPrice) || 0,
+                            totalValue: 0,
+                            count: 0
+                        };
+                        topGiftMap[row.userId].push(current);
+                    }
+                    current.totalValue += parseInt(gift.totalValue) || 0;
+                    current.count += parseInt(gift.count) || 0;
+                    current.unitPrice = Math.max(current.unitPrice, parseInt(gift.unitPrice) || 0);
+                }
+            }
+
+            Object.keys(topGiftMap).forEach((userId) => {
+                topGiftMap[userId] = topGiftMap[userId]
+                    .sort((a, b) => (b.totalValue || 0) - (a.totalValue || 0))
+                    .slice(0, 6);
+            });
+        }
+
+        for (const user of rows) {
+            user.topRoomName = roomNameMap[user.topRoom] || user.topRoom;
+            if (shouldIncludeTopGifts) {
+                user.topGifts = topGiftMap[user.userId] || [];
+            }
+            user.roseStats = parseInt(user.roseCount) > 0 ? {
+                totalValue: parseInt(user.roseValue) || 0,
+                count: parseInt(user.roseCount) || 0
+            } : null;
+            user.tiktokStats = parseInt(user.tiktokCount) > 0 ? {
+                totalValue: parseInt(user.tiktokValue) || 0,
+                count: parseInt(user.tiktokCount) || 0
+            } : null;
+            user.isTopRoomModerator = false;
+            user.isAdmin = 0;
+            user.isSuperAdmin = 0;
+            user.isModerator = 0;
+            user.fanLevel = 0;
+            user.fanClubName = null;
+            delete user.roseCount;
+            delete user.tiktokCount;
+        }
+
+        if (shouldIncludeHistoryMeta) {
+            await this.attachUserHistoryMeta(rows, { roomFilter });
+        }
 
         return { users: rows, totalCount, page, pageSize };
     }
@@ -2069,9 +2424,13 @@ class Manager {
             searchExact = false,
             giftPreference = '',
             roomFilter = null,
-            dataStartTimes = null
+            dataStartTimes = null,
+            includeTopGifts = true,
+            includeHistoryMeta = true
         } = filters;
         const isExactSearch = !!search && (searchExact === true || searchExact === 'true');
+        const shouldIncludeTopGifts = includeTopGifts !== false && includeTopGifts !== 'false';
+        const shouldIncludeHistoryMeta = includeHistoryMeta !== false && includeHistoryMeta !== 'false';
         if (!isExactSearch) {
             return { users: [], totalCount: 0, page, pageSize };
         }
@@ -2363,36 +2722,39 @@ class Manager {
             roomNameMap = Object.fromEntries(roomNames.map(row => [row.roomId, row.name || row.roomId]));
         }
 
-        const topGiftConditions = [`event.type = 'gift'`, `event.user_id IN (${userPlaceholders})`, `${EVENT_GIFT_NAME_SQL} IS NOT NULL`];
-        const topGiftParams = [...userIds];
-        appendEventActivityFilters(topGiftConditions, topGiftParams);
-        const topGiftStats = await query(`
-            SELECT
-                event.user_id,
-                ${EVENT_GIFT_NAME_SQL} as gift_name,
-                ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
-                MAX(COALESCE(event.diamond_count, 0)) as unit_price,
-                SUM(COALESCE(event.diamond_count, 0) * COALESCE(event.repeat_count, 1)) as total_value,
-                SUM(COALESCE(event.repeat_count, 1)) as gift_count
-            FROM event
-            WHERE ${topGiftConditions.join(' AND ')}
-            GROUP BY event.user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
-            ORDER BY event.user_id, total_value DESC
-        `, topGiftParams);
+        let topGiftsMap = {};
+        if (shouldIncludeTopGifts) {
+            const topGiftConditions = [`event.type = 'gift'`, `event.user_id IN (${userPlaceholders})`, `${EVENT_GIFT_NAME_SQL} IS NOT NULL`];
+            const topGiftParams = [...userIds];
+            appendEventActivityFilters(topGiftConditions, topGiftParams);
+            const topGiftStats = await query(`
+                SELECT
+                    event.user_id,
+                    ${EVENT_GIFT_NAME_SQL} as gift_name,
+                    ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
+                    MAX(COALESCE(event.diamond_count, 0)) as unit_price,
+                    SUM(COALESCE(event.diamond_count, 0) * COALESCE(event.repeat_count, 1)) as total_value,
+                    SUM(COALESCE(event.repeat_count, 1)) as gift_count
+                FROM event
+                WHERE ${topGiftConditions.join(' AND ')}
+                GROUP BY event.user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
+                ORDER BY event.user_id, total_value DESC
+            `, topGiftParams);
 
-        const topGiftsMap = {};
-        for (const gift of topGiftStats) {
-            if (!topGiftsMap[gift.userId]) {
-                topGiftsMap[gift.userId] = [];
-            }
-            if (topGiftsMap[gift.userId].length < 6) {
-                topGiftsMap[gift.userId].push({
-                    name: gift.giftName || '礼物',
-                    icon: gift.giftIcon || '',
-                    unitPrice: parseInt(gift.unitPrice) || 0,
-                    totalValue: parseInt(gift.totalValue) || 0,
-                    count: parseInt(gift.giftCount) || 0
-                });
+            topGiftsMap = {};
+            for (const gift of topGiftStats) {
+                if (!topGiftsMap[gift.userId]) {
+                    topGiftsMap[gift.userId] = [];
+                }
+                if (topGiftsMap[gift.userId].length < 6) {
+                    topGiftsMap[gift.userId].push({
+                        name: gift.giftName || '礼物',
+                        icon: gift.giftIcon || '',
+                        unitPrice: parseInt(gift.unitPrice) || 0,
+                        totalValue: parseInt(gift.totalValue) || 0,
+                        count: parseInt(gift.giftCount) || 0
+                    });
+                }
             }
         }
 
@@ -2403,7 +2765,9 @@ class Manager {
             user.nickname = latestProfile.nickname || user.nickname || user.uniqueId || user.userId;
             user.topRoom = topRoomInfo.roomId;
             user.topRoomName = roomNameMap[user.topRoom] || user.topRoom;
-            user.topGifts = topGiftsMap[user.userId] || [];
+            if (shouldIncludeTopGifts) {
+                user.topGifts = topGiftsMap[user.userId] || [];
+            }
             user.roseStats = parseInt(user.roseCount) > 0 ? {
                 totalValue: parseInt(user.roseValue) || 0,
                 count: parseInt(user.roseCount) || 0
@@ -2423,9 +2787,328 @@ class Manager {
             delete user.tiktokCount;
         }
 
-        await this.attachUserHistoryMeta(rows, { roomFilter });
+        if (shouldIncludeHistoryMeta) {
+            await this.attachUserHistoryMeta(rows, { roomFilter });
+        }
 
         return { users: rows, totalCount, page, pageSize };
+    }
+
+    async getUserListEnrichment(userIds = [], options = {}) {
+        await this.ensureDb();
+
+        const normalizedUserIds = [...new Set(
+            (Array.isArray(userIds) ? userIds : [])
+                .map((userId) => String(userId || '').trim())
+                .filter(Boolean)
+        )].slice(0, 200);
+        if (normalizedUserIds.length === 0) {
+            return [];
+        }
+
+        const roomFilter = Array.isArray(options.roomFilter) ? options.roomFilter.filter(Boolean) : null;
+        const includeTopGifts = options.includeTopGifts !== false && options.includeTopGifts !== 'false';
+        const includeHistoryMeta = options.includeHistoryMeta !== false && options.includeHistoryMeta !== 'false';
+
+        if (Array.isArray(options.roomFilter) && roomFilter.length === 0) {
+            return normalizedUserIds.map((userId) => ({ userId }));
+        }
+
+        let profileMap = {};
+        if (includeHistoryMeta || (includeTopGifts && (!roomFilter || roomFilter.length === 0))) {
+            const placeholders = normalizedUserIds.map(() => '?').join(',');
+            const profileRows = await query(`
+                SELECT
+                    u.user_id as user_id,
+                    u.unique_id as unique_id,
+                    u.nickname,
+                    us.top_gifts_json as top_gifts_json
+                FROM "user" u
+                LEFT JOIN user_stats us ON us.user_id = u.user_id
+                WHERE u.user_id IN (${placeholders})
+            `, normalizedUserIds);
+            profileMap = Object.fromEntries(profileRows.map((row) => [String(row.userId || '').trim(), row]));
+        }
+
+        const rows = normalizedUserIds.map((userId) => {
+            const profile = profileMap[userId] || {};
+            return {
+                userId,
+                uniqueId: profile.uniqueId || '',
+                nickname: profile.nickname || '',
+                topGiftsJson: profile.topGiftsJson || ''
+            };
+        });
+
+        if (includeTopGifts) {
+            if (!roomFilter || roomFilter.length === 0) {
+                const missingTopGiftUserIds = [];
+                rows.forEach((row) => {
+                    const cachedTopGifts = safeJsonParseArray(row.topGiftsJson);
+                    row.topGifts = cachedTopGifts;
+                    if (cachedTopGifts.length === 0) {
+                        missingTopGiftUserIds.push(row.userId);
+                    }
+                });
+                if (missingTopGiftUserIds.length > 0) {
+                    const fallbackTopGiftsMap = {};
+                    const topGiftBatchSize = 10;
+
+                    for (let index = 0; index < missingTopGiftUserIds.length; index += topGiftBatchSize) {
+                        const batchUserIds = missingTopGiftUserIds.slice(index, index + topGiftBatchSize);
+                        const batchPlaceholders = batchUserIds.map(() => '?').join(',');
+                        const topGiftStats = await query(`
+                            SELECT
+                                user_id,
+                                ${EVENT_GIFT_NAME_SQL} as gift_name,
+                                ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
+                                MAX(COALESCE(diamond_count, 0)) as unit_price,
+                                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                                SUM(COALESCE(repeat_count, 1)) as gift_count
+                            FROM event
+                            WHERE type = 'gift'
+                              AND user_id IN (${batchPlaceholders})
+                              AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL
+                            GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
+                            ORDER BY user_id, total_value DESC
+                        `, batchUserIds);
+
+                        for (const gift of topGiftStats) {
+                            if (!fallbackTopGiftsMap[gift.userId]) {
+                                fallbackTopGiftsMap[gift.userId] = [];
+                            }
+                            if (fallbackTopGiftsMap[gift.userId].length < 6) {
+                                fallbackTopGiftsMap[gift.userId].push({
+                                    name: gift.giftName || '礼物',
+                                    icon: gift.giftIcon || '',
+                                    unitPrice: parseInt(gift.unitPrice) || 0,
+                                    totalValue: parseInt(gift.totalValue) || 0,
+                                    count: parseInt(gift.giftCount) || 0
+                                });
+                            }
+                        }
+                    }
+
+                    rows.forEach((row) => {
+                        if (row.topGifts.length === 0 && fallbackTopGiftsMap[row.userId]) {
+                            row.topGifts = fallbackTopGiftsMap[row.userId];
+                        }
+                    });
+                    await persistUserTopGiftsCache(fallbackTopGiftsMap);
+                }
+            } else {
+                const topGiftsMap = {};
+                const topGiftBatchSize = 10;
+
+                for (let index = 0; index < normalizedUserIds.length; index += topGiftBatchSize) {
+                    const batchUserIds = normalizedUserIds.slice(index, index + topGiftBatchSize);
+                    const batchPlaceholders = batchUserIds.map(() => '?').join(',');
+                    let topGiftRoomClause = '';
+                    const topGiftParams = [...batchUserIds];
+                    if (roomFilter && roomFilter.length > 0) {
+                        const roomPlaceholders = roomFilter.map(() => '?').join(',');
+                        topGiftRoomClause = `AND room_id IN (${roomPlaceholders})`;
+                        topGiftParams.push(...roomFilter);
+                    }
+
+                    const topGiftStats = await query(`
+                        SELECT
+                            user_id,
+                            ${EVENT_GIFT_NAME_SQL} as gift_name,
+                            ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
+                            MAX(COALESCE(diamond_count, 0)) as unit_price,
+                            SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                            SUM(COALESCE(repeat_count, 1)) as gift_count
+                        FROM event
+                        WHERE type = 'gift'
+                          AND user_id IN (${batchPlaceholders})
+                          AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL
+                          ${topGiftRoomClause}
+                        GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
+                        ORDER BY user_id, total_value DESC
+                    `, topGiftParams);
+
+                    for (const gift of topGiftStats) {
+                        if (!topGiftsMap[gift.userId]) {
+                            topGiftsMap[gift.userId] = [];
+                        }
+                        if (topGiftsMap[gift.userId].length < 6) {
+                            topGiftsMap[gift.userId].push({
+                                name: gift.giftName || '礼物',
+                                icon: gift.giftIcon || '',
+                                unitPrice: parseInt(gift.unitPrice) || 0,
+                                totalValue: parseInt(gift.totalValue) || 0,
+                                count: parseInt(gift.giftCount) || 0
+                            });
+                        }
+                    }
+                }
+
+                rows.forEach((row) => {
+                    row.topGifts = topGiftsMap[row.userId] || [];
+                });
+            }
+        }
+
+        if (includeHistoryMeta) {
+            const historyBatchSize = 10;
+            for (let index = 0; index < rows.length; index += historyBatchSize) {
+                await this.attachUserHistoryMeta(rows.slice(index, index + historyBatchSize), { roomFilter });
+            }
+        }
+
+        return rows.map((row) => {
+            const response = {
+                userId: row.userId
+            };
+
+            if (includeTopGifts) {
+                response.topGifts = Array.isArray(row.topGifts) ? row.topGifts : [];
+            }
+            if (includeHistoryMeta) {
+                response.historyUniqueIds = Array.isArray(row.historyUniqueIds) ? row.historyUniqueIds : [];
+                response.historyNicknames = Array.isArray(row.historyNicknames) ? row.historyNicknames : [];
+                response.historyAliasCount = Number(row.historyAliasCount || 0);
+            }
+
+            return response;
+        });
+    }
+
+    async refreshUserRoomStats(roomIds = []) {
+        await this.ensureDb();
+
+        const normalizedRoomIds = normalizeRoomIdList(roomIds);
+        if (normalizedRoomIds.length === 0) {
+            return { refreshed: 0, roomCount: 0 };
+        }
+
+        const placeholders = normalizedRoomIds.map(() => '?').join(',');
+        const roomStats = await query(`
+            SELECT
+                room_id,
+                user_id,
+                COALESCE(SUM(CASE WHEN type = 'gift'
+                    THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as total_gift,
+                COALESCE(SUM(CASE WHEN type = 'chat' THEN 1 ELSE 0 END), 0) as chat_count,
+                COALESCE(SUM(CASE WHEN type = 'gift' AND ${EVENT_GIFT_TYPE_SQL} = 'rose'
+                    THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as rose_value,
+                COALESCE(SUM(CASE WHEN type = 'gift' AND ${EVENT_GIFT_TYPE_SQL} = 'tiktok'
+                    THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END), 0) as tiktok_value,
+                COALESCE(SUM(CASE WHEN type = 'gift' AND ${EVENT_GIFT_TYPE_SQL} = 'rose'
+                    THEN COALESCE(repeat_count, 1) ELSE 0 END), 0) as rose_count,
+                COALESCE(SUM(CASE WHEN type = 'gift' AND ${EVENT_GIFT_TYPE_SQL} = 'tiktok'
+                    THEN COALESCE(repeat_count, 1) ELSE 0 END), 0) as tiktok_count,
+                MAX(timestamp) as last_active
+            FROM event
+            WHERE room_id IN (${placeholders})
+              AND user_id IS NOT NULL
+              AND type IN ('gift', 'chat')
+            GROUP BY room_id, user_id
+        `, normalizedRoomIds);
+
+        const roomGiftRows = await query(`
+            SELECT
+                room_id,
+                user_id,
+                ${EVENT_GIFT_NAME_SQL} as gift_name,
+                ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
+                MAX(COALESCE(diamond_count, 0)) as unit_price,
+                SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                SUM(COALESCE(repeat_count, 1)) as gift_count
+            FROM event
+            WHERE room_id IN (${placeholders})
+              AND type = 'gift'
+              AND user_id IS NOT NULL
+              AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL
+            GROUP BY room_id, user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
+            ORDER BY room_id, user_id, total_value DESC
+        `, normalizedRoomIds);
+
+        const topGiftMap = {};
+        for (const row of roomGiftRows) {
+            const key = `${row.roomId}::${row.userId}`;
+            if (!topGiftMap[key]) {
+                topGiftMap[key] = [];
+            }
+            if (topGiftMap[key].length < 6) {
+                topGiftMap[key].push({
+                    name: row.giftName || '礼物',
+                    icon: row.giftIcon || '',
+                    unitPrice: parseInt(row.unitPrice) || 0,
+                    totalValue: parseInt(row.totalValue) || 0,
+                    count: parseInt(row.giftCount) || 0
+                });
+            }
+        }
+
+        await run(`DELETE FROM user_room_stats WHERE room_id IN (${placeholders})`, normalizedRoomIds);
+
+        let refreshed = 0;
+        const impactedUserIds = new Set();
+        for (const row of roomStats) {
+            await run(`
+                INSERT INTO user_room_stats (
+                    room_id, user_id, total_gift_value, chat_count,
+                    rose_value, tiktok_value, rose_count, tiktok_count,
+                    top_gifts_json, last_active, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+            `, [
+                row.roomId,
+                row.userId,
+                parseInt(row.totalGift) || 0,
+                parseInt(row.chatCount) || 0,
+                parseInt(row.roseValue) || 0,
+                parseInt(row.tiktokValue) || 0,
+                parseInt(row.roseCount) || 0,
+                parseInt(row.tiktokCount) || 0,
+                safeJsonStringify(topGiftMap[`${row.roomId}::${row.userId}`] || [], '[]'),
+                row.lastActive || null
+            ]);
+            impactedUserIds.add(String(row.userId || '').trim());
+            refreshed += 1;
+        }
+
+        for (const roomId of normalizedRoomIds) {
+            await run(`
+                INSERT INTO user_room_stats_meta (room_id, refreshed_at, updated_at)
+                VALUES (?, NOW(), NOW())
+                ON CONFLICT (room_id) DO UPDATE SET
+                    refreshed_at = NOW(),
+                    updated_at = NOW()
+            `, [roomId]);
+        }
+
+        if (impactedUserIds.size > 0) {
+            const impactedList = [...impactedUserIds];
+            const userPlaceholders = impactedList.map(() => '?').join(',');
+            const mergedRows = await query(`
+                SELECT user_id, top_gifts_json
+                FROM user_room_stats
+                WHERE user_id IN (${userPlaceholders})
+            `, impactedList);
+            const mergedGiftMap = {};
+            for (const row of mergedRows) {
+                const userId = String(row.userId || '').trim();
+                if (!userId) continue;
+                if (!mergedGiftMap[userId]) {
+                    mergedGiftMap[userId] = [];
+                }
+                mergedGiftMap[userId].push(...safeJsonParseArray(row.topGiftsJson));
+            }
+
+            const persistedMap = {};
+            Object.keys(mergedGiftMap).forEach((userId) => {
+                persistedMap[userId] = mergeTopGiftCollections(mergedGiftMap[userId]);
+            });
+            await persistUserTopGiftsCache(persistedMap);
+        }
+
+        return {
+            refreshed,
+            roomCount: normalizedRoomIds.length,
+            userCount: impactedUserIds.size
+        };
     }
 
     async attachUserHistoryMeta(rows = [], options = {}) {
@@ -2449,22 +3132,38 @@ class Manager {
 
         const [uniqueIdHistoryRows, nicknameHistoryRows] = await Promise.all([
             query(`
-                SELECT event.user_id, event.unique_id, MAX(event.timestamp) AS last_seen
-                FROM event
-                WHERE ${whereClause}
-                  AND event.unique_id IS NOT NULL
-                  AND event.unique_id <> ''
-                GROUP BY event.user_id, event.unique_id
-                ORDER BY event.user_id, last_seen DESC
+                WITH latest_unique_ids AS (
+                    SELECT DISTINCT ON (event.user_id, event.unique_id)
+                        event.user_id,
+                        event.unique_id,
+                        event.timestamp AS last_seen
+                    FROM event
+                    WHERE ${whereClause}
+                      AND event.unique_id IS NOT NULL
+                      AND event.unique_id <> ''
+                      AND event.unique_id NOT LIKE 'Enigma%'
+                    ORDER BY event.user_id, event.unique_id, event.timestamp DESC
+                )
+                SELECT user_id, unique_id, last_seen
+                FROM latest_unique_ids
+                ORDER BY user_id, last_seen DESC
             `, baseParams),
             query(`
-                SELECT event.user_id, event.nickname, MAX(event.timestamp) AS last_seen
-                FROM event
-                WHERE ${whereClause}
-                  AND event.nickname IS NOT NULL
-                  AND event.nickname <> ''
-                GROUP BY event.user_id, event.nickname
-                ORDER BY event.user_id, last_seen DESC
+                WITH latest_nicknames AS (
+                    SELECT DISTINCT ON (event.user_id, event.nickname)
+                        event.user_id,
+                        event.nickname,
+                        event.timestamp AS last_seen
+                    FROM event
+                    WHERE ${whereClause}
+                      AND event.nickname IS NOT NULL
+                      AND event.nickname <> ''
+                      AND event.nickname NOT LIKE 'Enigma%'
+                    ORDER BY event.user_id, event.nickname, event.timestamp DESC
+                )
+                SELECT user_id, nickname, last_seen
+                FROM latest_nicknames
+                ORDER BY user_id, last_seen DESC
             `, baseParams)
         ]);
 
@@ -4285,19 +4984,52 @@ class Manager {
                     value: parseInt(r.roomValue) || 0
                 }]));
 
+                // 5.5 Top gifts per user for fast list/enrichment rendering
+                const topGiftStats = await query(`
+                    SELECT
+                        user_id,
+                        ${EVENT_GIFT_NAME_SQL} as gift_name,
+                        ${EVENT_GIFT_IMAGE_SQL} as gift_icon,
+                        MAX(COALESCE(diamond_count, 0)) as unit_price,
+                        SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)) as total_value,
+                        SUM(COALESCE(repeat_count, 1)) as gift_count
+                    FROM event
+                    WHERE type = 'gift'
+                      AND user_id IN (${placeholders})
+                      AND ${EVENT_GIFT_NAME_SQL} IS NOT NULL
+                    GROUP BY user_id, ${EVENT_GIFT_NAME_SQL}, ${EVENT_GIFT_IMAGE_SQL}
+                    ORDER BY user_id, total_value DESC
+                `, batchIds);
+                const topGiftsMap = {};
+                for (const gift of topGiftStats) {
+                    if (!topGiftsMap[gift.userId]) {
+                        topGiftsMap[gift.userId] = [];
+                    }
+                    if (topGiftsMap[gift.userId].length < 6) {
+                        topGiftsMap[gift.userId].push({
+                            name: gift.giftName || '礼物',
+                            icon: gift.giftIcon || '',
+                            unitPrice: parseInt(gift.unitPrice) || 0,
+                            totalValue: parseInt(gift.totalValue) || 0,
+                            count: parseInt(gift.giftCount) || 0
+                        });
+                    }
+                }
+
                 // 6. Upsert user_stats for each user in batch
                 for (const userId of batchIds) {
                     const basic = basicMap[userId] || {};
                     const rose = roseMap[userId] || { value: 0, count: 0 };
                     const tiktok = tiktokMap[userId] || { value: 0, count: 0 };
                     const topRoom = topRoomMap[userId] || { roomId: null, value: 0 };
+                    const topGiftsJson = safeJsonStringify(topGiftsMap[userId] || [], '[]');
 
                     await run(`
                         INSERT INTO user_stats (
                             user_id, total_gift_value, room_count, chat_count,
                             rose_value, tiktok_value, rose_count, tiktok_count,
-                            top_room_id, top_room_value, last_active, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                            top_room_id, top_room_value, top_gifts_json, last_active, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                         ON CONFLICT (user_id) DO UPDATE SET
                             total_gift_value = EXCLUDED.total_gift_value,
                             room_count = EXCLUDED.room_count,
@@ -4308,6 +5040,7 @@ class Manager {
                             tiktok_count = EXCLUDED.tiktok_count,
                             top_room_id = EXCLUDED.top_room_id,
                             top_room_value = EXCLUDED.top_room_value,
+                            top_gifts_json = EXCLUDED.top_gifts_json,
                             last_active = EXCLUDED.last_active,
                             updated_at = NOW()
                     `, [
@@ -4321,6 +5054,7 @@ class Manager {
                         tiktok.count,
                         topRoom.roomId,
                         topRoom.value,
+                        topGiftsJson,
                         basic.lastActive || null
                     ]);
                     totalRefreshed++;
