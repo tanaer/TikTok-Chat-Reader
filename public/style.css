@@ -487,3 +487,11 @@
 .overflow-x-auto { overflow-x: auto; overflow-y: visible; }
 thead .tooltip::before,
 thead .tooltip::after { z-index: 50; }
+
+/* User list table: hide vertical scrollbar */
+#userListTableWrapper {
+    overflow-y: hidden;
+}
+#userListTableWrapper::-webkit-scrollbar {
+    width: 0;
+}

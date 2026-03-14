@@ -623,11 +623,11 @@ function showUserDetails(userId, nickname, uniqueId) {
         <div class="grid grid-cols-2 gap-4 my-6">
              <div class="stat bg-base-100 rounded-box shadow-sm p-4 text-center overflow-hidden">
                 <div class="stat-title text-xs">总礼物价值</div>
-                <div class="stat-value text-warning text-base md:text-2xl truncate" id="detailTotalValue">...</div>
+                <div class="stat-value text-warning text-sm md:text-xl whitespace-nowrap" id="detailTotalValue">...</div>
              </div>
              <div class="stat bg-base-100 rounded-box shadow-sm p-4 text-center overflow-hidden">
                 <div class="stat-title text-xs">日均消费</div>
-                <div class="stat-value text-success text-base md:text-2xl truncate" id="detailDailyAvg">...</div>
+                <div class="stat-value text-success text-sm md:text-xl whitespace-nowrap" id="detailDailyAvg">...</div>
              </div>
         </div>
 

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="business">
 
 <head>
     <meta charset="UTF-8">
@@ -2479,7 +2479,11 @@
                 .replace(/AI 分析/g, 'AI')
                 .replace(/分析额度/g, '点数')
                 .replace(/额度包/g, '点数包')
-                .replace(/(\d+)次/g, '$1点');
+                .replace(/限购\s*\d+\s*[次点]/g, '')
+                .replace(/[，,]\s*[，,]/g, '，')
+                .replace(/\s{2,}/g, ' ')
+                .trim()
+                .replace(/[，,。\s]+$/, '');
         }
 
         const COMMON_PLAN_BENEFITS = [

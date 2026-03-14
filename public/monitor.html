@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN" data-theme="dark">
+<html lang="zh-CN" data-theme="business">
 
 <head>
     <meta charset="UTF-8">
@@ -24,13 +24,13 @@
     <script src="connection.js?v=20260308f"></script>
     <script src="config.js?v=20260308f"></script>
     <script src="room_list.js?v=20260308h"></script>
-    <script src="user_analysis.js?v=20260313b"></script>
+    <script src="user_analysis.js?v=20260314a"></script>
     <script src="room_analysis.js?v=20260308f"></script>
     <script src="recording_ui.js?v=20260308g"></script>
     <script src="app.js?v=20260309c"></script>
 
 
-    <link rel="stylesheet" href="style.css?v=20260313a"> <!-- Minimal overrides -->
+    <link rel="stylesheet" href="style.css?v=20260314c"> <!-- Minimal overrides -->
 </head>
 
 <body class="bg-base-300 min-h-screen flex flex-col" data-shell-messages="true" data-shell-message-poll="auth">
@@ -680,7 +680,7 @@
                 </div>
 
 
-                <div class="overflow-x-auto bg-base-100 rounded-box shadow">
+                <div id="userListTableWrapper" class="overflow-x-auto bg-base-100 rounded-box shadow">
                     <table class="table table-zebra table-sm w-full" id="userListTable">
                         <thead>
                             <tr>
