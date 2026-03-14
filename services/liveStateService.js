@@ -93,6 +93,36 @@ function writeLocalLiveState(roomId, payload, ttlMs) {
     return payload;
 }
 
+function pruneStaleLocalLiveRooms(roomIds = []) {
+    const staleRoomIds = [];
+    const candidateRoomIds = roomIds.length > 0
+        ? roomIds
+        : Array.from(localLiveRoomIds);
+
+    for (const roomId of candidateRoomIds) {
+        const normalizedRoomId = normalizeRoomId(roomId);
+        if (!normalizedRoomId) continue;
+
+        const payload = readLocalLiveState(normalizedRoomId);
+        if (isRoomLive(payload)) continue;
+
+        localLiveRoomIds.delete(normalizedRoomId);
+        if (payload && payload.isLive) {
+            const nextState = {
+                ...payload,
+                isLive: false,
+                updatedAt: nowIso(),
+            };
+            writeLocalLiveState(normalizedRoomId, nextState, LIVE_STATE_OFFLINE_TTL_MS);
+        } else if (!payload) {
+            localLiveStateCache.delete(normalizedRoomId);
+        }
+        staleRoomIds.push(normalizedRoomId);
+    }
+
+    return staleRoomIds;
+}
+
 function clearPendingFlush(roomId) {
     const normalizedRoomId = normalizeRoomId(roomId);
     const timer = pendingFlushTimers.get(normalizedRoomId);
@@ -391,6 +421,7 @@ async function getLiveStateMap(roomIds = []) {
 
 async function listLiveRoomIds() {
     try {
+        const staleLocalRoomIds = pruneStaleLocalLiveRooms();
         if (!isLiveStateEnabled()) {
             return Array.from(localLiveRoomIds);
         }
@@ -427,11 +458,16 @@ async function listLiveRoomIds() {
             liveCount: liveRoomIds.length,
         }, { log: false });
 
-        return Array.from(new Set([...liveRoomIds, ...Array.from(localLiveRoomIds)]));
+        const mergedLiveRoomIds = Array.from(new Set([...liveRoomIds, ...Array.from(localLiveRoomIds)]));
+        if (staleLocalRoomIds.length > 0) {
+            return mergedLiveRoomIds.filter((roomId) => !staleLocalRoomIds.includes(roomId));
+        }
+        return mergedLiveRoomIds;
     } catch (error) {
         metricsService.emitLog('warn', 'redis.live_state.list_live_ids', {
             error: metricsService.safeErrorMessage(error),
         });
+        pruneStaleLocalLiveRooms();
         return Array.from(localLiveRoomIds);
     }
 }

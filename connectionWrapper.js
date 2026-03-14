@@ -13,6 +13,31 @@ const { supportsPremiumRoomLookup } = require('./utils/eulerKeyCapability');
 
 let globalConnectionCount = 0;
 
+function extractRoomStatus(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+
+    const candidates = [
+        payload.status,
+        payload.data?.status,
+        payload.data?.liveRoom?.status,
+        payload.liveRoom?.status,
+        payload.liveRoomUserInfo?.liveRoom?.status,
+    ];
+
+    for (const value of candidates) {
+        const normalized = Number(value);
+        if (Number.isFinite(normalized)) {
+            return normalized;
+        }
+    }
+
+    return null;
+}
+
+function isStrictLiveStatus(status) {
+    return Number(status) === 2;
+}
+
 
 
 class TikTokConnectionWrapper extends EventEmitter {
@@ -328,9 +353,9 @@ class TikTokConnectionWrapper extends EventEmitter {
         }
 
         const extractHtmlLiveStatus = (roomInfo) => {
-            return roomInfo?.liveRoomUserInfo?.liveRoom?.status ?? roomInfo?.liveRoom?.status;
+            return extractRoomStatus(roomInfo);
         };
-        const isOnline = (status) => status !== 4;
+        const isOnline = (status) => isStrictLiveStatus(status);
 
         this.connection.fetchRoomId = async (uniqueIdOverride) => {
             const resolvedUniqueId = uniqueIdOverride || this.uniqueId;
@@ -387,7 +412,7 @@ class TikTokConnectionWrapper extends EventEmitter {
 
             try {
                 const roomData = await webClient.fetchRoomInfoFromApiLive({ uniqueId: this.uniqueId });
-                const status = roomData?.data?.liveRoom?.status;
+                const status = extractRoomStatus(roomData);
                 if (status === undefined) throw new Error('Failed to extract status from API.');
                 this.lastConnectPath = 'tiktok_api';
                 return isOnline(status);
@@ -451,15 +476,24 @@ class TikTokConnectionWrapper extends EventEmitter {
 
     connect(isReconnect, cachedRoomId = null) {
         // Pass cached room ID to skip fetching from TikTok page
-        return this.connection.connect(cachedRoomId || undefined).then((state) => {
+        return this.connection.connect(cachedRoomId || undefined).then(async (state) => {
             this.log(`${isReconnect ? 'Reconnected' : 'Connected'} to roomId ${state.roomId}`);
 
-            // Check if Room is actually Live (status 2 = LIVE, 4 = FINISH)
-            // If status is undefined (e.g. from generic API fallback), assume LIVE to prevent false positive disconnects.
-            if (state.roomInfo && state.roomInfo.status !== undefined && state.roomInfo.status !== 2) {
-                this.log(`Room Status is ${state.roomInfo.status} (Not LIVE). Disconnecting...`);
+            let roomStatus = extractRoomStatus(state.roomInfo);
+            if (roomStatus === null) {
+                try {
+                    const liveCheck = await this.connection.fetchIsLive();
+                    roomStatus = liveCheck ? 2 : 0;
+                } catch (error) {
+                    this.log(`Live status verification failed after connect: ${error?.message || error}`);
+                }
+            }
+
+            // Treat only status 2 as live. Any other status is not a valid live room.
+            if (roomStatus !== null && !isStrictLiveStatus(roomStatus)) {
+                this.log(`Room Status is ${roomStatus} (Not LIVE). Disconnecting...`);
                 this.connection.disconnect();
-                throw new Error(`Room is offline (Status: ${state.roomInfo.status})`);
+                throw new Error(`Room is offline (Status: ${roomStatus})`);
             }
 
             globalConnectionCount += 1;

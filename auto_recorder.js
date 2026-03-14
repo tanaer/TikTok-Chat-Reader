@@ -11,6 +11,9 @@ const keyManager = require('./utils/keyManager');
 const dynamicProxyManager = require('./utils/DynamicProxyManager');
 const liveStateService = require('./services/liveStateService');
 
+const LIVE_ROOM_INITIAL_GRACE_MS = 125 * 1000;
+const LIVE_ROOM_RECENT_EVENT_WINDOW_MS = 2 * 60 * 1000;
+const LIVE_ROOM_HEALTH_CONFIRM_WINDOW_MS = 2 * 60 * 1000;
 
 function isMaintenanceWorkerEnabled() {
     return Boolean(getSchemeAConfig().worker.enableMaintenance);
@@ -162,20 +165,39 @@ class AutoRecorder {
         const now = Date.now();
 
         for (const [roomId, conn] of this.activeConnections.entries()) {
-            // Check if connection has received actual events (lastEventTime updated beyond initial value)
-            const startTimeMs = conn.startTime?.getTime() || now;
-            const hasReceivedEvents = conn.lastEventTime && (conn.lastEventTime > startTimeMs + 1000);
-
-            // Or connection has been alive past the 60s validation period
-            const connectionAge = now - startTimeMs;
-            const passedValidation = connectionAge > 65000; // 65s, past 60s validation
-
-            if (hasReceivedEvents || passedValidation) {
+            if (this.isConnectionLiveForRoomList(roomId, conn, now)) {
                 validatedLive.push(roomId);
             }
         }
 
         return validatedLive;
+    }
+
+    isConnectionLiveForRoomList(roomId, conn, now = Date.now()) {
+        if (!conn) return false;
+
+        const wsConnected = conn.wrapper?.connection?.isConnected === true;
+        if (!wsConnected) return false;
+
+        const startTimeMs = conn.startTime?.getTime() || now;
+        const lastEventTime = Number(conn.lastEventTime) || 0;
+        const connectionAge = now - startTimeMs;
+        const hasReceivedEvents = lastEventTime > (startTimeMs + 1000);
+
+        if (hasReceivedEvents && (now - lastEventTime) <= LIVE_ROOM_RECENT_EVENT_WINDOW_MS) {
+            return true;
+        }
+
+        if (connectionAge <= LIVE_ROOM_INITIAL_GRACE_MS) {
+            return true;
+        }
+
+        if (this.pendingOffline.has(roomId)) {
+            return false;
+        }
+
+        const lastConfirmedLiveAt = Number(conn.lastConfirmedLiveAt) || 0;
+        return lastConfirmedLiveAt > 0 && (now - lastConfirmedLiveAt) <= LIVE_ROOM_HEALTH_CONFIRM_WINDOW_MS;
     }
 
     // Get connection wrapper for a room
@@ -283,6 +305,7 @@ class AutoRecorder {
 
                 } else {
                     // Room is LIVE -> Clear any pending offline status
+                    conn.lastConfirmedLiveAt = Date.now();
                     if (this.pendingOffline.has(uniqueId)) {
                         console.log(`[AutoRecorder] Heartbeat: ${uniqueId} confirmed online. Clearing pending status.`);
                         this.pendingOffline.delete(uniqueId);
@@ -748,6 +771,7 @@ class AutoRecorder {
                             wrapper: wrapper,
                             startTime: sessionStartTime,
                             lastEventTime: Date.now(),
+                            lastConfirmedLiveAt: Date.now(),
                             pendingWrites: new Set(),
                             roomId: state.roomId // Actual numeric room ID
                         });
@@ -759,6 +783,7 @@ class AutoRecorder {
                             wrapper: wrapper,
                             startTime: new Date(),
                             lastEventTime: Date.now(),
+                            lastConfirmedLiveAt: Date.now(),
                             pendingWrites: new Set(),
                             roomId: state.roomId
                         });
@@ -1247,6 +1272,7 @@ class AutoRecorder {
                                 wrapper: wrapper,
                                 startTime: new Date(),
                                 lastEventTime: Date.now(),
+                                lastConfirmedLiveAt: Date.now(),
                                 pendingWrites: new Set(),
                                 roomId: state.roomId
                             });
