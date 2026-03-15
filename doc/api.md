@@ -82,6 +82,36 @@
     - `manager.updateRoom(...)` upsert room 配置
     - 若关闭监控，会立即 `autoRecorder.disconnectRoom(roomId)` 停止录制并触发归档
 
+- `POST /api/rooms/:id/rename`
+  - 权限：仅管理员，且需要 `session_maintenance.manage`
+  - body：`{ newRoomId, mergeExisting? }`
+  - 行为：
+    - 历史兼容保留；监控页现在优先改走后台任务接口，不建议继续同步等待此接口
+    - 默认先探测目标房间 ID 是否已存在
+    - 若同一房间已有迁移/合并在执行中：返回 `409` + `code=ROOM_RENAME_IN_PROGRESS`
+    - 若目标 ID 不存在：停止原房间采集/录制后，迁移 `room/event/session` 及相关录制、AI、统计关联数据
+    - 若目标 ID 已存在：返回 `409` + `code=TARGET_ROOM_EXISTS`，前端必须二次确认后带 `mergeExisting=true` 再执行
+    - 若原房间已被前一个请求迁走，但目标房间已存在：返回 `409` + `code=ROOM_ALREADY_MIGRATED`，前端应提示刷新列表确认结果
+    - 合并时会把原房间数据并入目标房间，并重建房间统计与用户房间统计缓存
+
+- `POST /api/admin/async-jobs/room-rename`
+  - 权限：仅管理员，且需要 `session_maintenance.manage`
+  - body：`{ oldRoomId, newRoomId, mergeExisting? }`
+  - 行为：
+    - 默认先探测目标房间 ID 是否已存在
+    - 若目标 ID 不存在：停止原房间采集/录制后，创建后台迁移任务
+    - 若目标 ID 已存在：返回 `409` + `code=TARGET_ROOM_EXISTS`，前端必须二次确认后带 `mergeExisting=true` 再执行
+    - 返回 `202` + `job`，前端通过后台任务面板查看进度
+
+- `GET /api/admin/async-jobs?scope=room-rename&limit=8`
+  - 权限：仅管理员
+  - 返回：最近的房间迁移/合并任务列表，用于监控页浮动任务面板；管理员之间共享可见，便于查看复用中的同一任务
+  - 响应仅暴露房间迁移面板所需字段，不返回其它后台任务的明细载荷
+
+- `GET /api/admin/async-jobs/:id`
+  - 权限：仅管理员
+  - 返回：单个房间迁移/合并任务详情，含精简后的 `requestPayload`、`resultPayload`、`currentStep`
+
 - `DELETE /api/rooms/:id`
   - 行为：删除该房间的 `event/session/room` 数据
 

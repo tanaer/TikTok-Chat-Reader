@@ -17,6 +17,7 @@ const Auth = {
     _shellMessageItems: [],
     _shellMessagePagination: { page: 1, totalPages: 1, total: 0 },
     _shellMessageLoading: false,
+    _adminAccessPromise: null,
 
     // Token storage
     getAccessToken() {
@@ -47,7 +48,23 @@ const Auth = {
         }
     },
     setUser(user) {
-        if (user) localStorage.setItem('authUser', JSON.stringify(user));
+        if (!user) return;
+        let nextUser = user;
+        try {
+            const existingRaw = localStorage.getItem('authUser');
+            const existing = existingRaw ? JSON.parse(existingRaw) : null;
+            if (existing && Number(existing.id || 0) === Number(user.id || 0)) {
+                nextUser = {
+                    ...existing,
+                    ...user,
+                    permissions: Array.isArray(user.permissions) ? user.permissions : (existing.permissions || []),
+                    adminRoleCode: user.adminRoleCode !== undefined ? user.adminRoleCode : (existing.adminRoleCode || ''),
+                    adminRoleName: user.adminRoleName !== undefined ? user.adminRoleName : (existing.adminRoleName || ''),
+                    isSuperAdmin: user.isSuperAdmin !== undefined ? Boolean(user.isSuperAdmin) : Boolean(existing.isSuperAdmin),
+                };
+            }
+        } catch {}
+        localStorage.setItem('authUser', JSON.stringify(nextUser));
     },
     setTokens(accessToken, refreshToken, user) {
         localStorage.setItem('accessToken', accessToken);
@@ -61,6 +78,7 @@ const Auth = {
             clearInterval(this._shellMessagePollTimer);
             this._shellMessagePollTimer = null;
         }
+        this._adminAccessPromise = null;
         this._shellMessageUnreadCount = 0;
         localStorage.removeItem('accessToken');
         localStorage.removeItem('refreshToken');
@@ -72,6 +90,59 @@ const Auth = {
     isAdmin() {
         const user = this.getUser();
         return user && user.role === 'admin';
+    },
+    hasAdminPermission(permissionKey) {
+        const user = this.getUser();
+        if (!user || user.role !== 'admin') return false;
+        if (!permissionKey) return true;
+        if (user.isSuperAdmin) return true;
+        const permissions = Array.isArray(user.permissions) ? user.permissions : [];
+        return permissions.includes('*') || permissions.includes(permissionKey);
+    },
+    async ensureAdminAccessLoaded(force = false) {
+        if (!this.isAdmin()) return this.getUser();
+        const currentUser = this.getUser();
+        if (!force && currentUser && Array.isArray(currentUser.permissions)) {
+            return currentUser;
+        }
+        if (this._adminAccessPromise) {
+            return this._adminAccessPromise;
+        }
+
+        this._adminAccessPromise = (async () => {
+            try {
+                const res = await this.apiFetch('/api/admin/admin-access/me', {
+                    headers: { 'Cache-Control': 'no-store' }
+                });
+                if (!res?.ok) return this.getUser();
+                const data = await res.json().catch(() => ({}));
+                if (data?.access) {
+                    const previousUser = this.getUser();
+                    this.setUser({
+                        ...(previousUser || {}),
+                        ...data.access,
+                    });
+                    this.applyAdminVisibility();
+                    if (typeof window !== 'undefined') {
+                        const nextUser = this.getUser();
+                        const previousPermissions = Array.isArray(previousUser?.permissions) ? previousUser.permissions : [];
+                        const nextPermissions = Array.isArray(nextUser?.permissions) ? nextUser.permissions : [];
+                        if (JSON.stringify(previousPermissions) !== JSON.stringify(nextPermissions)) {
+                            window.dispatchEvent(new CustomEvent('auth:admin-access-updated', {
+                                detail: { user: nextUser }
+                            }));
+                        }
+                    }
+                }
+                return this.getUser();
+            } catch {
+                return this.getUser();
+            } finally {
+                this._adminAccessPromise = null;
+            }
+        })();
+
+        return this._adminAccessPromise;
     },
 
     redirectToLogin(message) {
@@ -832,6 +903,10 @@ const Auth = {
         }
         this.syncMessagePolling();
 
+        if (this.isAdmin()) {
+            this.ensureAdminAccessLoaded().catch(() => {});
+        }
+
         // Apply admin-only visibility
         this.applyAdminVisibility();
     },
@@ -844,6 +919,14 @@ const Auth = {
         const isAdmin = this.isAdmin();
         document.querySelectorAll('[data-admin-only]').forEach(el => {
             if (isAdmin) {
+                el.style.display = '';
+            } else {
+                el.style.display = 'none';
+            }
+        });
+        document.querySelectorAll('[data-admin-permission]').forEach(el => {
+            const permission = String(el.getAttribute('data-admin-permission') || '').trim();
+            if (isAdmin && this.hasAdminPermission(permission)) {
                 el.style.display = '';
             } else {
                 el.style.display = 'none';

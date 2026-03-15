@@ -89,6 +89,7 @@ const {
     enqueueSessionMaintenanceJob,
     enqueueStatsRefreshJob,
     enqueueEventMigrationJob,
+    enqueueRoomRenameJob,
 } = require('./services/adminAsyncJobService');
 
 let schemeAConfig = getSchemeAConfig();
@@ -641,8 +642,13 @@ async function getRoomListCacheVersion() {
 }
 
 async function readRoomListCache(endpoint, req, params = {}) {
+    const forceFresh = Boolean(req?.query?.forceFresh);
     const cacheVersion = await getRoomListCacheVersion();
     const cacheKey = buildRoomListCacheKey(endpoint, req, params, cacheVersion);
+
+    if (forceFresh) {
+        return { payload: null, cacheKey, cacheLayer: null, bypassed: true };
+    }
 
     if (cacheService.isRoomCacheEnabled()) {
         const redisPayload = await cacheService.getJson(buildRoomListRedisKey(cacheKey));
@@ -4490,24 +4496,134 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
     }
 });
 
-// Rename room (Migrate ID)
-app.post('/api/rooms/:id/rename', optionalAuth, async (req, res) => {
+// Rename room (Migrate ID / Merge)
+app.post('/api/rooms/:id/rename', authenticate, requireAdmin, requireAdminPermission('session_maintenance.manage'), async (req, res) => {
     try {
-        const roomId = req.params.id;
-        const { newRoomId } = req.body;
-        if (!newRoomId) return res.status(400).json({ error: 'New Room ID is required' });
+        const normalizeRenameRoomId = (value) => {
+            const text = String(value || '').trim();
+            return text.startsWith('@') ? text.slice(1) : text;
+        };
 
-        // Check ownership
-        const accessCheck = await canAccessRoom(req, roomId);
-        if (!accessCheck.allowed) {
-            return res.status(403).json({ error: '无权访问此房间' });
+        const roomId = normalizeRenameRoomId(req.params.id);
+        const newRoomId = normalizeRenameRoomId(req.body?.newRoomId);
+        const mergeExisting = Boolean(req.body?.mergeExisting);
+
+        if (!roomId) {
+            return res.status(400).json({ error: '原房间ID不能为空' });
+        }
+        if (!newRoomId) {
+            return res.status(400).json({ error: '新房间ID不能为空' });
         }
 
-        await manager.migrateRoomId(roomId, newRoomId);
-        await invalidateRoomListCaches('room rename');
-        res.json({ success: true, oldRoomId: roomId, newRoomId });
+        const sourceRoom = await db.get('SELECT room_id FROM room WHERE room_id = ?', [roomId]);
+        if (!sourceRoom) {
+            const existingTargetRoom = await db.get(
+                'SELECT room_id, name, is_monitor_enabled, is_recording_enabled FROM room WHERE room_id = ?',
+                [newRoomId]
+            );
+            if (existingTargetRoom) {
+                return res.status(409).json({
+                    error: '原房间可能已完成迁移，请刷新列表确认',
+                    code: 'ROOM_ALREADY_MIGRATED',
+                    oldRoomId: roomId,
+                    newRoomId,
+                    targetRoom: {
+                        roomId: existingTargetRoom.roomId || existingTargetRoom.room_id,
+                        name: existingTargetRoom.name || existingTargetRoom.roomId || existingTargetRoom.room_id || newRoomId,
+                        isMonitorEnabled: Number(existingTargetRoom.isMonitorEnabled ?? existingTargetRoom.is_monitor_enabled ?? 0),
+                        isRecordingEnabled: Number(existingTargetRoom.isRecordingEnabled ?? existingTargetRoom.is_recording_enabled ?? 0)
+                    }
+                });
+            }
+            return res.status(404).json({ error: '源房间不存在', code: 'ROOM_NOT_FOUND' });
+        }
+
+        if (!mergeExisting) {
+            const targetRoom = await db.get(
+                'SELECT room_id, name, is_monitor_enabled, is_recording_enabled FROM room WHERE room_id = ?',
+                [newRoomId]
+            );
+            if (targetRoom) {
+                return res.status(409).json({
+                    error: '目标房间ID已存在，请确认是否合并',
+                    code: 'TARGET_ROOM_EXISTS',
+                    requiresConfirmation: true,
+                    oldRoomId: roomId,
+                    newRoomId,
+                    targetRoom: {
+                        roomId: targetRoom.roomId || targetRoom.room_id,
+                        name: targetRoom.name || targetRoom.roomId || targetRoom.room_id || newRoomId,
+                        isMonitorEnabled: Number(targetRoom.isMonitorEnabled ?? targetRoom.is_monitor_enabled ?? 0),
+                        isRecordingEnabled: Number(targetRoom.isRecordingEnabled ?? targetRoom.is_recording_enabled ?? 0)
+                    }
+                });
+            }
+        }
+
+        // Stop live ingestion before queuing background processing to avoid new events on old room_id.
+        await autoRecorder.disconnectRoom(roomId).catch((err) => {
+            console.warn(`[API] Failed to disconnect room ${roomId} before rename:`, err?.message || err);
+        });
+        if (recordingManager.isRecording(roomId)) {
+            await recordingManager.stopRecording(roomId).catch((err) => {
+                console.warn(`[API] Failed to stop recording for room ${roomId} before rename:`, err?.message || err);
+            });
+        }
+
+        const queuedJob = await enqueueRoomRenameJob({
+            oldRoomId: roomId,
+            newRoomId,
+            mergeExisting,
+            createdByUserId: req.user?.id,
+            source: 'monitor-room-list'
+        });
+        res.status(202).json({
+            success: true,
+            accepted: true,
+            queued: queuedJob.queued,
+            processing: queuedJob.processing,
+            reused: queuedJob.reused,
+            oldRoomId: roomId,
+            newRoomId,
+            mergeExisting,
+            job: queuedJob.job,
+            message: queuedJob.reused
+                ? `已有同房间${mergeExisting ? '合并' : '迁移'}任务正在后台执行，可在右下角任务面板查看进度。`
+                : `房间${mergeExisting ? '合并' : '迁移'}任务已提交，可在右下角任务面板查看进度。`
+        });
     } catch (err) {
-        res.status(500).json({ error: err.message });
+        if (err?.code === 'ROOM_RENAME_IN_PROGRESS') {
+            return res.status(409).json({
+                error: '该房间正在执行迁移或合并，请勿重复提交',
+                code: 'ROOM_RENAME_IN_PROGRESS',
+                oldRoomId: String(req.params.id || '').trim(),
+                newRoomId: String(req.body?.newRoomId || '').trim()
+            });
+        }
+        if (err?.code === 'ROOM_ALREADY_MIGRATED') {
+            return res.status(409).json({
+                error: '原房间已不存在，可能已完成迁移或合并。请刷新列表确认结果。',
+                code: 'ROOM_ALREADY_MIGRATED',
+                oldRoomId: String(req.params.id || '').trim(),
+                newRoomId: String(req.body?.newRoomId || '').trim(),
+                targetRoom: err?.details?.targetRoom || null
+            });
+        }
+        if (err?.code === 'TARGET_ROOM_EXISTS') {
+            return res.status(409).json({
+                error: '目标房间ID已存在，请确认是否合并',
+                code: 'TARGET_ROOM_EXISTS',
+                requiresConfirmation: true,
+                oldRoomId: String(req.params.id || '').trim(),
+                newRoomId: String(req.body?.newRoomId || '').trim(),
+                targetRoom: err?.details?.targetRoom || null
+            });
+        }
+        if (err?.code === 'ROOM_NOT_FOUND') {
+            return res.status(404).json({ error: '源房间不存在', code: 'ROOM_NOT_FOUND' });
+        }
+        console.error('[API] Rename room error:', err);
+        res.status(500).json({ error: err.message || '房间ID更新失败' });
     }
 });
 

@@ -9,6 +9,20 @@ const ROOM_LIST_VIEW_MODES = new Set(['card', 'list']);
 let roomListViewMode = 'card'; // 'card' or 'list'
 let roomListRefreshTimer = null; // Timer for auto-refresh
 const ROOM_LIST_REFRESH_INTERVAL = 10000; // 10 seconds for listing is enough
+let roomRenameJobPollTimer = null;
+let roomRenameJobPanelOpen = false;
+let selectedRoomRenameJobId = 0;
+let latestRoomRenameJobs = [];
+let roomListForceFreshToken = 0;
+const roomRenamePendingMap = new Map();
+const roomRenameInFlight = new Set();
+const roomRenameCompletedJobs = new Set();
+
+function canManageRoomRename() {
+    return typeof Auth !== 'undefined'
+        && typeof Auth.hasAdminPermission === 'function'
+        && Auth.hasAdminPermission('session_maintenance.manage');
+}
 
 function loadRoomViewModePreference() {
     if (typeof window === 'undefined') return 'card';
@@ -134,6 +148,313 @@ const copyToClipboard = (text, event) => {
 };
 window.copyToClipboard = copyToClipboard;
 
+function normalizeRoomIdInput(value) {
+    const text = String(value || '').trim();
+    return text.startsWith('@') ? text.slice(1) : text;
+}
+
+function getRoomRenamePendingKey(roomId) {
+    return normalizeRoomIdInput(roomId);
+}
+
+function setRoomRenamePending(roomId, pending) {
+    const key = getRoomRenamePendingKey(roomId);
+    if (!key) return;
+    if (pending) {
+        roomRenamePendingMap.set(key, true);
+    } else {
+        roomRenamePendingMap.delete(key);
+    }
+}
+
+function isRoomRenamePending(roomId) {
+    return roomRenamePendingMap.has(getRoomRenamePendingKey(roomId));
+}
+
+function escapeHtmlText(str) {
+    return str == null ? '' : String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatRoomRenameJobStatus(job) {
+    const status = String(job?.status || '').toLowerCase();
+    if (status === 'queued') return { label: '排队中', className: 'badge badge-warning badge-sm' };
+    if (status === 'processing') return { label: '执行中', className: 'badge badge-info badge-sm' };
+    if (status === 'completed') return { label: '已完成', className: 'badge badge-success badge-sm' };
+    if (status === 'failed') return { label: '失败', className: 'badge badge-error badge-sm' };
+    return { label: status || '未知', className: 'badge badge-ghost badge-sm' };
+}
+
+function formatRoomRenameJobTime(value) {
+    if (!value) return '--';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '--';
+    return date.toLocaleString('zh-CN', { hour12: false, timeZone: 'Asia/Shanghai' });
+}
+
+function summarizeRoomRenameJob(job) {
+    if (!job) return '当前暂无任务';
+    const status = formatRoomRenameJobStatus(job);
+    const payload = job.requestPayload || {};
+    const sourceRoomId = payload.oldRoomId || '';
+    const targetRoomId = payload.newRoomId || '';
+    return `${status.label}：${sourceRoomId || '--'} -> ${targetRoomId || '--'}，${job.currentStep || '等待后台执行'}`;
+}
+
+async function fetchRoomRenameJobs() {
+    if (!canManageRoomRename()) {
+        return { jobs: [], activeCount: 0 };
+    }
+    const response = await Auth.apiFetch('/api/admin/async-jobs?scope=room-rename&limit=8');
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.error || '获取房间迁移任务失败');
+    }
+    return {
+        jobs: Array.isArray(data.jobs) ? data.jobs : [],
+        activeCount: Number(data.activeCount || 0)
+    };
+}
+
+async function fetchRoomRenameJobDetail(jobId) {
+    const response = await Auth.apiFetch(`/api/admin/async-jobs/${encodeURIComponent(jobId)}`);
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data.error || '获取任务详情失败');
+    }
+    return data.job || null;
+}
+
+function renderRoomRenameJobFab(activeCount = 0) {
+    const fab = document.getElementById('roomRenameJobFab');
+    const countEl = document.getElementById('roomRenameJobFabCount');
+    if (!fab || !countEl) return;
+    if (!canManageRoomRename()) {
+        fab.classList.add('hidden');
+        return;
+    }
+
+    fab.classList.remove('hidden');
+    if (activeCount > 0) {
+        countEl.classList.remove('hidden');
+        countEl.textContent = String(activeCount);
+    } else {
+        countEl.classList.add('hidden');
+        countEl.textContent = '0';
+    }
+}
+
+function renderRoomRenameJobList(jobs = []) {
+    const listEl = document.getElementById('roomRenameJobPanelList');
+    const summaryEl = document.getElementById('roomRenameJobPanelSummary');
+    if (!listEl || !summaryEl) return;
+
+    latestRoomRenameJobs = jobs;
+    const selectedJob = jobs.find((job) => Number(job.id) === Number(selectedRoomRenameJobId)) || jobs[0] || null;
+    if (selectedJob) {
+        selectedRoomRenameJobId = Number(selectedJob.id);
+    } else {
+        selectedRoomRenameJobId = 0;
+    }
+
+    summaryEl.textContent = selectedJob ? summarizeRoomRenameJob(selectedJob) : '当前暂无任务';
+
+    if (!jobs.length) {
+        listEl.innerHTML = '<div class="room-rename-job-panel__empty">当前暂无房间迁移任务。</div>';
+        renderRoomRenameJobDetail(null);
+        return;
+    }
+
+    listEl.innerHTML = jobs.map((job) => {
+        const status = formatRoomRenameJobStatus(job);
+        const payload = job.requestPayload || {};
+        const title = job.title || `${payload.oldRoomId || '--'} -> ${payload.newRoomId || '--'}`;
+        const progress = Math.max(0, Math.min(100, Number(job.progressPercent || 0)));
+        const activeClass = Number(job.id) === Number(selectedRoomRenameJobId) ? ' is-active' : '';
+        return `
+            <button type="button" class="room-rename-job-item${activeClass}" onclick="selectRoomRenameJob(${Number(job.id)})">
+                <div class="room-rename-job-item__top">
+                    <div class="room-rename-job-item__title">${escapeHtmlText(title)}</div>
+                    <span class="${status.className}">${status.label}</span>
+                </div>
+                <div class="room-rename-job-item__step">${escapeHtmlText(job.currentStep || '等待后台执行')}</div>
+                <div class="room-rename-job-progress">
+                    <div class="room-rename-job-progress__bar" style="width:${progress}%"></div>
+                </div>
+                <div class="room-rename-job-item__meta">
+                    <span>#${Number(job.id || 0)}</span>
+                    <span>${formatRoomRenameJobTime(job.updatedAt || job.createdAt)}</span>
+                </div>
+            </button>
+        `;
+    }).join('');
+
+    renderRoomRenameJobDetail(selectedJob);
+}
+
+function renderRoomRenameJobDetail(job) {
+    const detailEl = document.getElementById('roomRenameJobPanelDetail');
+    if (!detailEl) return;
+    if (!job) {
+        detailEl.innerHTML = '<div class="room-rename-job-panel__detail-empty">选择一条任务后可查看执行进度与结果。</div>';
+        return;
+    }
+
+    const status = formatRoomRenameJobStatus(job);
+    const payload = job.requestPayload || {};
+    const result = job.resultPayload || {};
+    const progress = Math.max(0, Math.min(100, Number(job.progressPercent || 0)));
+    const detailStats = [];
+
+    if (result && typeof result === 'object') {
+        if (result.mode) detailStats.push({ label: '模式', value: result.mode === 'merged' ? '合并' : '迁移' });
+        if (result.moved?.events != null) detailStats.push({ label: '事件', value: String(result.moved.events) });
+        if (result.moved?.sessions != null) detailStats.push({ label: '场次', value: String(result.moved.sessions) });
+        if (result.associations?.mergedUsers != null) detailStats.push({ label: '关联用户', value: String(result.associations.mergedUsers) });
+    }
+
+    detailEl.innerHTML = `
+        <div class="room-rename-job-panel__detail-header">
+            <div class="room-rename-job-panel__detail-title">${escapeHtmlText(job.title || '房间迁移任务')}</div>
+            <span class="${status.className}">${status.label}</span>
+        </div>
+        <div class="room-rename-job-panel__detail-meta">
+            <span>#${Number(job.id || 0)}</span>
+            <span>${escapeHtmlText(payload.oldRoomId || '--')} -> ${escapeHtmlText(payload.newRoomId || '--')}</span>
+        </div>
+        <div class="room-rename-job-panel__detail-step">${escapeHtmlText(job.currentStep || '等待后台执行')}</div>
+        <div class="room-rename-job-progress">
+            <div class="room-rename-job-progress__bar" style="width:${progress}%"></div>
+        </div>
+        ${job.errorMessage ? `<div class="room-rename-job-panel__detail-error">${escapeHtmlText(job.errorMessage)}</div>` : ''}
+        ${detailStats.length ? `
+            <div class="room-rename-job-panel__detail-result">
+                ${detailStats.map((item) => `
+                    <div class="room-rename-job-panel__detail-stat">
+                        <div class="room-rename-job-panel__detail-stat-label">${escapeHtmlText(item.label)}</div>
+                        <div class="room-rename-job-panel__detail-stat-value">${escapeHtmlText(item.value)}</div>
+                    </div>
+                `).join('')}
+            </div>
+        ` : ''}
+    `;
+}
+
+async function refreshRoomRenameJobs(options = {}) {
+    if (!canManageRoomRename()) return;
+    try {
+        const result = await fetchRoomRenameJobs();
+        roomRenamePendingMap.clear();
+        result.jobs.forEach((job) => {
+            const status = String(job.status || '').toLowerCase();
+            const sourceRoomId = normalizeRoomIdInput(job.requestPayload?.oldRoomId || '');
+            if ((status === 'queued' || status === 'processing') && sourceRoomId) {
+                roomRenamePendingMap.set(sourceRoomId, true);
+            }
+        });
+        let shouldRefreshRoomList = false;
+        result.jobs.forEach((job) => {
+            const jobId = Number(job.id || 0);
+            if (!jobId) return;
+            if (String(job.status || '').toLowerCase() === 'completed' && !roomRenameCompletedJobs.has(jobId)) {
+                roomRenameCompletedJobs.add(jobId);
+                shouldRefreshRoomList = true;
+            }
+        });
+        renderRoomRenameJobFab(result.activeCount);
+        renderRoomRenameJobList(result.jobs);
+
+        if (options.jobId) {
+            selectedRoomRenameJobId = Number(options.jobId);
+            const detail = await fetchRoomRenameJobDetail(options.jobId).catch(() => null);
+            if (detail) {
+                const mergedJobs = result.jobs.some((job) => Number(job.id) === Number(detail.id))
+                    ? result.jobs.map((job) => Number(job.id) === Number(detail.id) ? detail : job)
+                    : [detail, ...result.jobs];
+                renderRoomRenameJobList(mergedJobs.slice(0, 8));
+            }
+        }
+
+        if (shouldRefreshRoomList) {
+            queueFreshRoomListReload();
+            renderRoomList();
+        }
+    } catch (error) {
+        console.error('Failed to refresh room rename jobs:', error);
+    }
+}
+
+function startRoomRenameJobPolling() {
+    stopRoomRenameJobPolling();
+    if (!canManageRoomRename()) return;
+    roomRenameJobPollTimer = setInterval(() => {
+        refreshRoomRenameJobs();
+    }, 4000);
+}
+
+function stopRoomRenameJobPolling() {
+    if (roomRenameJobPollTimer) {
+        clearInterval(roomRenameJobPollTimer);
+        roomRenameJobPollTimer = null;
+    }
+}
+
+window.toggleRoomRenameJobPanel = function toggleRoomRenameJobPanel(force) {
+    const panel = document.getElementById('roomRenameJobPanel');
+    if (!panel) return;
+
+    if (typeof force === 'boolean') {
+        roomRenameJobPanelOpen = force;
+    } else {
+        roomRenameJobPanelOpen = !roomRenameJobPanelOpen;
+    }
+
+    panel.classList.toggle('hidden', !roomRenameJobPanelOpen);
+    panel.setAttribute('aria-hidden', roomRenameJobPanelOpen ? 'false' : 'true');
+
+    if (roomRenameJobPanelOpen) {
+        refreshRoomRenameJobs({ jobId: selectedRoomRenameJobId || 0 });
+    }
+};
+
+window.selectRoomRenameJob = async function selectRoomRenameJob(jobId) {
+    selectedRoomRenameJobId = Number(jobId || 0);
+    const inMemoryJob = latestRoomRenameJobs.find((job) => Number(job.id) === selectedRoomRenameJobId);
+    if (inMemoryJob) {
+        renderRoomRenameJobList(latestRoomRenameJobs);
+    }
+    const detail = await fetchRoomRenameJobDetail(selectedRoomRenameJobId).catch((error) => {
+        console.error('Failed to load room rename job detail:', error);
+        return null;
+    });
+    if (!detail) return;
+    const mergedJobs = latestRoomRenameJobs.some((job) => Number(job.id) === selectedRoomRenameJobId)
+        ? latestRoomRenameJobs.map((job) => Number(job.id) === selectedRoomRenameJobId ? detail : job)
+        : [detail, ...latestRoomRenameJobs];
+    renderRoomRenameJobList(mergedJobs.slice(0, 8));
+};
+
+function roomListShowToast(message, type = 'info') {
+    if (typeof window.showToast === 'function') {
+        window.showToast(message, type);
+        return;
+    }
+
+    if (type === 'error') {
+        alert(message);
+    } else {
+        console.log(`[RoomList:${type}] ${message}`);
+    }
+}
+
+function queueFreshRoomListReload() {
+    roomListForceFreshToken = Date.now();
+}
+
 
 function applyRoomSortButtonState() {
     const buttons = Array.from(document.querySelectorAll('.room-sort-btn'));
@@ -168,6 +489,7 @@ function renderRoomCard(r, index = 0) {
     const safeRoomId = escapeHtml(r.roomId);
     const safeName = escapeHtml(r.displayName || r.name || '');
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin();
+    const canManageRename = canManageRoomRename();
 
 
     // Recording status
@@ -251,7 +573,7 @@ function renderRoomCard(r, index = 0) {
                 <div class="flex gap-1">
                     <button class="btn btn-xs btn-ghost text-error" onclick="deleteRoom('${safeRoomId}')">删除</button>
                     ${isAdmin ? `<button class="btn btn-xs ${recoBtnClass}" onclick="toggleRecording('${safeRoomId}', '${safeRoomId}', this)" title="${recoBtnTooltip}">${recoBtnText}</button>` : ''}
-                    ${isAdmin && r.lastSessionTime ? `<button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>` : ''}
+                    ${canManageRename && r.lastSessionTime ? `<button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>` : ''}
                     <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn}, '${r.language || '中文'}', ${r.priority}, ${isRecordingEnabled}, '${recordingAccountId}')">编辑</button>
                     <button class="btn btn-sm btn-primary" onclick="enterRoom('${safeRoomId}', '${safeName}')">进入</button>
 
@@ -273,6 +595,7 @@ function renderRoomRow(r, index = 0) {
     const safeRoomId = escapeHtml(r.roomId);
     const safeName = escapeHtml(r.displayName || r.name || '');
     const isAdmin = typeof Auth !== 'undefined' && Auth.isAdmin();
+    const canManageRename = canManageRoomRename();
 
     // Recording status
     const isRecording = window.activeRecordingSet && window.activeRecordingSet.has(r.roomId);
@@ -328,7 +651,7 @@ function renderRoomRow(r, index = 0) {
         </td>` : ''}
         <td class="p-2 text-center" onclick="event.stopPropagation()">
             <div class="flex gap-1 justify-center">
-                ${isAdmin ? `<button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>` : ''}
+                ${canManageRename ? `<button class="btn btn-xs btn-ghost text-primary" onclick="renameRoom('${safeRoomId}')" title="更新房间ID/迁移数据">🔄</button>` : ''}
                 ${isAdmin ? `<button class="btn btn-xs ${recoBtnClass}" onclick="toggleRecording('${safeRoomId}', '${safeRoomId}', this)" title="${isRecording ? '停止录制' : '开始录制'}">${recoBtnText}</button>` : ''}
                 <button class="btn btn-xs btn-ghost" onclick="openAddRoomModal('${safeRoomId}', '${safeName}', ${isMonitorOn}, '${r.language || '中文'}', ${r.priority}, ${isRecordingEnabled}, '${recordingAccountId}')">✏️</button>
                 <button class="btn btn-xs btn-ghost text-error" onclick="deleteRoom('${safeRoomId}')">🗑️</button>
@@ -352,13 +675,20 @@ async function renderRoomList() {
 
     try {
         // Build query string with pagination and search
+        const forceFreshToken = roomListForceFreshToken;
         const params = new URLSearchParams({
             page: roomListPage,
             limit: roomListLimit,
             search: roomListSearch,
             sort: roomListSort
         });
+        if (forceFreshToken) {
+            params.set('forceFresh', String(forceFreshToken));
+        }
         const result = await $.get(`/api/rooms/stats?${params}`);
+        if (forceFreshToken && roomListForceFreshToken === forceFreshToken) {
+            roomListForceFreshToken = 0;
+        }
 
         // Fetch active recordings
         try {
@@ -685,6 +1015,10 @@ window.bootRoomListOnMonitorPage = function bootRoomListOnMonitorPage() {
     const container = document.getElementById('roomListContainer');
     if (!container) return;
     window.__roomListBootstrapped = true;
+    if (canManageRoomRename()) {
+        refreshRoomRenameJobs();
+        startRoomRenameJobPolling();
+    }
     renderRoomList();
 };
 
@@ -696,6 +1030,25 @@ if (document.readyState === 'loading') {
     }, { once: true });
 } else if (typeof window !== 'undefined' && typeof window.bootRoomListOnMonitorPage === 'function') {
     setTimeout(() => window.bootRoomListOnMonitorPage(), 0);
+}
+
+if (typeof window !== 'undefined') {
+    window.addEventListener('auth:admin-access-updated', () => {
+        renderRoomRenameJobFab(0);
+        if (!canManageRoomRename()) {
+            stopRoomRenameJobPolling();
+            roomRenameJobPanelOpen = false;
+            const panel = document.getElementById('roomRenameJobPanel');
+            if (panel) {
+                panel.classList.add('hidden');
+                panel.setAttribute('aria-hidden', 'true');
+            }
+        } else {
+            refreshRoomRenameJobs();
+            startRoomRenameJobPolling();
+        }
+        renderRoomList();
+    });
 }
 window.openAddRoomModal = openAddRoomModal;
 window.closeRoomModal = closeRoomModal;
@@ -781,22 +1134,153 @@ window.saveRoom = async function () {
 };
 
 window.renameRoom = async function (oldRoomId) {
-    const newRoomId = prompt(`请输入新的房间ID (将迁移 ${oldRoomId} 的所有数据):`);
-    if (!newRoomId || newRoomId === oldRoomId) return;
+    if (!canManageRoomRename()) {
+        roomListShowToast('当前管理员没有房间迁移权限', 'error');
+        return;
+    }
+    const sourceRoomId = normalizeRoomIdInput(oldRoomId);
+    if (isRoomRenamePending(sourceRoomId)) {
+        toggleRoomRenameJobPanel(true);
+        roomListShowToast(`房间 ${sourceRoomId} 正在处理中，请勿重复提交`, 'info');
+        return;
+    }
+    if (roomRenameInFlight.has(sourceRoomId)) {
+        toggleRoomRenameJobPanel(true);
+        roomListShowToast(`房间 ${sourceRoomId} 正在处理中，请勿重复提交`, 'info');
+        return;
+    }
 
-    if (!confirm(`确定要将 ${oldRoomId} 重命名为 ${newRoomId} 吗?\n此操作将在后台迁移历史数据，请稍候...`)) return;
+    const requestedRoomId = prompt(`请输入新的房间ID (将迁移 ${sourceRoomId} 的所有数据):`);
+    const targetRoomId = normalizeRoomIdInput(requestedRoomId);
+    if (!targetRoomId || targetRoomId === sourceRoomId) return;
 
-    try {
-        await $.ajax({
-            url: `/api/rooms/${encodeURIComponent(oldRoomId)}/rename`,
-            type: 'POST',
-            contentType: 'application/json',
-            data: JSON.stringify({ newRoomId })
+    if (!confirm(`确定要将 ${sourceRoomId} 更新为 ${targetRoomId} 吗？\n\n系统会先停止当前房间采集，再迁移历史数据。`)) {
+        return;
+    }
+
+    const submitRename = async (mergeExisting = false) => {
+        const response = await Auth.apiFetch('/api/admin/async-jobs/room-rename', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                oldRoomId: sourceRoomId,
+                newRoomId: targetRoomId,
+                mergeExisting
+            })
         });
-        alert('迁移成功!');
-        renderRoomList();
+        const data = await response.json().catch(() => ({}));
+        if (!response.ok) {
+            const error = new Error(data.error || '提交房间迁移任务失败');
+            error.responseJSON = data;
+            error.statusText = response.statusText;
+            throw error;
+        }
+        return data;
+    };
+
+    roomRenameInFlight.add(sourceRoomId);
+    setRoomRenamePending(sourceRoomId, true);
+    try {
+        await window.withGlobalLoading?.(
+            `正在提交房间任务 ${sourceRoomId} -> ${targetRoomId}...`,
+            async () => {
+                const result = await submitRename(false);
+                const jobId = Number(result?.job?.id || 0);
+                if (jobId) {
+                    selectedRoomRenameJobId = jobId;
+                }
+                toggleRoomRenameJobPanel(true);
+                await refreshRoomRenameJobs({ jobId: jobId || selectedRoomRenameJobId || 0 });
+                roomListShowToast(result?.message || '房间迁移任务已提交，请在右下角任务面板查看进度。', 'success');
+            },
+            { paintFrames: 1 }
+        ) ?? (async () => {
+            const result = await submitRename(false);
+            const jobId = Number(result?.job?.id || 0);
+            if (jobId) {
+                selectedRoomRenameJobId = jobId;
+            }
+            toggleRoomRenameJobPanel(true);
+            await refreshRoomRenameJobs({ jobId: jobId || selectedRoomRenameJobId || 0 });
+            roomListShowToast(result?.message || '房间迁移任务已提交，请在右下角任务面板查看进度。', 'success');
+        })();
     } catch (e) {
         console.error(e);
-        alert('迁移失败: ' + (e.responseJSON?.error || e.statusText));
+
+        const response = e?.responseJSON || {};
+        if (response.code === 'TARGET_ROOM_EXISTS' && response.requiresConfirmation) {
+            const targetName = response.targetRoom?.name || targetRoomId;
+            const shouldMerge = confirm(
+                `目标房间ID ${targetRoomId} 已存在（${targetName}）。\n\n选择“确定”后，将把 ${sourceRoomId} 的房间数据合并到 ${targetRoomId}。\n此操作会合并历史事件、场次、录制任务和房间关联，无法撤销。`
+            );
+            if (!shouldMerge) return;
+
+            try {
+                await window.withGlobalLoading?.(
+                    `正在提交房间合并任务 ${sourceRoomId} -> ${targetRoomId}...`,
+                    async () => {
+                        const mergeResult = await submitRename(true);
+                        const mergeJobId = Number(mergeResult?.job?.id || 0);
+                        if (mergeJobId) {
+                            selectedRoomRenameJobId = mergeJobId;
+                        }
+                        toggleRoomRenameJobPanel(true);
+                        await refreshRoomRenameJobs({ jobId: mergeJobId || selectedRoomRenameJobId || 0 });
+                        roomListShowToast(mergeResult?.message || '房间合并任务已提交，请在右下角任务面板查看进度。', 'success');
+                    },
+                    { paintFrames: 1 }
+                ) ?? (async () => {
+                    const mergeResult = await submitRename(true);
+                    const mergeJobId = Number(mergeResult?.job?.id || 0);
+                    if (mergeJobId) {
+                        selectedRoomRenameJobId = mergeJobId;
+                    }
+                    toggleRoomRenameJobPanel(true);
+                    await refreshRoomRenameJobs({ jobId: mergeJobId || selectedRoomRenameJobId || 0 });
+                    roomListShowToast(mergeResult?.message || '房间合并任务已提交，请在右下角任务面板查看进度。', 'success');
+                })();
+            } catch (mergeError) {
+                console.error(mergeError);
+                const mergeResponse = mergeError?.responseJSON || {};
+                if (mergeResponse.code === 'ROOM_RENAME_IN_PROGRESS') {
+                    toggleRoomRenameJobPanel(true);
+                    roomListShowToast('该房间正在执行迁移或合并，请勿重复提交', 'info');
+                    return;
+                }
+                if (mergeResponse.code === 'ROOM_ALREADY_MIGRATED') {
+                    toggleRoomRenameJobPanel(true);
+                    roomListShowToast(mergeResponse.error || '原房间可能已完成迁移，请刷新列表确认', 'info');
+                    queueFreshRoomListReload();
+                    renderRoomList();
+                    return;
+                }
+                alert('合并失败: ' + (mergeResponse.error || mergeError.statusText));
+            }
+            return;
+        }
+
+        if (response.code === 'ROOM_RENAME_IN_PROGRESS') {
+            toggleRoomRenameJobPanel(true);
+            roomListShowToast('该房间正在执行迁移或合并，请勿重复提交', 'info');
+            return;
+        }
+        if (response.code === 'ROOM_ALREADY_MIGRATED') {
+            toggleRoomRenameJobPanel(true);
+            roomListShowToast(response.error || '原房间可能已完成迁移，请刷新列表确认', 'info');
+            queueFreshRoomListReload();
+            renderRoomList();
+            return;
+        }
+        if (response.code === 'ROOM_NOT_FOUND') {
+            alert('该房间已不存在，可能已被删除或已完成迁移。请刷新列表后再试。');
+            queueFreshRoomListReload();
+            renderRoomList();
+            return;
+        }
+
+        alert('迁移失败: ' + (response.error || e.statusText));
+    } finally {
+        roomRenameInFlight.delete(sourceRoomId);
+        setTimeout(() => setRoomRenamePending(sourceRoomId, false), 1500);
     }
 };

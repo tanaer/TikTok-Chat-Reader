@@ -1576,6 +1576,34 @@
         </div>
     </div>
 
+    <button id="roomRenameJobFab" class="room-rename-job-fab hidden" type="button" data-admin-only="true"
+        data-admin-permission="session_maintenance.manage"
+        onclick="toggleRoomRenameJobPanel()" aria-label="查看房间迁移任务">
+        <span class="room-rename-job-fab__icon">🧭</span>
+        <span class="room-rename-job-fab__label">迁移任务</span>
+        <span id="roomRenameJobFabCount" class="room-rename-job-fab__count hidden">0</span>
+    </button>
+
+    <aside id="roomRenameJobPanel" class="room-rename-job-panel hidden" data-admin-only="true"
+        data-admin-permission="session_maintenance.manage" aria-hidden="true">
+        <div class="room-rename-job-panel__card">
+            <div class="room-rename-job-panel__header">
+                <div>
+                    <div class="room-rename-job-panel__eyebrow">管理员任务</div>
+                    <div class="room-rename-job-panel__title">房间迁移 / 合并</div>
+                </div>
+                <button class="btn btn-ghost btn-xs btn-circle" type="button" onclick="toggleRoomRenameJobPanel(false)">✕</button>
+            </div>
+            <div id="roomRenameJobPanelSummary" class="room-rename-job-panel__summary">当前暂无任务</div>
+            <div id="roomRenameJobPanelList" class="room-rename-job-panel__list">
+                <div class="room-rename-job-panel__empty">当前暂无房间迁移任务。</div>
+            </div>
+            <div id="roomRenameJobPanelDetail" class="room-rename-job-panel__detail">
+                <div class="room-rename-job-panel__detail-empty">选择一条任务后可查看执行进度与结果。</div>
+            </div>
+        </div>
+    </aside>
+
     <!-- Onboarding Tour -->
     <script src="onboarding.js?v=20260614b"></script>
 

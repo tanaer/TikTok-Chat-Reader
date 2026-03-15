@@ -2,6 +2,7 @@ const db = require('../db');
 const { manager } = require('../manager');
 const metricsService = require('./metricsService');
 const { getSchemeAConfig } = require('./featureFlagService');
+const cacheService = require('./cacheService');
 const { runSessionMaintenanceTask } = require('./sessionMaintenanceService');
 const {
     runRoomStatsRefreshJob,
@@ -19,10 +20,12 @@ const JOB_QUEUE_MAINTENANCE = 'maintenance';
 const JOB_QUEUE_STATS = 'stats';
 
 const JOB_TYPE_MIGRATE_EVENT_ROOM_IDS = 'maintenance.migrate_event_room_ids';
+const JOB_TYPE_RENAME_ROOM = 'maintenance.rename_room';
 const JOB_TYPE_REFRESH_ROOM_STATS = 'stats.refresh_room_stats';
 const JOB_TYPE_REFRESH_USER_STATS = 'stats.refresh_user_stats';
 const JOB_TYPE_REFRESH_GLOBAL_STATS = 'stats.refresh_global_stats';
 const JOB_TYPE_SESSION_MAINTENANCE_PREFIX = 'session_maintenance.';
+const ROOM_LIST_CACHE_VERSION_KEY = cacheService.buildCacheKey('room_list', 'version');
 
 const SESSION_MAINTENANCE_TITLE_MAP = Object.freeze({
     cleanup_stale_live_events: '陈旧 LIVE 清理',
@@ -66,8 +69,12 @@ function normalizeJobRow(row) {
         currentStep: String(item.currentStep || ''),
         progressPercent: Number(item.progressPercent || 0),
         attemptCount: Number(item.attemptCount || 0),
-        requestPayload: safeJsonParse(item.requestPayloadJson, {}),
-        resultPayload: safeJsonParse(item.resultJson, null),
+        requestPayload: item.requestPayload !== undefined
+            ? safeJsonParse(item.requestPayload, item.requestPayload)
+            : safeJsonParse(item.requestPayloadJson, {}),
+        resultPayload: item.resultPayload !== undefined
+            ? safeJsonParse(item.resultPayload, item.resultPayload)
+            : safeJsonParse(item.resultJson, null),
         errorMessage: String(item.errorMessage || ''),
         source: String(item.source || ''),
         queuedAt: item.queuedAt || '',
@@ -76,6 +83,10 @@ function normalizeJobRow(row) {
         createdAt: item.createdAt || '',
         updatedAt: item.updatedAt || '',
     };
+}
+
+function isCompletedStatus(status) {
+    return String(status || '').toLowerCase() === JOB_STATUS_COMPLETED;
 }
 
 function serializeAdminAsyncJob(job) {
@@ -96,6 +107,79 @@ function serializeAdminAsyncJob(job) {
         createdAt: item.createdAt,
         updatedAt: item.updatedAt,
     };
+}
+
+function serializeAdminAsyncJobDetail(job) {
+    const item = normalizeJobRow(job);
+    return {
+        ...serializeAdminAsyncJob(item),
+        dedupeKey: item.dedupeKey,
+        requestPayload: item.requestPayload || {},
+        resultPayload: item.resultPayload,
+        createdByUserId: item.createdByUserId,
+        source: item.source,
+    };
+}
+
+function sanitizeRoomRenameRequestPayload(payload = {}) {
+    const source = payload && typeof payload === 'object' ? payload : {};
+    return {
+        oldRoomId: String(source.oldRoomId || '').trim(),
+        newRoomId: String(source.newRoomId || '').trim(),
+        mergeExisting: Boolean(source.mergeExisting),
+    };
+}
+
+function sanitizeRoomRenameResultPayload(payload) {
+    if (!payload || typeof payload !== 'object') return null;
+
+    const source = payload;
+    const sanitized = {
+        success: Boolean(source.success),
+        oldRoomId: String(source.oldRoomId || '').trim(),
+        newRoomId: String(source.newRoomId || '').trim(),
+        mode: source.mode === 'merged' ? 'merged' : 'migrated',
+        targetRoomExisted: Boolean(source.targetRoomExisted),
+        deletedOldRoom: Boolean(source.deletedOldRoom),
+    };
+
+    if (source.room && typeof source.room === 'object') {
+        sanitized.room = {
+            roomId: String(source.room.roomId || '').trim(),
+            name: String(source.room.name || '').trim(),
+        };
+    }
+
+    const moved = source.moved && typeof source.moved === 'object' ? source.moved : null;
+    if (moved) {
+        sanitized.moved = {
+            events: Number(moved.events || 0),
+            sessions: Number(moved.sessions || 0),
+        };
+    }
+
+    const associations = source.associations && typeof source.associations === 'object' ? source.associations : null;
+    if (associations) {
+        sanitized.associations = {
+            mergedUsers: Number(associations.mergedUsers || 0),
+        };
+    }
+
+    return sanitized;
+}
+
+function serializeRoomRenameJob(job, options = {}) {
+    const item = normalizeJobRow(job);
+    const serialized = {
+        ...serializeAdminAsyncJob(item),
+        requestPayload: sanitizeRoomRenameRequestPayload(item.requestPayload),
+    };
+
+    if (options.includeDetail) {
+        serialized.resultPayload = sanitizeRoomRenameResultPayload(item.resultPayload);
+    }
+
+    return serialized;
 }
 
 function buildStablePayload(payload = {}) {
@@ -122,6 +206,13 @@ function parseSessionMaintenanceTaskKey(jobType = '') {
 
 function buildJobTitle(jobType, payload = {}) {
     switch (jobType) {
+        case JOB_TYPE_RENAME_ROOM: {
+            const oldRoomId = String(payload.oldRoomId || '').trim();
+            const newRoomId = String(payload.newRoomId || '').trim();
+            return payload.mergeExisting
+                ? `合并房间 ${oldRoomId} -> ${newRoomId}`
+                : `更新房间ID ${oldRoomId} -> ${newRoomId}`;
+        }
         case JOB_TYPE_REFRESH_ROOM_STATS:
             return '刷新房间统计';
         case JOB_TYPE_REFRESH_USER_STATS:
@@ -224,6 +315,67 @@ async function getAdminAsyncJobById(jobId) {
         [safeJobId]
     );
     return result.rows[0] ? normalizeJobRow(result.rows[0]) : null;
+}
+
+async function listAdminAsyncJobs(options = {}) {
+    const limit = Math.max(1, Math.min(50, Number(options.limit || 10)));
+    const status = String(options.status || '').trim();
+    const queueName = String(options.queueName || '').trim();
+    const createdByUserId = Number(options.createdByUserId || 0) || null;
+    const jobTypes = Array.isArray(options.jobTypes)
+        ? options.jobTypes.map((item) => String(item || '').trim()).filter(Boolean)
+        : [];
+
+    const whereClauses = [];
+    const params = [];
+
+    if (status) {
+        params.push(status);
+        whereClauses.push(`status = $${params.length}`);
+    }
+    if (queueName) {
+        params.push(queueName);
+        whereClauses.push(`queue_name = $${params.length}`);
+    }
+    if (createdByUserId) {
+        params.push(createdByUserId);
+        whereClauses.push(`created_by_user_id = $${params.length}`);
+    }
+    if (jobTypes.length > 0) {
+        params.push(jobTypes);
+        whereClauses.push(`job_type = ANY($${params.length}::text[])`);
+    }
+
+    const whereSql = whereClauses.length ? `WHERE ${whereClauses.join(' AND ')}` : '';
+    const listParams = [...params, limit];
+    const result = await db.pool.query(
+        `SELECT *
+         FROM admin_async_job
+         ${whereSql}
+         ORDER BY created_at DESC, id DESC
+         LIMIT $${listParams.length}`,
+        listParams
+    );
+
+    const activeCountParams = [...params];
+    activeCountParams.push(ACTIVE_JOB_STATUSES);
+    const activeStatusClause = `status = ANY($${activeCountParams.length}::text[])`;
+    const activeWhereSql = whereClauses.length
+        ? `WHERE ${whereClauses.join(' AND ')} AND ${activeStatusClause}`
+        : `WHERE ${activeStatusClause}`;
+    const activeCountResult = await db.pool.query(
+        `SELECT COUNT(*)::int AS count
+         FROM admin_async_job
+         ${activeWhereSql}`,
+        activeCountParams
+    );
+
+    const jobs = result.rows.map((row) => serializeAdminAsyncJobDetail(row));
+    const activeCount = Number(activeCountResult.rows[0]?.count || 0);
+    return {
+        jobs,
+        activeCount,
+    };
 }
 
 async function updateAdminAsyncJob(jobId, updates = {}) {
@@ -348,6 +500,20 @@ async function markAdminAsyncJobFailed(jobId, errorMessage = '', resultPayload =
     });
 }
 
+async function invalidateRoomListCacheVersion(reason = 'manual') {
+    try {
+        if (cacheService.isRoomCacheEnabled()) {
+            await cacheService.increment(ROOM_LIST_CACHE_VERSION_KEY, 1);
+        }
+        metricsService.emitLog('info', 'admin.async_job.room_list_cache.invalidate', {
+            reason,
+            cacheBackend: cacheService.isRoomCacheEnabled() ? 'redis' : 'memory',
+        });
+    } catch (error) {
+        console.error('[ADMIN_ASYNC_JOB] invalidate room list cache version failed:', error.message);
+    }
+}
+
 function getQueueWorkerEnabled(queueName) {
     const config = getSchemeAConfig();
     if (queueName === JOB_QUEUE_STATS) {
@@ -359,8 +525,21 @@ function getQueueWorkerEnabled(queueName) {
 async function executeAdminAsyncJob(job) {
     const item = normalizeJobRow(job);
     const payload = buildStablePayload(item.requestPayload || {});
+    const setStep = async (currentStep, progressPercent) => {
+        await updateAdminAsyncJob(item.id, {
+            currentStep: String(currentStep || '后台正在执行'),
+            progressPercent: Math.max(1, Math.min(99, Number(progressPercent || 0))),
+        });
+    };
 
     switch (item.jobType) {
+        case JOB_TYPE_RENAME_ROOM:
+            return manager.migrateRoomId(payload.oldRoomId, payload.newRoomId, {
+                mergeExisting: Boolean(payload.mergeExisting),
+                onProgress: async (progress) => {
+                    await setStep(progress?.step || '后台正在执行', progress?.progressPercent || 0);
+                },
+            });
         case JOB_TYPE_REFRESH_ROOM_STATS:
             return runRoomStatsRefreshJob(`admin-async-job:${item.id}`);
         case JOB_TYPE_REFRESH_USER_STATS:
@@ -374,6 +553,7 @@ async function executeAdminAsyncJob(job) {
             if (!taskKey) {
                 throw new Error(`未知后台任务类型: ${item.jobType}`);
             }
+            await setStep('正在执行维护任务', 45);
             return runSessionMaintenanceTask(taskKey, {
                 triggerSource: `admin-async-job:${item.id}`,
                 roomId: payload.roomId,
@@ -403,6 +583,16 @@ async function processOneAdminAsyncJob(queueName, options = {}) {
     try {
         const resultPayload = await executeAdminAsyncJob(job);
         const completed = await markAdminAsyncJobCompleted(job.id, resultPayload);
+        if (job.jobType === JOB_TYPE_RENAME_ROOM && isCompletedStatus(completed?.status)) {
+            if (typeof options.invalidateRoomListCaches === 'function') {
+                try {
+                    await options.invalidateRoomListCaches('room rename async job');
+                } catch (cacheError) {
+                    console.error('[ADMIN_ASYNC_JOB] invalidate room list caches failed:', cacheError.message);
+                }
+            }
+            await invalidateRoomListCacheVersion('room rename async job');
+        }
         metricsService.emitLog('info', 'admin.async_job', {
             jobId: job.id,
             queueName: job.queueName,
@@ -539,21 +729,45 @@ async function enqueueEventMigrationJob(options = {}) {
     });
 }
 
+async function enqueueRoomRenameJob(options = {}) {
+    const oldRoomId = String(options.oldRoomId || '').trim();
+    const newRoomId = String(options.newRoomId || '').trim();
+    if (!oldRoomId || !newRoomId) {
+        throw new Error('oldRoomId and newRoomId are required');
+    }
+
+    return enqueueAdminAsyncJob({
+        jobType: JOB_TYPE_RENAME_ROOM,
+        requestPayload: {
+            oldRoomId,
+            newRoomId,
+            mergeExisting: Boolean(options.mergeExisting),
+        },
+        createdByUserId: options.createdByUserId,
+        source: options.source || 'manual',
+    });
+}
+
 module.exports = {
     JOB_QUEUE_MAINTENANCE,
     JOB_QUEUE_STATS,
     JOB_TYPE_MIGRATE_EVENT_ROOM_IDS,
+    JOB_TYPE_RENAME_ROOM,
     JOB_TYPE_REFRESH_ROOM_STATS,
     JOB_TYPE_REFRESH_USER_STATS,
     JOB_TYPE_REFRESH_GLOBAL_STATS,
     JOB_TYPE_SESSION_MAINTENANCE_PREFIX,
     serializeAdminAsyncJob,
+    serializeAdminAsyncJobDetail,
+    serializeRoomRenameJob,
     getAdminAsyncJobById,
+    listAdminAsyncJobs,
     getReusableActiveAdminAsyncJob,
     enqueueAdminAsyncJob,
     enqueueSessionMaintenanceJob,
     enqueueStatsRefreshJob,
     enqueueEventMigrationJob,
+    enqueueRoomRenameJob,
     processOneAdminAsyncJob,
     processAvailableAdminAsyncJobs,
 };

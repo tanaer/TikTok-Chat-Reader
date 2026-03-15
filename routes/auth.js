@@ -6,6 +6,7 @@ const emailService = require('../services/emailService');
 const captchaService = require('../services/captchaService');
 const sliderCaptchaService = require('../services/sliderCaptchaService');
 const { authenticate, optionalAuth } = require('../middleware/auth');
+const { getUserAdminAccess } = require('../services/rbacService');
 
 const router = express.Router();
 
@@ -22,6 +23,27 @@ function resolveClientIp(req) {
 
 function normalizeEmailInput(email) {
     return String(email || '').trim().toLowerCase();
+}
+
+async function buildAuthUserPayload(user) {
+    const payload = {
+        id: user.id,
+        username: user.username,
+        nickname: user.nickname,
+        email: user.email,
+        role: user.role,
+        balance: Number(user.balance || 0),
+    };
+
+    if (user.role === 'admin') {
+        const adminAccess = user.adminAccess || await getUserAdminAccess(user);
+        payload.permissions = Array.isArray(adminAccess.permissions) ? adminAccess.permissions : [];
+        payload.adminRoleCode = adminAccess.roleCode || '';
+        payload.adminRoleName = adminAccess.roleName || '';
+        payload.isSuperAdmin = Boolean(adminAccess.isSuperAdmin);
+    }
+
+    return payload;
 }
 
 function resolveEmailCodeTarget(req, purpose) {
@@ -412,14 +434,7 @@ router.post('/register', [
             return res.status(201).json({
                 accessToken,
                 refreshToken,
-                user: {
-                    id: user.id,
-                    username: user.username,
-                    nickname: user.nickname,
-                    email: user.email,
-                    role: user.role,
-                    balance: Number(user.balance || 0)
-                }
+                user: await buildAuthUserPayload(user)
             });
         } catch (err) {
             await client.query('ROLLBACK').catch(() => {});
@@ -561,14 +576,7 @@ router.post('/login', [
             res.json({
                 accessToken,
                 refreshToken,
-                user: {
-                    id: user.id,
-                    username: user.username,
-                    nickname: user.nickname,
-                    email: user.email,
-                    role: user.role,
-                    balance: Number(user.balance)
-                }
+                user: await buildAuthUserPayload(user)
             });
         } catch (err) {
             await client.query('ROLLBACK').catch(() => {});
@@ -611,18 +619,13 @@ router.post('/refresh', async (req, res) => {
             return res.status(401).json({ error: '账号已在其他地方登录，请重新登录', code: 'SESSION_REVOKED' });
         }
 
-        // Revoke old refresh token and issue new one (token rotation)
-        await authService.revokeRefreshToken(refreshToken);
         const newAccessToken = authService.generateAccessToken(user);
-        const newRefreshToken = await authService.generateRefreshToken(
-            user.id,
-            { sessionVersion: currentSessionVersion }
-        );
+        await authService.extendRefreshToken(refreshToken);
 
         res.json({
             accessToken: newAccessToken,
-            refreshToken: newRefreshToken,
-            user: { id: user.id, username: user.username, nickname: user.nickname, email: user.email, role: user.role, balance: user.balance }
+            refreshToken,
+            user: await buildAuthUserPayload(user)
         });
     } catch (err) {
         console.error('[Auth] Refresh error:', err.message);
@@ -753,16 +756,14 @@ router.post('/reset-password', [
  * GET /api/auth/me
  */
 router.get('/me', authenticate, (req, res) => {
-    res.json({
-        user: {
-            id: req.user.id,
-            username: req.user.username,
-            nickname: req.user.nickname,
-            email: req.user.email,
-            role: req.user.role,
-            balance: req.user.balance
-        }
-    });
+    Promise.resolve(buildAuthUserPayload(req.user))
+        .then((user) => {
+            res.json({ user });
+        })
+        .catch((err) => {
+            console.error('[Auth] /me error:', err.message);
+            res.status(500).json({ error: '获取当前用户失败' });
+        });
 });
 
 module.exports = router;

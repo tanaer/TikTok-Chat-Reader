@@ -4,7 +4,7 @@
  */
 const fs = require('fs');
 const path = require('path');
-const { initDb, query, run, get } = require('./db');
+const { initDb, query, run, get, pool } = require('./db');
 const metricsService = require('./services/metricsService');
 const { getSchemeAConfig } = require('./services/featureFlagService');
 
@@ -47,6 +47,137 @@ function normalizeRoomIdList(roomIds = []) {
         normalized.push(value);
     }
     return normalized;
+}
+
+function normalizeRoomIdValue(value) {
+    let roomId = String(value || '').trim();
+    if (roomId.startsWith('@')) {
+        roomId = roomId.slice(1);
+    }
+    return roomId;
+}
+
+function choosePreferredTextValue(targetValue, sourceValue, targetFallbacks = [], sourceFallbacks = []) {
+    const normalize = (value) => {
+        if (value === undefined || value === null) return '';
+        return String(value).trim();
+    };
+
+    const targetText = normalize(targetValue);
+    const sourceText = normalize(sourceValue);
+    const targetFallbackSet = new Set((targetFallbacks || []).map(normalize).filter(Boolean));
+    const sourceFallbackSet = new Set((sourceFallbacks || []).map(normalize).filter(Boolean));
+
+    if (targetText && !targetFallbackSet.has(targetText)) {
+        return targetText;
+    }
+    if (sourceText && !sourceFallbackSet.has(sourceText)) {
+        return sourceText;
+    }
+    return targetText || sourceText || null;
+}
+
+function choosePrimaryUserRoomRow(rows = []) {
+    return [...rows].sort((left, right) => {
+        const leftActive = left?.deleted_at == null ? 1 : 0;
+        const rightActive = right?.deleted_at == null ? 1 : 0;
+        if (leftActive !== rightActive) {
+            return rightActive - leftActive;
+        }
+
+        const leftFirstAdded = left?.first_added_at ? new Date(left.first_added_at).getTime() : Number.MAX_SAFE_INTEGER;
+        const rightFirstAdded = right?.first_added_at ? new Date(right.first_added_at).getTime() : Number.MAX_SAFE_INTEGER;
+        if (leftFirstAdded !== rightFirstAdded) {
+            return leftFirstAdded - rightFirstAdded;
+        }
+
+        const leftCreated = left?.created_at ? new Date(left.created_at).getTime() : Number.MAX_SAFE_INTEGER;
+        const rightCreated = right?.created_at ? new Date(right.created_at).getTime() : Number.MAX_SAFE_INTEGER;
+        if (leftCreated !== rightCreated) {
+            return leftCreated - rightCreated;
+        }
+
+        return Number(left?.id || 0) - Number(right?.id || 0);
+    })[0] || null;
+}
+
+function getMergedUserRoomState(rows = []) {
+    const cleanAlias = (value) => {
+        if (value === undefined || value === null) return '';
+        return String(value).trim();
+    };
+
+    const activeRows = rows.filter((row) => row?.deleted_at == null);
+    const aliasCandidates = [
+        ...activeRows.map((row) => cleanAlias(row.alias)),
+        ...rows.map((row) => cleanAlias(row.alias))
+    ].filter(Boolean);
+
+    const firstAddedValues = rows
+        .map((row) => row?.first_added_at)
+        .filter(Boolean)
+        .map((value) => new Date(value))
+        .filter((value) => !Number.isNaN(value.getTime()))
+        .sort((left, right) => left.getTime() - right.getTime());
+
+    const deletedAtValues = rows
+        .map((row) => row?.deleted_at)
+        .filter(Boolean)
+        .map((value) => new Date(value))
+        .filter((value) => !Number.isNaN(value.getTime()))
+        .sort((left, right) => right.getTime() - left.getTime());
+
+    const hasActiveAssociation = activeRows.length > 0;
+
+    return {
+        alias: aliasCandidates[0] || null,
+        firstAddedAt: firstAddedValues[0] || null,
+        deletedAt: hasActiveAssociation ? null : (deletedAtValues[0] || null),
+        isEnabled: hasActiveAssociation
+    };
+}
+
+function resolveMergedRoomRecord(sourceRoom, targetRoom, targetRoomId) {
+    const sourceRoomId = String(sourceRoom?.room_id || sourceRoom?.roomId || '').trim();
+    const safeTargetRoomId = String(targetRoomId || '').trim();
+
+    return {
+        numericRoomId: choosePreferredTextValue(
+            targetRoom?.numeric_room_id ?? targetRoom?.numericRoomId,
+            sourceRoom?.numeric_room_id ?? sourceRoom?.numericRoomId
+        ),
+        name: choosePreferredTextValue(
+            targetRoom?.name,
+            sourceRoom?.name,
+            [safeTargetRoomId],
+            [sourceRoomId]
+        ) || safeTargetRoomId,
+        address: choosePreferredTextValue(targetRoom?.address, sourceRoom?.address),
+        language: choosePreferredTextValue(targetRoom?.language, sourceRoom?.language) || '中文',
+        isMonitorEnabled: toBooleanInteger(
+            Number(targetRoom?.is_monitor_enabled ?? targetRoom?.isMonitorEnabled ?? 0) === 1 ||
+            Number(sourceRoom?.is_monitor_enabled ?? sourceRoom?.isMonitorEnabled ?? 0) === 1
+        ),
+        priority: Math.max(
+            toInteger(targetRoom?.priority, 0),
+            toInteger(sourceRoom?.priority, 0)
+        ),
+        ownerUserId: choosePreferredTextValue(
+            targetRoom?.owner_user_id ?? targetRoom?.ownerUserId,
+            sourceRoom?.owner_user_id ?? sourceRoom?.ownerUserId
+        ),
+        isAdminRoom: toBooleanInteger(
+            Number(targetRoom?.is_admin_room ?? targetRoom?.isAdminRoom ?? 0) === 1 ||
+            Number(sourceRoom?.is_admin_room ?? sourceRoom?.isAdminRoom ?? 0) === 1
+        ),
+        isRecordingEnabled: toBooleanInteger(
+            Number(targetRoom?.is_recording_enabled ?? targetRoom?.isRecordingEnabled ?? 0) === 1 ||
+            Number(sourceRoom?.is_recording_enabled ?? sourceRoom?.isRecordingEnabled ?? 0) === 1
+        ),
+        recordingAccountId: (targetRoom?.recording_account_id ?? targetRoom?.recordingAccountId ?? null)
+            || (sourceRoom?.recording_account_id ?? sourceRoom?.recordingAccountId ?? null)
+            || null
+    };
 }
 
 function toOptionalText(value) {
@@ -460,7 +591,14 @@ class Manager {
     // Save numeric room ID when connecting to a room
     async setNumericRoomId(uniqueId, numericRoomId) {
         await this.ensureDb();
-        if (!numericRoomId) return;
+
+        if (numericRoomId === undefined) return;
+
+        if (numericRoomId === null || String(numericRoomId).trim() === '') {
+            await run(`UPDATE room SET numeric_room_id = NULL WHERE room_id = ?`, [uniqueId]);
+            console.log(`[Manager] Cleared numeric_room_id for room ${uniqueId}`);
+            return;
+        }
 
         await run(`UPDATE room SET numeric_room_id = ? WHERE room_id = ?`, [String(numericRoomId), uniqueId]);
         console.log(`[Manager] Saved numeric_room_id ${numericRoomId} for room ${uniqueId}`);
@@ -470,7 +608,7 @@ class Manager {
     async getCachedRoomId(uniqueId) {
         await this.ensureDb();
         const row = await get(`SELECT numeric_room_id FROM room WHERE room_id = ?`, [uniqueId]);
-        return row?.numeric_room_id || null;
+        return row?.numeric_room_id || row?.numericRoomId || null;
     }
 
     // Migrate events from numeric room_id to username room_id
@@ -4142,54 +4280,391 @@ class Manager {
         await run(`UPDATE room SET owner_user_id = ? WHERE room_id = ?`, [ownerUserId, roomId]);
     }
 
-    // Rename a room (migrate all data)
-    async migrateRoomId(oldRoomId, newRoomId) {
-        if (!oldRoomId || !newRoomId || oldRoomId === newRoomId) return;
+    // Rename a room (migrate all data) or merge into an existing target room
+    async migrateRoomId(oldRoomId, newRoomId, options = {}) {
+        const sourceRoomId = normalizeRoomIdValue(oldRoomId);
+        const targetRoomId = normalizeRoomIdValue(newRoomId);
+        const mergeExisting = Boolean(options?.mergeExisting);
+        const onProgress = typeof options?.onProgress === 'function' ? options.onProgress : null;
+        const emitProgress = async (step, progressPercent, extra = {}) => {
+            if (!onProgress) return;
+            try {
+                await onProgress({
+                    step,
+                    progressPercent,
+                    oldRoomId: sourceRoomId,
+                    newRoomId: targetRoomId,
+                    mergeExisting,
+                    ...extra
+                });
+            } catch (progressError) {
+                console.warn('[Manager] migrateRoomId progress callback failed:', progressError?.message || progressError);
+            }
+        };
+
+        if (!sourceRoomId || !targetRoomId || sourceRoomId === targetRoomId) {
+            return {
+                success: false,
+                skipped: true,
+                oldRoomId: sourceRoomId,
+                newRoomId: targetRoomId
+            };
+        }
+
         await this.ensureDb();
 
-        const oldRoom = await get(`SELECT * FROM room WHERE room_id = ?`, [oldRoomId]);
-        if (!oldRoom) throw new Error(`Room ${oldRoomId} not found`);
+        const client = await pool.connect();
+        const roomIdsForCleanup = normalizeRoomIdList([sourceRoomId, targetRoomId]);
 
-        const newRoomExists = await get(`SELECT 1 FROM room WHERE room_id = ?`, [newRoomId]);
-        if (newRoomExists) throw new Error(`Target Room ID ${newRoomId} already exists`);
+        try {
+            await emitProgress('正在锁定房间数据', 8);
+            await client.query('BEGIN');
+            const lockResult = await client.query(
+                'SELECT pg_try_advisory_xact_lock(hashtext($1), hashtext($2)) AS locked',
+                ['room_migrate', [...roomIdsForCleanup].sort().join('->')]
+            );
+            if (!lockResult.rows[0]?.locked) {
+                const error = new Error(`Room ${sourceRoomId} rename already in progress`);
+                error.code = 'ROOM_RENAME_IN_PROGRESS';
+                error.status = 409;
+                error.details = {
+                    oldRoomId: sourceRoomId,
+                    newRoomId: targetRoomId
+                };
+                throw error;
+            }
 
-        console.log(`[Manager] Migrating room ${oldRoomId} -> ${newRoomId}...`);
+            const sourceRoomResult = await client.query(
+                'SELECT * FROM room WHERE room_id = $1 FOR UPDATE',
+                [sourceRoomId]
+            );
+            if (!sourceRoomResult.rows.length) {
+                const existingTargetResult = await client.query(
+                    'SELECT room_id, name, is_monitor_enabled, is_recording_enabled FROM room WHERE room_id = $1',
+                    [targetRoomId]
+                );
+                if (existingTargetResult.rows.length > 0) {
+                    const existingTargetRoom = existingTargetResult.rows[0];
+                    const error = new Error(`Room ${sourceRoomId} already migrated or merged`);
+                    error.code = 'ROOM_ALREADY_MIGRATED';
+                    error.status = 409;
+                    error.details = {
+                        oldRoomId: sourceRoomId,
+                        newRoomId: targetRoomId,
+                        targetRoom: {
+                            roomId: existingTargetRoom.room_id,
+                            name: existingTargetRoom.name || existingTargetRoom.room_id,
+                            isMonitorEnabled: Number(existingTargetRoom.is_monitor_enabled || 0),
+                            isRecordingEnabled: Number(existingTargetRoom.is_recording_enabled || 0)
+                        }
+                    };
+                    throw error;
+                }
 
-        // 1. Create new room with same properties
-        await run(`
-            INSERT INTO room (room_id, numeric_room_id, name, address, language, updated_at, is_monitor_enabled, priority, owner_user_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-            newRoomId,
-            oldRoom.numericRoomId,
-            oldRoom.name,
-            oldRoom.address,
-            oldRoom.language,
-            new Date(),
-            oldRoom.isMonitorEnabled,
-            oldRoom.priority,
-            oldRoom.ownerUserId
-        ]);
+                const error = new Error(`Room ${sourceRoomId} not found`);
+                error.code = 'ROOM_NOT_FOUND';
+                error.status = 404;
+                throw error;
+            }
 
-        // 2. Update events (batch update might take time, but referenced via index so should be okay)
-        console.log(`[Manager] Moving events...`);
-        await run(`UPDATE event SET room_id = ? WHERE room_id = ?`, [newRoomId, oldRoomId]);
+            const targetRoomResult = await client.query(
+                'SELECT * FROM room WHERE room_id = $1 FOR UPDATE',
+                [targetRoomId]
+            );
 
-        // 3. Update sessions
-        console.log(`[Manager] Moving sessions...`);
-        await run(`UPDATE session SET room_id = ? WHERE room_id = ?`, [newRoomId, oldRoomId]);
+            const sourceRoom = sourceRoomResult.rows[0];
+            const targetRoom = targetRoomResult.rows[0] || null;
+            const targetExists = Boolean(targetRoom);
 
-        // 4. Update room stats (delete old, let it regenerate for new)
-        await run(`DELETE FROM room_stats WHERE room_id = ?`, [oldRoomId]);
-        await run(`DELETE FROM room_stats_dirty_queue WHERE room_id = ?`, [oldRoomId]);
+            if (targetExists && !mergeExisting) {
+                const error = new Error(`Target Room ID ${targetRoomId} already exists`);
+                error.code = 'TARGET_ROOM_EXISTS';
+                error.status = 409;
+                error.details = {
+                    oldRoomId: sourceRoomId,
+                    newRoomId: targetRoomId,
+                    targetRoom: {
+                        roomId: targetRoom.room_id,
+                        name: targetRoom.name || targetRoom.room_id,
+                        isMonitorEnabled: Number(targetRoom.is_monitor_enabled || 0),
+                        isRecordingEnabled: Number(targetRoom.is_recording_enabled || 0)
+                    }
+                };
+                throw error;
+            }
 
-        // 5. Delete old room
-        console.log(`[Manager] Deleting old room...`);
-        await run(`DELETE FROM room WHERE room_id = ?`, [oldRoomId]);
-        await this.markRoomStatsDirty([newRoomId], 'room-migrated');
+            console.log(`[Manager] ${targetExists ? 'Merging' : 'Migrating'} room ${sourceRoomId} -> ${targetRoomId}...`);
+            await emitProgress(targetExists ? '正在合并房间配置' : '正在创建目标房间', 18, {
+                targetRoomExisted: targetExists
+            });
 
-        console.log(`[Manager] Migration complete: ${oldRoomId} -> ${newRoomId}`);
-        return true;
+            const mergedRoom = resolveMergedRoomRecord(sourceRoom, targetRoom, targetRoomId);
+
+            if (!targetExists) {
+                await client.query(`
+                    INSERT INTO room (
+                        room_id,
+                        numeric_room_id,
+                        name,
+                        address,
+                        language,
+                        updated_at,
+                        is_monitor_enabled,
+                        priority,
+                        owner_user_id,
+                        is_admin_room,
+                        is_recording_enabled,
+                        recording_account_id
+                    )
+                    VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9, $10, $11)
+                `, [
+                    targetRoomId,
+                    mergedRoom.numericRoomId,
+                    mergedRoom.name,
+                    mergedRoom.address,
+                    mergedRoom.language,
+                    mergedRoom.isMonitorEnabled,
+                    mergedRoom.priority,
+                    mergedRoom.ownerUserId,
+                    mergedRoom.isAdminRoom,
+                    mergedRoom.isRecordingEnabled,
+                    mergedRoom.recordingAccountId
+                ]);
+            } else {
+                await client.query(`
+                    UPDATE room
+                    SET numeric_room_id = $2,
+                        name = $3,
+                        address = $4,
+                        language = $5,
+                        updated_at = NOW(),
+                        is_monitor_enabled = $6,
+                        priority = $7,
+                        owner_user_id = $8,
+                        is_admin_room = $9,
+                        is_recording_enabled = $10,
+                        recording_account_id = $11
+                    WHERE room_id = $1
+                `, [
+                    targetRoomId,
+                    mergedRoom.numericRoomId,
+                    mergedRoom.name,
+                    mergedRoom.address,
+                    mergedRoom.language,
+                    mergedRoom.isMonitorEnabled,
+                    mergedRoom.priority,
+                    mergedRoom.ownerUserId,
+                    mergedRoom.isAdminRoom,
+                    mergedRoom.isRecordingEnabled,
+                    mergedRoom.recordingAccountId
+                ]);
+            }
+
+            const userRoomRowsResult = await client.query(`
+                SELECT id, user_id, room_id, alias, deleted_at, first_added_at, is_enabled, created_at, updated_at
+                FROM user_room
+                WHERE room_id = ANY($1::text[])
+                ORDER BY user_id ASC, id ASC
+            `, [roomIdsForCleanup]);
+
+            const userRoomGroups = new Map();
+            for (const row of userRoomRowsResult.rows) {
+                const userId = String(row.user_id || '').trim();
+                if (!userId) continue;
+                if (!userRoomGroups.has(userId)) {
+                    userRoomGroups.set(userId, []);
+                }
+                userRoomGroups.get(userId).push(row);
+            }
+
+            await emitProgress('正在合并房间关联', 34, {
+                affectedUsers: userRoomGroups.size
+            });
+            let mergedUserAssociations = 0;
+            let deletedDuplicateUserRoomRows = 0;
+            for (const rows of userRoomGroups.values()) {
+                const targetRows = rows.filter((row) => row.room_id === targetRoomId);
+                const allRows = rows.filter((row) => row.room_id === sourceRoomId || row.room_id === targetRoomId);
+                if (!allRows.length) continue;
+
+                const primaryRow = targetRows.length
+                    ? choosePrimaryUserRoomRow(targetRows)
+                    : choosePrimaryUserRoomRow(allRows);
+                if (!primaryRow) continue;
+
+                const mergedState = getMergedUserRoomState(allRows);
+                const duplicateIds = allRows
+                    .filter((row) => Number(row.id) !== Number(primaryRow.id))
+                    .map((row) => Number(row.id))
+                    .filter((id) => Number.isFinite(id) && id > 0);
+
+                if (duplicateIds.length > 0) {
+                    await client.query('DELETE FROM user_room WHERE id = ANY($1::int[])', [duplicateIds]);
+                    deletedDuplicateUserRoomRows += duplicateIds.length;
+                }
+
+                await client.query(`
+                    UPDATE user_room
+                    SET room_id = $2,
+                        alias = $3,
+                        deleted_at = $4,
+                        first_added_at = COALESCE($5, first_added_at, NOW()),
+                        is_enabled = $6,
+                        updated_at = NOW()
+                    WHERE id = $1
+                `, [
+                    primaryRow.id,
+                    targetRoomId,
+                    mergedState.alias,
+                    mergedState.deletedAt,
+                    mergedState.firstAddedAt,
+                    mergedState.isEnabled
+                ]);
+                mergedUserAssociations += 1;
+            }
+
+            await emitProgress('正在迁移历史事件与场次', 56);
+            const movedEventsResult = await client.query(
+                'UPDATE event SET room_id = $1 WHERE room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const movedSessionsResult = await client.query(
+                'UPDATE session SET room_id = $1 WHERE room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const movedSessionSummaryResult = await client.query(
+                'UPDATE session_summary SET room_id = $1, updated_at = NOW() WHERE room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const movedSessionAiReviewResult = await client.query(
+                'UPDATE session_ai_review SET room_id = $1, updated_at = NOW() WHERE room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const movedAiWorkJobResult = await client.query(
+                'UPDATE ai_work_job SET room_id = $1, updated_at = NOW() WHERE room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const movedUserAiAnalysisResult = await client.query(
+                'UPDATE user_ai_analysis SET current_room_id = $1 WHERE current_room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const movedUserProfileAnalysisResult = await client.query(
+                'UPDATE "user" SET ai_analysis_current_room_id = $1 WHERE ai_analysis_current_room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const movedHighlightClipResult = await client.query(
+                'UPDATE highlight_clip SET room_id = $1 WHERE room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const movedRecordingTaskResult = await client.query(
+                'UPDATE recording_task SET room_id = $1 WHERE room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const movedMaintenanceLogResult = await client.query(
+                'UPDATE session_maintenance_log SET room_id = $1 WHERE room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+            const updatedUserStatsTopRoomResult = await client.query(
+                'UPDATE user_stats SET top_room_id = $1, updated_at = NOW() WHERE top_room_id = $2',
+                [targetRoomId, sourceRoomId]
+            );
+
+            await emitProgress('正在重建统计缓存', 76);
+            await client.query('DELETE FROM room_stats WHERE room_id = ANY($1::text[])', [roomIdsForCleanup]);
+            await client.query('DELETE FROM room_stats_dirty_queue WHERE room_id = ANY($1::text[])', [roomIdsForCleanup]);
+            await client.query('DELETE FROM user_room_stats WHERE room_id = ANY($1::text[])', [roomIdsForCleanup]);
+            await client.query('DELETE FROM user_room_stats_meta WHERE room_id = ANY($1::text[])', [roomIdsForCleanup]);
+            await client.query('DELETE FROM room_minute_stats WHERE room_id = ANY($1::text[])', [roomIdsForCleanup]);
+            await client.query(`
+                INSERT INTO room_minute_stats (
+                    room_id,
+                    stat_minute,
+                    chat_count,
+                    gift_value,
+                    member_count,
+                    like_count,
+                    max_viewer_count,
+                    gift_user_count,
+                    chat_user_count,
+                    updated_at
+                )
+                SELECT
+                    $1 AS room_id,
+                    date_trunc('minute', timestamp) AS stat_minute,
+                    COUNT(*) FILTER (WHERE type = 'chat') AS chat_count,
+                    SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) AS gift_value,
+                    COUNT(*) FILTER (WHERE type = 'member') AS member_count,
+                    SUM(CASE WHEN type = 'like' THEN COALESCE(like_count, 0) ELSE 0 END) AS like_count,
+                    GREATEST(
+                        MAX(CASE WHEN type = 'roomUser' THEN COALESCE(viewer_count, 0) ELSE 0 END),
+                        COUNT(*) FILTER (WHERE type = 'member')
+                    ) AS max_viewer_count,
+                    COUNT(DISTINCT CASE WHEN type = 'gift' THEN NULLIF(user_id, '') END) AS gift_user_count,
+                    COUNT(DISTINCT CASE WHEN type = 'chat' THEN NULLIF(user_id, '') END) AS chat_user_count,
+                    NOW() AS updated_at
+                FROM event
+                WHERE room_id = $1
+                GROUP BY date_trunc('minute', timestamp)
+            `, [targetRoomId]);
+
+            const deletedOldRoomResult = await client.query(
+                'DELETE FROM room WHERE room_id = $1',
+                [sourceRoomId]
+            );
+
+            await emitProgress('正在提交变更', 92);
+            await client.query('COMMIT');
+
+            await this.markRoomStatsDirty([targetRoomId], targetExists ? 'room-merged' : 'room-migrated');
+            this.scheduleUserRoomStatsRefresh([targetRoomId]);
+            Promise.resolve()
+                .then(() => this.refreshUserStats())
+                .catch((refreshError) => {
+                    console.error('[Manager] Failed to refresh user_stats after room migrate:', refreshError?.message || refreshError);
+                });
+
+            console.log(`[Manager] ${targetExists ? 'Merge' : 'Migration'} complete: ${sourceRoomId} -> ${targetRoomId}`);
+            await emitProgress(targetExists ? '房间合并完成' : '房间迁移完成', 100, {
+                targetRoomExisted: targetExists
+            });
+
+            return {
+                success: true,
+                oldRoomId: sourceRoomId,
+                newRoomId: targetRoomId,
+                mode: targetExists ? 'merged' : 'migrated',
+                targetRoomExisted: targetExists,
+                room: {
+                    roomId: targetRoomId,
+                    name: mergedRoom.name,
+                    isMonitorEnabled: mergedRoom.isMonitorEnabled,
+                    isRecordingEnabled: mergedRoom.isRecordingEnabled
+                },
+                moved: {
+                    events: Number(movedEventsResult.rowCount || 0),
+                    sessions: Number(movedSessionsResult.rowCount || 0),
+                    sessionSummaries: Number(movedSessionSummaryResult.rowCount || 0),
+                    sessionAiReviews: Number(movedSessionAiReviewResult.rowCount || 0),
+                    aiWorkJobs: Number(movedAiWorkJobResult.rowCount || 0),
+                    userAiAnalysis: Number(movedUserAiAnalysisResult.rowCount || 0),
+                    userProfiles: Number(movedUserProfileAnalysisResult.rowCount || 0),
+                    recordingTasks: Number(movedRecordingTaskResult.rowCount || 0),
+                    highlightClips: Number(movedHighlightClipResult.rowCount || 0),
+                    maintenanceLogs: Number(movedMaintenanceLogResult.rowCount || 0),
+                    userStatsTopRoom: Number(updatedUserStatsTopRoomResult.rowCount || 0)
+                },
+                associations: {
+                    mergedUsers: mergedUserAssociations,
+                    deletedDuplicateRows: deletedDuplicateUserRoomRows
+                },
+                deletedOldRoom: Number(deletedOldRoomResult.rowCount || 0) > 0
+            };
+        } catch (error) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw error;
+        } finally {
+            client.release();
+        }
     }
 
     async getRoomDetailStats(roomId, sessionId = null, sinceTime = null) {

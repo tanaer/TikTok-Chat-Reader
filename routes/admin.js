@@ -8,6 +8,7 @@ const { authenticate, requireAdmin, hasAdminPermission } = require('../middlewar
 const authService = require('../services/authService');
 const balanceService = require('../services/balanceService');
 const emailService = require('../services/emailService');
+const recordingManager = require('../recording_manager');
 const {
     listPromptTemplates,
     getPromptTemplateDefinition,
@@ -42,6 +43,11 @@ const {
 } = require('../services/sessionMaintenanceService');
 const {
     enqueueSessionMaintenanceJob,
+    enqueueRoomRenameJob,
+    JOB_TYPE_RENAME_ROOM,
+    getAdminAsyncJobById,
+    listAdminAsyncJobs,
+    serializeRoomRenameJob,
 } = require('../services/adminAsyncJobService');
 const {
     ADMIN_PERMISSION_GROUPS,
@@ -68,6 +74,14 @@ const router = express.Router();
 // All admin routes require authentication + admin role
 router.use(authenticate, requireAdmin);
 
+function isRoomRenameJob(job) {
+    return String(job?.jobType || '').trim() === JOB_TYPE_RENAME_ROOM;
+}
+
+function canViewRoomRenameJob(req, job) {
+    return isRoomRenameJob(job);
+}
+
 
 function resolveAdminRoutePermission(req) {
     const routePath = String(req.path || '');
@@ -81,6 +95,7 @@ function resolveAdminRoutePermission(req) {
     if (routePath.startsWith('/gifts')) return 'gifts.manage';
     if (routePath.startsWith('/settings')) return 'settings.manage';
     if (routePath.startsWith('/session-maintenance')) return 'session_maintenance.manage';
+    if (routePath.startsWith('/async-jobs')) return 'session_maintenance.manage';
     if (routePath.startsWith('/prompt-templates')) return 'prompts.manage';
     if (routePath.startsWith('/structured-sources')) return 'ai_channels.manage';
     if (routePath.startsWith('/ai-work')) return 'ai_work.manage';
@@ -1411,6 +1426,159 @@ router.get('/session-maintenance/logs', async (req, res) => {
     } catch (err) {
         console.error('[Admin] Load session maintenance logs error:', err.message);
         res.status(500).json({ error: '获取场次运维日志失败' });
+    }
+});
+
+router.get('/async-jobs', async (req, res) => {
+    try {
+        const status = String(req.query.status || '').trim();
+        const scope = String(req.query.scope || '').trim();
+        const limit = Math.min(30, Math.max(1, parseInt(req.query.limit, 10) || 8));
+
+        const jobTypes = scope === 'room-rename'
+            ? ['maintenance.rename_room']
+            : [];
+
+        const result = await listAdminAsyncJobs({
+            status,
+            limit,
+            jobTypes,
+        });
+
+        res.json({
+            success: true,
+            jobs: result.jobs
+                .filter((job) => canViewRoomRenameJob(req, job))
+                .map((job) => serializeRoomRenameJob(job)),
+            activeCount: result.activeCount,
+        });
+    } catch (err) {
+        console.error('[Admin] Load async jobs error:', err.message);
+        res.status(500).json({ error: '获取后台任务失败' });
+    }
+});
+
+router.get('/async-jobs/:id', async (req, res) => {
+    try {
+        const jobId = Number(req.params.id || 0);
+        if (!jobId) return res.status(400).json({ error: '任务ID无效' });
+
+        const detail = await getAdminAsyncJobById(jobId);
+        if (!detail) return res.status(404).json({ error: '任务不存在' });
+        if (!canViewRoomRenameJob(req, detail)) {
+            return res.status(404).json({ error: '任务不存在' });
+        }
+
+        res.json({
+            success: true,
+            job: serializeRoomRenameJob(detail, { includeDetail: true }),
+        });
+    } catch (err) {
+        console.error('[Admin] Load async job detail error:', err.message);
+        res.status(500).json({ error: '获取后台任务详情失败' });
+    }
+});
+
+router.post('/async-jobs/room-rename', async (req, res) => {
+    try {
+        const normalizeRoomId = (value) => {
+            const text = String(value || '').trim();
+            return text.startsWith('@') ? text.slice(1) : text;
+        };
+
+        const oldRoomId = normalizeRoomId(req.body?.oldRoomId);
+        const newRoomId = normalizeRoomId(req.body?.newRoomId);
+        const mergeExisting = Boolean(req.body?.mergeExisting);
+
+        if (!oldRoomId) {
+            return res.status(400).json({ error: '原房间ID不能为空' });
+        }
+        if (!newRoomId) {
+            return res.status(400).json({ error: '新房间ID不能为空' });
+        }
+
+        const sourceRoom = await db.get(
+            'SELECT room_id FROM room WHERE room_id = ?',
+            [oldRoomId]
+        );
+        if (!sourceRoom) {
+            const existingTargetRoom = await db.get(
+                'SELECT room_id, name, is_monitor_enabled, is_recording_enabled FROM room WHERE room_id = ?',
+                [newRoomId]
+            );
+            if (existingTargetRoom) {
+                return res.status(409).json({
+                    error: '原房间可能已完成迁移，请刷新列表确认',
+                    code: 'ROOM_ALREADY_MIGRATED',
+                    oldRoomId,
+                    newRoomId,
+                    targetRoom: {
+                        roomId: existingTargetRoom.roomId || existingTargetRoom.room_id,
+                        name: existingTargetRoom.name || existingTargetRoom.roomId || existingTargetRoom.room_id || newRoomId,
+                        isMonitorEnabled: Number(existingTargetRoom.isMonitorEnabled ?? existingTargetRoom.is_monitor_enabled ?? 0),
+                        isRecordingEnabled: Number(existingTargetRoom.isRecordingEnabled ?? existingTargetRoom.is_recording_enabled ?? 0)
+                    }
+                });
+            }
+            return res.status(404).json({ error: '源房间不存在', code: 'ROOM_NOT_FOUND' });
+        }
+
+        if (!mergeExisting) {
+            const targetRoom = await db.get(
+                'SELECT room_id, name, is_monitor_enabled, is_recording_enabled FROM room WHERE room_id = ?',
+                [newRoomId]
+            );
+            if (targetRoom) {
+                return res.status(409).json({
+                    error: '目标房间ID已存在，请确认是否合并',
+                    code: 'TARGET_ROOM_EXISTS',
+                    requiresConfirmation: true,
+                    oldRoomId,
+                    newRoomId,
+                    targetRoom: {
+                        roomId: targetRoom.roomId || targetRoom.room_id,
+                        name: targetRoom.name || targetRoom.roomId || targetRoom.room_id || newRoomId,
+                        isMonitorEnabled: Number(targetRoom.isMonitorEnabled ?? targetRoom.is_monitor_enabled ?? 0),
+                        isRecordingEnabled: Number(targetRoom.isRecordingEnabled ?? targetRoom.is_recording_enabled ?? 0)
+                    }
+                });
+            }
+        }
+
+        await req.app.locals.autoRecorder?.disconnectRoom?.(oldRoomId).catch((err) => {
+            console.warn(`[Admin] Failed to disconnect room ${oldRoomId} before queueing rename:`, err?.message || err);
+        });
+        if (recordingManager.isRecording(oldRoomId)) {
+            await recordingManager.stopRecording(oldRoomId).catch((err) => {
+                console.warn(`[Admin] Failed to stop recording for room ${oldRoomId} before queueing rename:`, err?.message || err);
+            });
+        }
+
+        const queuedJob = await enqueueRoomRenameJob({
+            oldRoomId,
+            newRoomId,
+            mergeExisting,
+            createdByUserId: req.user?.id,
+            source: 'admin-room-rename-panel',
+        });
+
+        res.status(202).json({
+            success: true,
+            accepted: true,
+            queued: queuedJob.queued,
+            processing: queuedJob.processing,
+            reused: queuedJob.reused,
+            job: queuedJob.job,
+            oldRoomId,
+            newRoomId,
+            mergeExisting,
+            message: queuedJob.reused
+                ? `已有同房间${mergeExisting ? '合并' : '迁移'}任务正在后台执行，可在右下角任务面板查看进度。`
+                : `房间${mergeExisting ? '合并' : '迁移'}任务已提交，可在右下角任务面板查看进度。`,
+        });
+    } catch (err) {
+        console.error('[Admin] Queue room rename job error:', err.message);
+        res.status(500).json({ error: '提交房间迁移任务失败' });
     }
 });
 
