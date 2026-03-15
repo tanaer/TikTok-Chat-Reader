@@ -26,6 +26,8 @@ const JOB_TYPE_REFRESH_USER_STATS = 'stats.refresh_user_stats';
 const JOB_TYPE_REFRESH_GLOBAL_STATS = 'stats.refresh_global_stats';
 const JOB_TYPE_SESSION_MAINTENANCE_PREFIX = 'session_maintenance.';
 const ROOM_LIST_CACHE_VERSION_KEY = cacheService.buildCacheKey('room_list', 'version');
+const ADMIN_ASYNC_JOB_HEARTBEAT_INTERVAL_MS = Math.max(5000, Number(process.env.ADMIN_ASYNC_JOB_HEARTBEAT_INTERVAL_MS || 15000));
+const ADMIN_ASYNC_JOB_STALE_THRESHOLD_MS = Math.max(60000, Number(process.env.ADMIN_ASYNC_JOB_STALE_THRESHOLD_MS || 5 * 60 * 1000));
 
 const SESSION_MAINTENANCE_TITLE_MAP = Object.freeze({
     cleanup_stale_live_events: '陈旧 LIVE 清理',
@@ -424,6 +426,96 @@ async function updateAdminAsyncJob(jobId, updates = {}) {
     return result.rows[0] ? normalizeJobRow(result.rows[0]) : null;
 }
 
+function startAdminAsyncJobHeartbeat(jobId, progressState = {}) {
+    const safeJobId = Number(jobId || 0);
+    if (!safeJobId) {
+        return async () => {};
+    }
+
+    let stopped = false;
+    let activeTick = Promise.resolve();
+    const tick = async () => {
+        if (stopped) return;
+        const currentStep = String(progressState.currentStep || '后台正在执行').trim() || '后台正在执行';
+        const progressPercent = Math.max(1, Math.min(99, Number(progressState.progressPercent || 0)));
+        activeTick = updateAdminAsyncJob(safeJobId, {
+            currentStep,
+            progressPercent,
+        }).catch((error) => {
+            if (!stopped) {
+                console.error(`[ADMIN_ASYNC_JOB] heartbeat failed for job ${safeJobId}:`, error.message);
+            }
+        });
+        await activeTick;
+    };
+
+    const timer = setInterval(() => {
+        tick().catch(() => {});
+    }, ADMIN_ASYNC_JOB_HEARTBEAT_INTERVAL_MS);
+
+    return async () => {
+        stopped = true;
+        clearInterval(timer);
+        await activeTick.catch(() => {});
+    };
+}
+
+async function recoverStaleAdminAsyncJobs(options = {}) {
+    const queueName = String(options.queueName || '').trim();
+    const limit = Math.max(1, Math.min(20, Number(options.limit || 5)));
+    const whereClauses = [
+        `status = $1`,
+        `updated_at < (NOW() - ($2::double precision * INTERVAL '1 millisecond'))`,
+    ];
+    const params = [JOB_STATUS_PROCESSING, ADMIN_ASYNC_JOB_STALE_THRESHOLD_MS];
+
+    if (queueName) {
+        params.push(queueName);
+        whereClauses.push(`queue_name = $${params.length}`);
+    }
+
+    params.push(limit);
+    const result = await db.pool.query(
+        `SELECT *
+         FROM admin_async_job
+         WHERE ${whereClauses.join(' AND ')}
+         ORDER BY updated_at ASC, id ASC
+         LIMIT $${params.length}`,
+        params
+    );
+
+    if (!result.rows.length) {
+        return { recoveredCount: 0, jobs: [] };
+    }
+
+    const recoveredJobs = [];
+    for (const row of result.rows) {
+        const job = normalizeJobRow(row);
+        const recovered = await updateAdminAsyncJob(job.id, {
+            status: JOB_STATUS_QUEUED,
+            currentStep: '任务执行中断，正在重新排队',
+            progressPercent: Math.max(5, Math.min(95, Number(job.progressPercent || 0))),
+            errorMessage: '',
+            queuedAt: new Date().toISOString(),
+            startedAt: null,
+            finishedAt: null,
+        });
+        recoveredJobs.push(recovered || job);
+    }
+
+    metricsService.emitLog('warn', 'admin.async_job.recovered', {
+        queueName: queueName || 'all',
+        recoveredCount: recoveredJobs.length,
+        staleThresholdMs: ADMIN_ASYNC_JOB_STALE_THRESHOLD_MS,
+        jobIds: recoveredJobs.map((job) => Number(job?.id || 0)).filter(Boolean),
+    });
+
+    return {
+        recoveredCount: recoveredJobs.length,
+        jobs: recoveredJobs,
+    };
+}
+
 async function claimNextAdminAsyncJob(queueName) {
     const safeQueueName = String(queueName || '').trim();
     if (!safeQueueName) return null;
@@ -522,13 +614,22 @@ function getQueueWorkerEnabled(queueName) {
     return Boolean(config.worker.enableMaintenance);
 }
 
-async function executeAdminAsyncJob(job) {
+async function executeAdminAsyncJob(job, options = {}) {
     const item = normalizeJobRow(job);
     const payload = buildStablePayload(item.requestPayload || {});
+    const progressState = options.progressState && typeof options.progressState === 'object'
+        ? options.progressState
+        : null;
     const setStep = async (currentStep, progressPercent) => {
+        const safeStep = String(currentStep || '后台正在执行');
+        const safeProgressPercent = Math.max(1, Math.min(99, Number(progressPercent || 0)));
+        if (progressState) {
+            progressState.currentStep = safeStep;
+            progressState.progressPercent = safeProgressPercent;
+        }
         await updateAdminAsyncJob(item.id, {
-            currentStep: String(currentStep || '后台正在执行'),
-            progressPercent: Math.max(1, Math.min(99, Number(progressPercent || 0))),
+            currentStep: safeStep,
+            progressPercent: safeProgressPercent,
         });
     };
 
@@ -579,9 +680,15 @@ async function processOneAdminAsyncJob(queueName, options = {}) {
         runner,
         status: 'started',
     });
+    const progressState = {
+        currentStep: String(job.currentStep || '后台正在执行'),
+        progressPercent: Math.max(1, Math.min(99, Number(job.progressPercent || 25))),
+    };
+    const stopHeartbeat = startAdminAsyncJobHeartbeat(job.id, progressState);
 
     try {
-        const resultPayload = await executeAdminAsyncJob(job);
+        const resultPayload = await executeAdminAsyncJob(job, { progressState });
+        await stopHeartbeat();
         const completed = await markAdminAsyncJobCompleted(job.id, resultPayload);
         if (job.jobType === JOB_TYPE_RENAME_ROOM && isCompletedStatus(completed?.status)) {
             if (typeof options.invalidateRoomListCaches === 'function') {
@@ -602,6 +709,7 @@ async function processOneAdminAsyncJob(queueName, options = {}) {
         });
         return completed;
     } catch (error) {
+        await stopHeartbeat();
         const safeErrorMessage = metricsService.safeErrorMessage(error);
         await markAdminAsyncJobFailed(job.id, safeErrorMessage);
         metricsService.emitLog('error', 'admin.async_job', {
@@ -618,6 +726,12 @@ async function processOneAdminAsyncJob(queueName, options = {}) {
 
 async function processAvailableAdminAsyncJobs(queueName, options = {}) {
     const maxJobs = Math.max(1, Number(options.maxJobs || 1));
+    await recoverStaleAdminAsyncJobs({
+        queueName,
+        limit: options.recoverLimit || maxJobs,
+    }).catch((error) => {
+        console.error(`[ADMIN_ASYNC_JOB] failed to recover stale jobs for ${queueName}:`, error.message);
+    });
     let processed = 0;
 
     while (processed < maxJobs) {
@@ -768,6 +882,7 @@ module.exports = {
     enqueueStatsRefreshJob,
     enqueueEventMigrationJob,
     enqueueRoomRenameJob,
+    recoverStaleAdminAsyncJobs,
     processOneAdminAsyncJob,
     processAvailableAdminAsyncJobs,
 };

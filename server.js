@@ -86,10 +86,13 @@ const {
 } = require('./services/aiPricingService');
 const { runExpiredRoomCleanupJob } = require('./services/maintenanceJobService');
 const {
+    JOB_QUEUE_MAINTENANCE,
+    JOB_QUEUE_STATS,
     enqueueSessionMaintenanceJob,
     enqueueStatsRefreshJob,
     enqueueEventMigrationJob,
     enqueueRoomRenameJob,
+    processAvailableAdminAsyncJobs,
 } = require('./services/adminAsyncJobService');
 
 let schemeAConfig = getSchemeAConfig();
@@ -99,6 +102,10 @@ let statsWorkerProcess = null;
 let maintenanceWorkerProcess = null;
 const processFallbackRecordingAccessTokenSecret = crypto.randomBytes(32).toString('hex');
 let hasWarnedMissingRecordingAccessSecret = false;
+const ADMIN_ASYNC_JOB_WEB_FALLBACK_INTERVAL_MS = 5000;
+const ADMIN_ASYNC_JOB_WEB_FALLBACK_STARTUP_DELAY_MS = 2000;
+const ADMIN_ASYNC_JOB_WEB_FALLBACK_MAX_JOBS = 2;
+const ADMIN_ASYNC_JOB_WEB_FALLBACK_RECOVER_LIMIT = 2;
 
 function getEffectiveRecordingAccessConfig() {
     const accessConfig = getRecordingAccessConfig();
@@ -222,6 +229,49 @@ function ensureMaintenanceWorkerDaemon() {
 
     maintenanceWorkerProcess.start();
     return maintenanceWorkerProcess;
+}
+
+function shouldRunAdminAsyncJobQueueInWebProcess(queueName) {
+    const safeQueueName = String(queueName || '').trim();
+    if (safeQueueName === JOB_QUEUE_STATS) {
+        return !schemeAConfig.worker.enableStats;
+    }
+    if (safeQueueName === JOB_QUEUE_MAINTENANCE) {
+        return !schemeAConfig.worker.enableMaintenance;
+    }
+    return false;
+}
+
+async function runAdminAsyncJobWebFallback(queueName, runner) {
+    if (!shouldRunAdminAsyncJobQueueInWebProcess(queueName)) {
+        return;
+    }
+
+    try {
+        await processAvailableAdminAsyncJobs(queueName, {
+            maxJobs: ADMIN_ASYNC_JOB_WEB_FALLBACK_MAX_JOBS,
+            recoverLimit: ADMIN_ASYNC_JOB_WEB_FALLBACK_RECOVER_LIMIT,
+            runner,
+        });
+    } catch (err) {
+        console.error(`[CRON] Admin async job fallback error for ${queueName}:`, err.message);
+    }
+}
+
+function scheduleAdminAsyncJobWebFallback() {
+    const queueNames = [JOB_QUEUE_MAINTENANCE, JOB_QUEUE_STATS];
+
+    setTimeout(() => {
+        for (const queueName of queueNames) {
+            runAdminAsyncJobWebFallback(queueName, 'web-fallback-startup').catch(() => {});
+        }
+    }, ADMIN_ASYNC_JOB_WEB_FALLBACK_STARTUP_DELAY_MS);
+
+    setInterval(() => {
+        for (const queueName of queueNames) {
+            runAdminAsyncJobWebFallback(queueName, 'web-fallback-interval').catch(() => {});
+        }
+    }, ADMIN_ASYNC_JOB_WEB_FALLBACK_INTERVAL_MS);
 }
 
 async function stopManagedWorkers(signal = 'SIGTERM') {
@@ -5366,6 +5416,7 @@ httpServer.listen(PORT, async () => {
     startAiWorkQueueProcessor();
     ensureStatsWorkerDaemon();
     ensureMaintenanceWorkerDaemon();
+    scheduleAdminAsyncJobWebFallback();
 
     // Scheduled jobs
     // Run user language analysis every hour
