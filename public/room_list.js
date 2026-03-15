@@ -1001,8 +1001,12 @@ function closeRoomModal() {
 }
 
 function enterRoom(id, name) {
-    $('#detailRoomName').text(name || id);
-    $('#detailRoomId').text(id);
+    if (typeof window.updateDetailRoomIdentity === 'function') {
+        window.updateDetailRoomIdentity(id, name);
+    } else {
+        $('#detailRoomName').text(name || id);
+        $('#detailRoomId').text(id);
+    }
     if (window.loadRoom) window.loadRoom(id);
     if (window.switchSection) window.switchSection('roomDetail');
 }

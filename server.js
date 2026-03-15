@@ -350,6 +350,62 @@ async function canAccessRoom(req, roomId) {
     return { allowed: !!row };
 }
 
+function resolveRoomDisplayName({ roomId = '', alias = '', roomName = '' } = {}) {
+    const safeRoomId = String(roomId || '').trim();
+    const safeAlias = String(alias || '').trim();
+    const safeRoomName = String(roomName || '').trim();
+
+    if (safeAlias && safeAlias !== safeRoomId) return safeAlias;
+    if (safeRoomName && safeRoomName !== safeRoomId) return safeRoomName;
+    return safeAlias || safeRoomName || safeRoomId;
+}
+
+async function getRoomDisplayNameForRequest(req, roomId) {
+    const safeRoomId = String(roomId || '').trim();
+    if (!safeRoomId) return '';
+
+    const userRoomData = await getUserRoomDataMap(req);
+    const room = await db.get('SELECT name FROM room WHERE room_id = ? LIMIT 1', [safeRoomId]);
+    return resolveRoomDisplayName({
+        roomId: safeRoomId,
+        alias: userRoomData?.[safeRoomId]?.alias || '',
+        roomName: room?.name || ''
+    });
+}
+
+async function getRoomDisplayNameForUser(userId, roomId) {
+    const safeUserId = Number(userId || 0);
+    const safeRoomId = String(roomId || '').trim();
+    if (!safeUserId || !safeRoomId) return safeRoomId;
+
+    const row = await db.get(
+        `SELECT u.role, ur.alias, r.name
+         FROM users u
+         LEFT JOIN user_room ur
+            ON ur.user_id = u.id
+           AND ur.room_id = ?
+           AND ur.deleted_at IS NULL
+         LEFT JOIN room r
+            ON r.room_id = ?
+         WHERE u.id = ?
+         LIMIT 1`,
+        [safeRoomId, safeRoomId, safeUserId]
+    );
+
+    if (String(row?.role || '').trim() === 'admin') {
+        return resolveRoomDisplayName({
+            roomId: safeRoomId,
+            roomName: row?.name || ''
+        });
+    }
+
+    return resolveRoomDisplayName({
+        roomId: safeRoomId,
+        alias: row?.alias || '',
+        roomName: row?.name || ''
+    });
+}
+
 async function getRoomFilterForUserScope(userId, isAdmin = false) {
     if (!userId || isAdmin) return null;
     const rows = await db.all(
@@ -1472,7 +1528,11 @@ app.get('/api/rooms/stats', optionalAuth, async (req, res) => {
                 const copy = userRoomData[room.roomId];
                 return {
                     ...room,
-                    displayName: (copy && copy.alias) || room.name || room.roomId,
+                    displayName: resolveRoomDisplayName({
+                        roomId: room.roomId,
+                        alias: copy?.alias || '',
+                        roomName: room.name || ''
+                    }),
                     firstAddedAt: copy ? copy.firstAddedAt : null,
                 };
             });
@@ -1524,7 +1584,11 @@ app.get('/api/rooms', optionalAuth, async (req, res) => {
             return {
                 ...room,
                 isLive: liveRoomIds.includes(room.roomId),
-                displayName: copy ? (copy.alias || room.name || room.roomId) : room.name,
+                displayName: resolveRoomDisplayName({
+                    roomId: room.roomId,
+                    alias: copy?.alias || '',
+                    roomName: room.name || ''
+                }),
                 firstAddedAt: copy ? copy.firstAddedAt : null,
             };
         });
@@ -1597,9 +1661,11 @@ app.get('/api/rooms/:id/stats_detail', optionalAuth, async (req, res) => {
         // Get last session for fallback
         const sessions = await getCachedRoomSessions(roomId);
         const lastSession = sessions && sessions.length > 0 ? sessions[0] : null;
+        const roomName = await getRoomDisplayNameForRequest(req, roomId);
 
         res.json({
             ...data,
+            roomName,
             isLive,
             lastSession,
             currentSessionId: sessionId
@@ -3595,6 +3661,7 @@ async function sendAiWorkJobNotification(job, { success = true, errorMessage = '
 
     try {
         const isCustomerAnalysisJob = String(job.jobType || '') === AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS;
+        const roomName = job.roomId ? await getRoomDisplayNameForUser(job.userId, job.roomId) : '';
         const title = success
             ? (isCustomerAnalysisJob ? 'AI客户分析已完成' : 'AI直播复盘已完成')
             : (isCustomerAnalysisJob ? 'AI客户分析处理失败' : 'AI直播复盘处理失败');
@@ -3608,6 +3675,7 @@ async function sendAiWorkJobNotification(job, { success = true, errorMessage = '
         const actionUrl = buildAiWorkActionUrl(job.jobType, {
             roomId: job.roomId || '',
             sessionId: job.sessionId || '',
+            roomName,
             requestPayload: job.requestPayload || null
         });
 

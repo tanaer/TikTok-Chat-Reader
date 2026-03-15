@@ -55,6 +55,7 @@ function buildCustomerAnalysisActionUrl(requestPayload = {}) {
     const targetUserId = String(requestPayload?.targetUserId || '').trim();
     const targetNickname = String(requestPayload?.targetNickname || '').trim();
     const targetUniqueId = String(requestPayload?.targetUniqueId || '').trim();
+    const roomName = String(requestPayload?.roomName || requestPayload?.currentRoomName || '').trim();
 
     if (analysisScene === 'personality' || !String(requestPayload?.currentRoomId || requestPayload?.requestedRoomId || '').trim()) {
         if (!targetUserId) return '/monitor.html?section=userAnalysis';
@@ -75,17 +76,24 @@ function buildCustomerAnalysisActionUrl(requestPayload = {}) {
         detailTab: 'timeStats',
         customerAnalysisUserId: targetUserId
     });
+    if (roomName) params.set('roomName', roomName);
     if (targetNickname) params.set('customerAnalysisNickname', targetNickname);
     if (targetUniqueId) params.set('customerAnalysisUniqueId', targetUniqueId);
     return `/monitor.html?${params.toString()}`;
 }
 
-function buildAiWorkActionUrl(jobType, { roomId = '', sessionId = '', requestPayload = null } = {}) {
+function buildAiWorkActionUrl(jobType, { roomId = '', sessionId = '', roomName = '', requestPayload = null } = {}) {
     const normalizedJobType = normalizeAiWorkJobType(jobType);
     if (normalizedJobType === AI_WORK_JOB_TYPE_CUSTOMER_ANALYSIS) {
         return buildCustomerAnalysisActionUrl(requestPayload || {});
     }
-    return `/monitor.html?roomId=${encodeURIComponent(String(roomId || ''))}&sessionId=${encodeURIComponent(String(sessionId || ''))}&detailTab=timeStats`;
+    const params = new URLSearchParams({
+        roomId: String(roomId || ''),
+        sessionId: String(sessionId || ''),
+        detailTab: 'timeStats'
+    });
+    if (roomName) params.set('roomName', String(roomName || ''));
+    return `/monitor.html?${params.toString()}`;
 }
 
 function getAiWorkJobTypeLabel(jobType) {
@@ -156,6 +164,7 @@ function serializeUserAiWorkJob(row = {}) {
         actionUrl: buildAiWorkActionUrl(normalizedJobType, {
             roomId: item.roomId,
             sessionId: item.sessionId,
+            roomName: requestPayload?.roomName || '',
             requestPayload
         }),
         status: normalizeAiWorkStatus(item.status),

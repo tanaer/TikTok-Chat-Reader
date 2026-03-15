@@ -89,6 +89,7 @@ function getMonitorDeepLinkState() {
     const params = new URLSearchParams(window.location.search || '');
     return {
         roomId: String(params.get('roomId') || '').trim(),
+        roomName: String(params.get('roomName') || '').trim(),
         sessionId: String(params.get('sessionId') || '').trim(),
         detailTab: String(params.get('detailTab') || '').trim(),
         section: String(params.get('section') || '').trim(),
@@ -139,6 +140,9 @@ async function handleMonitorDeepLink() {
     if (!deepLink.roomId) return;
 
     switchSection('roomDetail');
+    if (deepLink.roomName) {
+        updateDetailRoomIdentity(deepLink.roomId, deepLink.roomName);
+    }
     await loadRoom(deepLink.roomId);
 
     if (deepLink.sessionId && deepLink.sessionId !== currentSessionId) {
@@ -357,6 +361,13 @@ function renderAlltimeStatusTable(message, tone = 'loading') {
         .html(`<tr><td colspan="2" class="text-center opacity-60 text-xs">${content}</td></tr>`);
 }
 
+function updateDetailRoomIdentity(roomId, roomName = '') {
+    const safeRoomId = String(roomId || '').trim();
+    const safeRoomName = String(roomName || '').trim();
+    $('#detailRoomId').text(safeRoomId);
+    $('#detailRoomName').text(safeRoomName || safeRoomId || '房间名');
+}
+
 function setAlltimeLeaderboardsLoading(roomId) {
     const safeRoomId = String(roomId || '').trim();
     renderAlltimeStatusTable(
@@ -372,7 +383,7 @@ async function loadRoom(id) {
         closeRoomCustomerAnalysisModal();
     }
     currentDetailRoomId = safeRoomId;
-    $('#detailRoomId').text(safeRoomId);
+    updateDetailRoomIdentity(safeRoomId);
     $('#chatContainer').empty();
     resetSessionRecapState('正在加载 AI直播复盘...');
     setAlltimeLeaderboardsLoading(safeRoomId);
@@ -388,6 +399,7 @@ async function loadRoom(id) {
                 $.get(`/api/rooms/${safeRoomId}/sessions`)
             ]);
             if (!isActiveRoomLoad(safeRoomId, requestId)) return;
+            updateDetailRoomIdentity(safeRoomId, statsRes.roomName);
 
             // Load all-time leaderboards in background (don't block UI)
             loadAlltimeLeaderboards(safeRoomId, requestId);
@@ -530,6 +542,7 @@ async function changeSession(val) {
 async function loadDetailStats(roomId, sessionId) {
     try {
         const res = await $.get(`/api/rooms/${roomId}/stats_detail?sessionId=${sessionId}`);
+        updateDetailRoomIdentity(roomId, res.roomName);
         if (sessionId === 'live') {
             setLiveDetailAggregationState(roomId, res.summary, res.leaderboards);
         } else {
@@ -3083,6 +3096,7 @@ function backToRoom(roomId) {
 }
 window.searchUserExact = searchUserExact;
 window.backToRoom = backToRoom;
+window.updateDetailRoomIdentity = updateDetailRoomIdentity;
 
 function switchAlltimeTab(tabId, btnElement) {
     // Toggle tabs

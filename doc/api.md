@@ -122,6 +122,7 @@
 
 - `GET /api/rooms/:id/stats_detail?sessionId=live|<session_id>`
   - 返回结构（前端 `public/app.js` 使用）：
+    - `roomName`: 当前用户可见的房间展示名（成员别名若仅等于 `roomId`，则回退为系统房间名）
     - `summary`: `{ duration, startTime, totalVisits, totalComments, totalLikes, totalGiftValue }`
     - `leaderboards`: `{ gifters, chatters, likers, giftDetails }`
     - 同时还会附加（由 `server.js` 拼装）：
