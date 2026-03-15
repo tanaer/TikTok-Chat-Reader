@@ -5,6 +5,13 @@
 const Auth = {
     _sessionHeartbeatTimer: null,
     _sessionCheckPromise: null,
+    _refreshPromise: null,
+    _refreshLockKey: 'auth_refresh_lock',
+    _refreshLockTtlMs: 10000,
+    _lastRefreshFailureCode: null,
+    _tabId: (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+        ? crypto.randomUUID()
+        : `tab_${Date.now()}_${Math.random().toString(16).slice(2)}`,
     _shellMessagePollTimer: null,
     _shellMessageUnreadCount: 0,
     _shellMessageItems: [],
@@ -109,7 +116,9 @@ const Auth = {
                 headers['Authorization'] = `Bearer ${this.getAccessToken()}`;
                 response = await fetch(url, { ...options, headers });
             } else {
-                this.redirectToLogin();
+                if (['missing', 'invalid', 'session_revoked'].includes(this._lastRefreshFailureCode)) {
+                    this.redirectToLogin();
+                }
                 return response;
             }
         }
@@ -121,27 +130,86 @@ const Auth = {
      * Refresh the access token using refresh token
      */
     async refreshAccessToken() {
-        try {
-            const res = await fetch('/api/auth/refresh', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ refreshToken: this.getRefreshToken() })
-            });
-            if (!res.ok) {
-                try {
-                    const data = await res.json();
-                    if (data.code === 'SESSION_REVOKED') {
-                        this.redirectToLogin(data.error || '您的账号已在其他地方登录，请重新登录');
-                    }
-                } catch { /* ignore */ }
+        if (this._refreshPromise) {
+            return this._refreshPromise;
+        }
+
+        this._refreshPromise = (async () => {
+            const currentRefreshToken = this.getRefreshToken();
+            if (!currentRefreshToken) {
+                this._lastRefreshFailureCode = 'missing';
                 return false;
             }
-            const data = await res.json();
-            this.setTokens(data.accessToken, data.refreshToken, data.user);
-            return true;
-        } catch {
-            return false;
-        }
+
+            const currentLock = this.getRefreshLock();
+            if (this.isRefreshLockActive(currentLock, currentRefreshToken) && currentLock.owner !== this._tabId) {
+                const reused = await this.waitForRefreshFromAnotherTab(currentRefreshToken);
+                if (reused) {
+                    this._lastRefreshFailureCode = null;
+                    return true;
+                }
+            }
+
+            let acquiredLock = this.tryAcquireRefreshLock(currentRefreshToken);
+            if (!acquiredLock) {
+                const reused = await this.waitForRefreshFromAnotherTab(currentRefreshToken);
+                if (reused) {
+                    this._lastRefreshFailureCode = null;
+                    return true;
+                }
+                acquiredLock = this.tryAcquireRefreshLock(currentRefreshToken);
+            }
+
+            try {
+                if (!acquiredLock) {
+                    this._lastRefreshFailureCode = 'transient';
+                    return this.getRefreshToken() !== currentRefreshToken;
+                }
+
+                const res = await fetch('/api/auth/refresh', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ refreshToken: currentRefreshToken })
+                });
+
+                if (!res.ok) {
+                    let payload = null;
+                    try {
+                        payload = await res.json();
+                    } catch { /* ignore */ }
+
+                    // Another in-flight refresh may have already rotated the token.
+                    if (this.getRefreshToken() && this.getRefreshToken() !== currentRefreshToken) {
+                        this._lastRefreshFailureCode = null;
+                        return true;
+                    }
+
+                    if (payload?.code === 'SESSION_REVOKED') {
+                        this._lastRefreshFailureCode = 'session_revoked';
+                        this.redirectToLogin(payload.error || '您的账号已在其他地方登录，请重新登录');
+                        return false;
+                    }
+
+                    this._lastRefreshFailureCode = res.status === 401 || res.status === 403 ? 'invalid' : 'transient';
+                    return false;
+                }
+
+                const data = await res.json();
+                this._lastRefreshFailureCode = null;
+                this.setTokens(data.accessToken, data.refreshToken, data.user);
+                return true;
+            } catch {
+                this._lastRefreshFailureCode = 'transient';
+                return false;
+            } finally {
+                if (acquiredLock) {
+                    this.releaseRefreshLock(currentRefreshToken);
+                }
+                this._refreshPromise = null;
+            }
+        })();
+
+        return this._refreshPromise;
     },
 
     async ensureSessionActive() {
@@ -188,6 +256,91 @@ const Auth = {
             clearInterval(this._sessionHeartbeatTimer);
             this._sessionHeartbeatTimer = null;
         }
+    },
+
+    getRefreshLock() {
+        try {
+            const raw = localStorage.getItem(this._refreshLockKey);
+            return raw ? JSON.parse(raw) : null;
+        } catch {
+            return null;
+        }
+    },
+
+    isRefreshLockActive(lock, refreshToken = '') {
+        return Boolean(
+            lock
+            && String(lock.refreshToken || '') === String(refreshToken || '')
+            && Number(lock.expiresAt || 0) > Date.now()
+        );
+    },
+
+    tryAcquireRefreshLock(refreshToken) {
+        const lock = {
+            owner: this._tabId,
+            refreshToken,
+            expiresAt: Date.now() + this._refreshLockTtlMs
+        };
+
+        try {
+            localStorage.setItem(this._refreshLockKey, JSON.stringify(lock));
+            const confirmed = this.getRefreshLock();
+            return confirmed && confirmed.owner === this._tabId && confirmed.refreshToken === refreshToken;
+        } catch {
+            return true;
+        }
+    },
+
+    releaseRefreshLock(refreshToken = '') {
+        try {
+            const currentLock = this.getRefreshLock();
+            if (!currentLock) return;
+            if (currentLock.owner !== this._tabId) return;
+            if (refreshToken && String(currentLock.refreshToken || '') !== String(refreshToken || '')) return;
+            localStorage.removeItem(this._refreshLockKey);
+        } catch { /* ignore */ }
+    },
+
+    waitForRefreshFromAnotherTab(refreshToken, timeoutMs = this._refreshLockTtlMs) {
+        return new Promise((resolve) => {
+            let settled = false;
+            let timeoutTimer = null;
+            let pollTimer = null;
+
+            const finish = (result) => {
+                if (settled) return;
+                settled = true;
+                if (timeoutTimer) clearTimeout(timeoutTimer);
+                if (pollTimer) clearInterval(pollTimer);
+                window.removeEventListener('storage', handleStorageChange);
+                resolve(result);
+            };
+
+            const checkState = () => {
+                const latestRefreshToken = this.getRefreshToken();
+                if (latestRefreshToken && latestRefreshToken !== refreshToken) {
+                    finish(true);
+                    return;
+                }
+
+                const currentLock = this.getRefreshLock();
+                if (!this.isRefreshLockActive(currentLock, refreshToken)) {
+                    finish(false);
+                }
+            };
+
+            const handleStorageChange = (event) => {
+                if (!event) return;
+                if (event.key === 'refreshToken' || event.key === this._refreshLockKey) {
+                    checkState();
+                }
+            };
+
+            window.addEventListener('storage', handleStorageChange);
+            pollTimer = setInterval(checkState, 200);
+            timeoutTimer = setTimeout(() => finish(this.getRefreshToken() !== refreshToken), timeoutMs);
+            checkState();
+        });
     },
 
     /**
