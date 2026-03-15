@@ -44,32 +44,37 @@ function formatSessionOffsetPoint(value, sessionStartAt = null) {
 
     const valueDate = new Date(normalized);
     if (Number.isFinite(valueDate.getTime())) {
-        const diffMinutes = Math.max(0, Math.floor((valueDate.getTime() - sessionStartMs) / 60000));
-        const hours = Math.floor(diffMinutes / 60);
-        const minutes = diffMinutes % 60;
-        return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+        const diffSeconds = Math.max(0, Math.floor((valueDate.getTime() - sessionStartMs) / 1000));
+        const hours = Math.floor(diffSeconds / 3600);
+        const minutes = Math.floor((diffSeconds % 3600) / 60);
+        const seconds = diffSeconds % 60;
+        return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
     }
 
     const hhmmMatch = /^(\d{2}):(\d{2})$/.exec(normalized);
-    if (!hhmmMatch) return normalized;
+    const hhmmssMatch = /^(\d{2}):(\d{2}):(\d{2})$/.exec(normalized);
+    if (!hhmmMatch && !hhmmssMatch) return normalized;
     const point = new Date(sessionStartMs);
-    point.setSeconds(0, 0);
-    point.setHours(Number(hhmmMatch[1]), Number(hhmmMatch[2]), 0, 0);
+    const hoursPart = Number((hhmmssMatch || hhmmMatch)[1]);
+    const minutesPart = Number((hhmmssMatch || hhmmMatch)[2]);
+    const secondsPart = hhmmssMatch ? Number(hhmmssMatch[3]) : 0;
+    point.setHours(hoursPart, minutesPart, secondsPart, 0);
     if (point.getTime() < sessionStartMs) point.setDate(point.getDate() + 1);
-    const diffMinutes = Math.max(0, Math.floor((point.getTime() - sessionStartMs) / 60000));
-    const hours = Math.floor(diffMinutes / 60);
-    const minutes = diffMinutes % 60;
-    return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    const diffSeconds = Math.max(0, Math.floor((point.getTime() - sessionStartMs) / 1000));
+    const hours = Math.floor(diffSeconds / 3600);
+    const minutes = Math.floor((diffSeconds % 3600) / 60);
+    const seconds = diffSeconds % 60;
+    return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 function buildSessionOffsetRange(sessionStartAt = null, durationSeconds = 0) {
-    const safeDurationSeconds = Math.max(0, Number(durationSeconds || 0));
-    const durationMinutes = Math.max(0, Math.floor(safeDurationSeconds / 60));
-    const endHours = Math.floor(durationMinutes / 60);
-    const endMinutes = durationMinutes % 60;
+    const safeDurationSeconds = Math.max(0, Math.floor(Number(durationSeconds || 0)));
+    const endHours = Math.floor(safeDurationSeconds / 3600);
+    const endMinutes = Math.floor((safeDurationSeconds % 3600) / 60);
+    const endSeconds = safeDurationSeconds % 60;
     const hasStart = Boolean(sessionStartAt);
     if (!hasStart && !safeDurationSeconds) return '';
-    return `开播后00:00-开播后${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
+    return `开播后00:00:00-开播后${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}:${String(endSeconds).padStart(2, '0')}`;
 }
 
 function safeDivide(numerator, denominator) {
@@ -254,7 +259,8 @@ function buildSessionRecapPromptPayload(roomId, sessionId, recap, valuableCommen
         topGiftDetails: Array.isArray(recap?.giftSignals?.topGiftDetails) ? recap.giftSignals.topGiftDetails.slice(0, 20) : [],
         dataNotes: [
             '如果输入没有 GMV、留存率、分享率、关注增长，请不要编造。',
-            '客户结论优先结合礼物、弹幕、点赞、进房、历史价值等现有数据判断。'
+            '客户结论优先结合礼物、弹幕、点赞、进房、历史价值等现有数据判断。',
+            '凡是形如“开播后HH:MM:SS”或“开播后HH:MM:SS-开播后HH:MM:SS”的时间，都是相对开播时长，不是北京时间、凌晨时间或自然时段描述。'
         ]
     };
 }

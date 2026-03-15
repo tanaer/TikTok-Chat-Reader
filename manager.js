@@ -1529,14 +1529,16 @@ class Manager {
         const sessionEndTime = detail?.summary?.endTime || null;
         const sessionStartMs = sessionStartTime ? new Date(sessionStartTime).getTime() : NaN;
 
-        const formatOffsetLabel = (pointMs) => {
-            const diffMinutes = Math.max(0, Math.floor((pointMs - sessionStartMs) / 60000));
-            const hours = Math.floor(diffMinutes / 60);
-            const minutes = diffMinutes % 60;
-            return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+        const formatOffsetLabel = (pointMs, { includeSeconds = false } = {}) => {
+            const diffSeconds = Math.max(0, Math.floor((pointMs - sessionStartMs) / 1000));
+            const hours = Math.floor(diffSeconds / 3600);
+            const minutes = Math.floor((diffSeconds % 3600) / 60);
+            const seconds = diffSeconds % 60;
+            const secondSuffix = includeSeconds ? `:${String(seconds).padStart(2, '0')}` : '';
+            return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}${secondSuffix}`;
         };
 
-        const buildOffsetRangeLabel = (item = {}) => {
+        const buildOffsetRangeLabel = (item = {}, { includeSeconds = false } = {}) => {
             const fallback = String(item?.time_range || '').trim();
             if (!Number.isFinite(sessionStartMs)) return fallback;
 
@@ -1551,15 +1553,20 @@ class Manager {
                 : rawEndMs;
 
             if (!Number.isFinite(effectiveEndMs) || effectiveEndMs <= effectiveStartMs) return fallback;
-            return `${formatOffsetLabel(effectiveStartMs)}-${formatOffsetLabel(effectiveEndMs)}`;
+            return `${formatOffsetLabel(effectiveStartMs, { includeSeconds })}-${formatOffsetLabel(effectiveEndMs, { includeSeconds })}`;
         };
 
         const timeline = Array.isArray(rawTimeline)
-            ? rawTimeline.map(item => ({
-                ...item,
-                absolute_time_range: item?.time_range || '',
-                time_range: buildOffsetRangeLabel(item)
-            }))
+            ? rawTimeline.map(item => {
+                const timeRange = buildOffsetRangeLabel(item);
+                const timeRangeFull = buildOffsetRangeLabel(item, { includeSeconds: true });
+                return {
+                    ...item,
+                    absolute_time_range: item?.time_range || '',
+                    time_range: timeRange,
+                    time_range_full: timeRangeFull || timeRange
+                };
+            })
             : [];
 
         let commentWhereClause = `WHERE room_id = ? AND type = 'chat' AND comment IS NOT NULL AND LENGTH(TRIM(comment)) > 0`;
@@ -1608,8 +1615,8 @@ class Manager {
                 const drop = (prev.max_online || 0) - (curr.max_online || 0);
                 if (drop > 0 && (!biggestDrop || drop > biggestDrop.dropValue)) {
                     biggestDrop = {
-                        from: prev.time_range,
-                        to: curr.time_range,
+                        from: prev.time_range_full || prev.time_range,
+                        to: curr.time_range_full || curr.time_range,
                         dropValue: drop,
                         fromValue: prev.max_online || 0,
                         toValue: curr.max_online || 0
@@ -1647,18 +1654,18 @@ class Manager {
             keyMoments.push({
                 type: 'gift_peak',
                 title: '礼物高峰',
-                timeRange: topIncomeBucket.time_range,
+                timeRange: topIncomeBucket.time_range_full || topIncomeBucket.time_range,
                 metric: `💎 ${Number(topIncomeBucket.income || 0).toLocaleString()}`,
-                description: `本场礼物峰值出现在 ${topIncomeBucket.time_range}，是最值得回看和复用的话术节点。`
+                description: `本场礼物峰值出现在 ${topIncomeBucket.time_range_full || topIncomeBucket.time_range}，是最值得回看和复用的话术节点。`
             });
         }
         if (topCommentBucket && topCommentBucket.comments > 0) {
             keyMoments.push({
                 type: 'comment_peak',
                 title: '互动高峰',
-                timeRange: topCommentBucket.time_range,
+                timeRange: topCommentBucket.time_range_full || topCommentBucket.time_range,
                 metric: `💬 ${Number(topCommentBucket.comments || 0).toLocaleString()}`,
-                description: `互动热度最高出现在 ${topCommentBucket.time_range}，说明该时段内容更容易把人留下来。`
+                description: `互动热度最高出现在 ${topCommentBucket.time_range_full || topCommentBucket.time_range}，说明该时段内容更容易把人留下来。`
             });
         }
         if (biggestDrop && biggestDrop.dropValue > 0) {
@@ -1673,15 +1680,15 @@ class Manager {
             keyMoments.push({
                 type: 'online_peak',
                 title: hasViewerSnapshots ? '在线峰值' : '流量峰值',
-                timeRange: topOnlineBucket.time_range,
+                timeRange: topOnlineBucket.time_range_full || topOnlineBucket.time_range,
                 metric: `👥 ${Number(topOnlineBucket.max_online || 0).toLocaleString()}`,
-                description: hasViewerSnapshots ? `在线峰值出现在 ${topOnlineBucket.time_range}，可作为下次起量阶段的节奏参考。` : `该时段流量触达最强，可作为下次起量节奏参考。`
+                description: hasViewerSnapshots ? `在线峰值出现在 ${topOnlineBucket.time_range_full || topOnlineBucket.time_range}，可作为下次起量阶段的节奏参考。` : `该时段流量触达最强，可作为下次起量节奏参考。`
             });
         }
 
         const highlights = [];
         if (totalGiftValue > 0) highlights.push(`本场累计礼物达到 💎${totalGiftValue.toLocaleString()}，具备清晰的变现结果。`);
-        if (topIncomeBucket && topIncomeBucket.income > 0) highlights.push(`礼物高峰出现在 ${topIncomeBucket.time_range}，说明该时段内容更能打。`);
+        if (topIncomeBucket && topIncomeBucket.income > 0) highlights.push(`礼物高峰出现在 ${topIncomeBucket.time_range_full || topIncomeBucket.time_range}，说明该时段内容更能打。`);
         if (valueCustomers.core.length > 0) highlights.push(`核心价值客户 ${valueCustomers.core[0].nickname} 本场贡献突出，适合重点维护。`);
         if (totalComments > Math.max(30, totalVisits)) highlights.push(`弹幕互动密度较高，说明内容具备留人能力。`);
 
@@ -1732,7 +1739,7 @@ class Manager {
             traffic: {
                 peakOnline,
                 avgOnline,
-                topRange: topOnlineBucket?.time_range || '',
+                topRange: topOnlineBucket?.time_range_full || topOnlineBucket?.time_range || '',
                 biggestDrop
             },
             insights: {

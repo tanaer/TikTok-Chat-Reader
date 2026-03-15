@@ -39,6 +39,7 @@
 
 - `sessionRecapScoreBenchmarkJson` 用于给 AI 提供“6小时 / 64,000钻”单场及格线基准，并按本场时长等比例折算
 - `sessionRecapNewAttentionCustomersJson` 用于识别“本场送出 Heart Me 且历史从未送过 Heart Me”的新增关注信号
+- `sessionDataJson` 里的相对时间统一使用 `开播后HH:MM:SS` 或 `开播后HH:MM:SS-开播后HH:MM:SS`，明确表示“相对开播时长”，避免模型误读成凌晨/后半夜等自然时段
 
 ### AI客户分析
 

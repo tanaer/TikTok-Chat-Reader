@@ -385,7 +385,7 @@ async function loadRoom(id) {
     currentDetailRoomId = safeRoomId;
     updateDetailRoomIdentity(safeRoomId);
     $('#chatContainer').empty();
-    resetSessionRecapState('正在加载 AI直播复盘...');
+    showSessionRecapLoadingState('正在加载 AI直播复盘...');
     setAlltimeLeaderboardsLoading(safeRoomId);
 
     // Show loading state
@@ -505,7 +505,7 @@ async function loadSessionList(roomId) {
 async function changeSession(val) {
     currentSessionId = val;
     $('#chatContainer').empty();
-    resetSessionRecapState('正在切换 AI直播复盘...');
+    showSessionRecapLoadingState('正在切换 AI直播复盘...');
     showLoadingState();
 
     const loadingText = val === 'live' ? '切换实时数据中...' : '切换场次数据中...';
@@ -1092,7 +1092,7 @@ function formatSessionOffsetPoint(value, sessionStartAt = null, fallback = '-') 
     if (!Number.isFinite(sessionStartMs)) {
         const date = new Date(normalized);
         if (Number.isFinite(date.getTime())) {
-            return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+            return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`;
         }
         return normalized || fallback;
     }
@@ -1101,26 +1101,31 @@ function formatSessionOffsetPoint(value, sessionStartAt = null, fallback = '-') 
     let pointMs = Number.isFinite(date.getTime()) ? date.getTime() : NaN;
     if (!Number.isFinite(pointMs)) {
         const hhmmMatch = /^(\d{2}):(\d{2})$/.exec(normalized);
-        if (!hhmmMatch) return normalized || fallback;
+        const hhmmssMatch = /^(\d{2}):(\d{2}):(\d{2})$/.exec(normalized);
+        if (!hhmmMatch && !hhmmssMatch) return normalized || fallback;
         const point = new Date(sessionStartMs);
-        point.setSeconds(0, 0);
-        point.setHours(Number(hhmmMatch[1]), Number(hhmmMatch[2]), 0, 0);
+        const hoursPart = Number((hhmmssMatch || hhmmMatch)[1]);
+        const minutesPart = Number((hhmmssMatch || hhmmMatch)[2]);
+        const secondsPart = hhmmssMatch ? Number(hhmmssMatch[3]) : 0;
+        point.setHours(hoursPart, minutesPart, secondsPart, 0);
         if (point.getTime() < sessionStartMs) point.setDate(point.getDate() + 1);
         pointMs = point.getTime();
     }
 
-    const diffMinutes = Math.max(0, Math.floor((pointMs - sessionStartMs) / 60000));
-    const hours = Math.floor(diffMinutes / 60);
-    const minutes = diffMinutes % 60;
-    return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
+    const diffSeconds = Math.max(0, Math.floor((pointMs - sessionStartMs) / 1000));
+    const hours = Math.floor(diffSeconds / 3600);
+    const minutes = Math.floor((diffSeconds % 3600) / 60);
+    const seconds = diffSeconds % 60;
+    return `开播后${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
 function buildSessionOffsetRangeLabel(startTime, durationSeconds, fallback = '') {
-    const durationMinutes = Math.max(0, Math.floor(Number(durationSeconds || 0) / 60));
-    const endHours = Math.floor(durationMinutes / 60);
-    const endMinutes = durationMinutes % 60;
-    if (!startTime && !durationMinutes) return fallback;
-    return `开播后00:00-开播后${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}`;
+    const safeDurationSeconds = Math.max(0, Math.floor(Number(durationSeconds || 0)));
+    const endHours = Math.floor(safeDurationSeconds / 3600);
+    const endMinutes = Math.floor((safeDurationSeconds % 3600) / 60);
+    const endSeconds = safeDurationSeconds % 60;
+    if (!startTime && !safeDurationSeconds) return fallback;
+    return `开播后00:00:00-开播后${String(endHours).padStart(2, '0')}:${String(endMinutes).padStart(2, '0')}:${String(endSeconds).padStart(2, '0')}`;
 }
 
 // Update tab switching for DaisyUI
@@ -1854,6 +1859,37 @@ function showSessionRecapQueued(recap = {}) {
     setSessionRecapExportState({ visible: false });
 }
 
+function showSessionRecapLoadingState(message = 'AI直播复盘加载中...') {
+    currentSessionRecap = null;
+    if (sessionRecapTrendChart) {
+        sessionRecapTrendChart.destroy();
+        sessionRecapTrendChart = null;
+    }
+    if (sessionRecapRadarChart) {
+        sessionRecapRadarChart.destroy();
+        sessionRecapRadarChart = null;
+    }
+
+    setSessionRecapEmptyHtml(`
+        <div class="rounded-box border border-base-300 bg-base-100 p-5 text-sm leading-7 opacity-70 shadow-sm">
+            <div class="flex items-center gap-3">
+                <span class="loading loading-spinner loading-sm text-primary"></span>
+                <span>${escapeRecapHtml(message)}</span>
+            </div>
+        </div>
+    `);
+
+    const participantHint = document.getElementById('recapParticipantHint');
+    if (participantHint) participantHint.textContent = '发言/点赞/送礼/进房去重';
+    const summary = document.getElementById('sessionAiSummary');
+    if (summary) summary.textContent = '正在读取当前场次的 AI直播复盘数据，请稍候。';
+    const meta = document.getElementById('sessionAiMeta');
+    if (meta) meta.textContent = '加载中';
+    setSessionRecapStatus('加载中', 'badge badge-secondary');
+    setSessionRecapButtonState({ label: 'AI直播复盘加载中...', disabled: true, tone: 'secondary', loading: true });
+    setSessionRecapExportState({ visible: false });
+}
+
 function resetSessionRecapState(message = '请先选择一场直播。建议切到归档场次后生成 AI直播复盘。') {
     currentSessionRecap = null;
     if (sessionRecapTrendChart) {
@@ -2266,7 +2302,7 @@ function applySessionRecapData(recap) {
 
 async function renderSessionRecap(roomId, sessionId = currentSessionId) {
     if (!roomId) return;
-    resetSessionRecapState('AI直播复盘加载中...');
+    showSessionRecapLoadingState('AI直播复盘加载中...');
 
     const requestRoomId = roomId;
     const requestSessionId = sessionId || 'live';
