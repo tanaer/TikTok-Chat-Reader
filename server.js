@@ -2761,9 +2761,11 @@ function normalizeAiReviewValuableComments(value, limit = 10) {
         if (!item) return null;
         const text = safeTrimString(item.text || item.keyword || item.comment || item, 80);
         if (!text) return null;
+        const count = clampNumber(item.count, 0, 999999, 0);
+        if (count > SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD) return null;
         return {
             text,
-            count: clampNumber(item.count, 0, 999999, 0),
+            count,
             reason: safeTrimString(item.reason || item.category || '', 120),
             insight: safeTrimString(item.insight || item.suggestion || '', 120)
         };
@@ -3342,7 +3344,7 @@ async function requestAiChatCompletion({ messages, requestLabel, trace = null })
     throw new Error(`AI API Error: ${errors.join(' | ')}`);
 }
 
-const SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD = 15;
+const SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD = 10;
 
 function isLowValueCommentSignal(text) {
     const normalized = String(text || '').trim().toLowerCase();

@@ -9,7 +9,7 @@ const USER_PERSONALITY_ANALYSIS_SCENE = 'user_personality_analysis';
 const CUSTOMER_ANALYSIS_PROMPT_SCENE = 'customer_analysis_review';
 const SESSION_RECAP_BENCHMARK_BASELINE_HOURS = 6;
 const SESSION_RECAP_BENCHMARK_BASELINE_GIFT_VALUE = 64000;
-const SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD = 15;
+const SESSION_RECAP_AUTO_COMMENT_REPEAT_THRESHOLD = 10;
 
 const SCENE_LABELS = Object.freeze({
     [SESSION_RECAP_COMMENT_FILTER_SCENE]: 'AI直播复盘 · 高频弹幕筛选',
@@ -209,6 +209,7 @@ function serializeSessionPromptValueCustomer(item = {}, sessionStartAt = null) {
 
 function buildSessionRecapPromptPayload(roomId, sessionId, recap, valuableComments = []) {
     const sessionStartAt = toIsoString(recap?.overview?.startTime);
+    const filteredHighFrequencyComments = buildSessionRecapCommentFilterCandidates(recap);
     return {
         roomId,
         sessionId,
@@ -244,7 +245,7 @@ function buildSessionRecapPromptPayload(roomId, sessionId, recap, valuableCommen
         highlights: normalizeStringList(recap?.insights?.highlights, 5, 240),
         issues: normalizeStringList(recap?.insights?.issues, 5, 240),
         actions: normalizeStringList(recap?.insights?.actions, 5, 240),
-        highFrequencyComments: Array.isArray(recap?.commentSignals?.topComments) ? recap.commentSignals.topComments.slice(0, 50) : [],
+        highFrequencyComments: filteredHighFrequencyComments,
         valuableComments: normalizeValuableComments(valuableComments, 15),
         coreCustomers: Array.isArray(recap?.valueCustomers?.core) ? recap.valueCustomers.core.slice(0, 8).map(item => serializeSessionPromptValueCustomer(item, sessionStartAt)) : [],
         potentialCustomers: Array.isArray(recap?.valueCustomers?.potential) ? recap.valueCustomers.potential.slice(0, 8).map(item => serializeSessionPromptValueCustomer(item, sessionStartAt)) : [],
@@ -478,7 +479,7 @@ const AI_STRUCTURED_DATA_SOURCES = Object.freeze([
         sceneLabel: SCENE_LABELS[SESSION_RECAP_COMMENT_FILTER_SCENE],
         category: '直播复盘',
         title: '高频弹幕候选语料',
-        description: 'AI直播复盘·高频弹幕筛选 实际使用的候选弹幕语料。已自动剔除重复超过 15 次的高频自动弹幕，只保留待交给 AI 再筛选的 Top50 候选。',
+        description: 'AI直播复盘·高频弹幕筛选 实际使用的候选弹幕语料。已自动剔除重复超过 10 次的高频自动弹幕，只保留待交给 AI 再筛选的 Top50 候选。',
         inputSchema: {
             type: 'object',
             required: ['roomId'],
