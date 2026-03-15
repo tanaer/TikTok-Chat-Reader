@@ -10,6 +10,7 @@ const { getSchemeAConfig } = require('./services/featureFlagService');
 const keyManager = require('./utils/keyManager');
 const dynamicProxyManager = require('./utils/DynamicProxyManager');
 const liveStateService = require('./services/liveStateService');
+const { invalidateRoomDetailCaches } = require('./services/roomDetailCacheService');
 
 const LIVE_ROOM_INITIAL_GRACE_MS = 125 * 1000;
 const LIVE_ROOM_RECENT_EVENT_WINDOW_MS = 2 * 60 * 1000;
@@ -468,6 +469,44 @@ class AutoRecorder {
         }
     }
 
+    async shouldSkipPreconnectStaleArchive(uniqueId, sessionOpsConfig) {
+        const normalizedRoomId = String(uniqueId || '').trim();
+        if (!normalizedRoomId) return false;
+
+        const pendingArchive = this.pendingArchives.get(normalizedRoomId);
+        if (pendingArchive) {
+            return true;
+        }
+
+        const resumeWindowMs = Math.max(0, Number(sessionOpsConfig?.resumeWindowMinutes || 0)) * 60 * 1000;
+        if (resumeWindowMs <= 0) return false;
+
+        const orphanBounds = await manager.getOrphanEventBounds(normalizedRoomId);
+        if (orphanBounds.eventCount === 0 || !orphanBounds.newestTimeMs) {
+            return false;
+        }
+
+        const now = Date.now();
+        if ((now - orphanBounds.newestTimeMs) > resumeWindowMs) {
+            return false;
+        }
+
+        const sessions = await manager.getSessions(normalizedRoomId);
+        const lastSession = Array.isArray(sessions) ? sessions[0] : null;
+        if (!lastSession) {
+            return false;
+        }
+
+        const sessionEndTime = lastSession.endTime
+            ? new Date(lastSession.endTime).getTime()
+            : new Date(lastSession.created_at || lastSession.createdAt).getTime();
+        if (!Number.isFinite(sessionEndTime)) {
+            return false;
+        }
+
+        return (now - sessionEndTime) <= resumeWindowMs;
+    }
+
     async startLoop() {
         const sessionOpsConfig = await this.refreshSessionMaintenanceConfig('startup');
 
@@ -623,23 +662,56 @@ class AutoRecorder {
             // Auto-Archive Stale Live Events (Prevent 24h+ duration bug)
             try {
                 const sessionOpsConfig = await this.getSessionMaintenanceConfig();
-                // If there are dangling events from a previous crash/restart > 1h ago, archive them now.
-                const staleInfo = await manager.archiveStaleLiveEvents(uniqueId, {
-                    gapThresholdMinutes: sessionOpsConfig.staleGapThresholdMinutes,
-                    splitOlderThanMinutes: sessionOpsConfig.staleSplitAgeMinutes,
-                    archiveAllOlderThanMinutes: sessionOpsConfig.staleArchiveAllAgeMinutes,
-                });
-                if (staleInfo && staleInfo.archived > 0) {
-                    console.log(`[AutoRecorder] Cleaned up ${staleInfo.archived} stale events for ${uniqueId} before new connection.`);
+                const shouldSkipStaleArchive = await this.shouldSkipPreconnectStaleArchive(uniqueId, sessionOpsConfig);
+
+                if (shouldSkipStaleArchive) {
                     await this.recordSessionMaintenanceEventSafe({
                         taskKey: 'preconnect_stale_archive',
                         triggerSource: 'preconnect-guard',
                         roomId: uniqueId,
-                        status: 'success',
-                        message: '新连接建立前已清理遗留未归档事件',
-                        summary: staleInfo,
+                        status: 'skipped',
+                        message: '房间仍处于续场窗口内，跳过开播前遗留事件拆场',
+                        summary: {
+                            resumeWindowMinutes: sessionOpsConfig.resumeWindowMinutes,
+                            reason: 'resume-window-guard',
+                        },
                         config: sessionOpsConfig,
                     });
+                } else {
+                    // If there are dangling events from a previous crash/restart > 1h ago, archive them now.
+                    const staleInfo = await manager.archiveStaleLiveEvents(uniqueId, {
+                        gapThresholdMinutes: sessionOpsConfig.staleGapThresholdMinutes,
+                        splitOlderThanMinutes: sessionOpsConfig.staleSplitAgeMinutes,
+                        archiveAllOlderThanMinutes: sessionOpsConfig.staleArchiveAllAgeMinutes,
+                    });
+                    if (staleInfo && staleInfo.archived > 0) {
+                        console.log(`[AutoRecorder] Cleaned up ${staleInfo.archived} stale events for ${uniqueId} before new connection.`);
+                        await this.recordSessionMaintenanceEventSafe({
+                            taskKey: 'preconnect_stale_archive',
+                            triggerSource: 'preconnect-guard',
+                            roomId: uniqueId,
+                            status: 'success',
+                            message: '新连接建立前已清理遗留未归档事件',
+                            summary: staleInfo,
+                            config: sessionOpsConfig,
+                        });
+
+                        const merged = await manager.consolidateRoomSessions(uniqueId, {
+                            lookbackHours: sessionOpsConfig.consolidationLookbackHours,
+                            gapMinutes: sessionOpsConfig.consolidationGapMinutes,
+                        });
+                        if (merged.mergedCount > 0) {
+                            await this.recordSessionMaintenanceEventSafe({
+                                taskKey: 'consolidate_recent_sessions',
+                                triggerSource: 'preconnect-inline',
+                                roomId: uniqueId,
+                                status: 'success',
+                                message: `开播前已即时合并 ${merged.mergedCount} 个碎片场次`,
+                                summary: merged,
+                                config: sessionOpsConfig,
+                            });
+                        }
+                    }
                 }
             } catch (err) {
                 console.error(`[AutoRecorder] Warning: Failed to check stale events for ${uniqueId}:`, err.message);
@@ -1575,6 +1647,7 @@ class AutoRecorder {
 
             await manager.tagEventsWithSession(uniqueId, sessionId, startIso);
             await manager.markRoomStatsDirty([uniqueId], 'auto-recorder-archive');
+            await invalidateRoomDetailCaches(uniqueId, [sessionId]);
             console.log(`[AutoRecorder] ✅ Session saved: ${sessionId}`);
             await this.recordSessionMaintenanceEventSafe({
                 taskKey: 'execute_archive_session',
@@ -1591,6 +1664,22 @@ class AutoRecorder {
                 },
                 config: sessionOpsConfig,
             });
+
+            const merged = await manager.consolidateRoomSessions(uniqueId, {
+                lookbackHours: sessionOpsConfig.consolidationLookbackHours,
+                gapMinutes: sessionOpsConfig.consolidationGapMinutes,
+            });
+            if (merged.mergedCount > 0) {
+                await this.recordSessionMaintenanceEventSafe({
+                    taskKey: 'consolidate_recent_sessions',
+                    triggerSource: 'disconnect-inline',
+                    roomId: uniqueId,
+                    status: 'success',
+                    message: `归档后已即时合并 ${merged.mergedCount} 个碎片场次`,
+                    summary: merged,
+                    config: sessionOpsConfig,
+                });
+            }
 
         } catch (err) {
             console.error(`[AutoRecorder] Error saving session: ${err?.message || err}`);

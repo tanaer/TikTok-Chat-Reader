@@ -64,6 +64,11 @@ const cacheService = require('./services/cacheService');
 const { disconnectRedisClient } = require('./services/redisClient');
 const liveStateService = require('./services/liveStateService');
 const {
+    buildRoomSessionsCacheKey,
+    buildArchivedStatsDetailCacheKey,
+    invalidateRoomDetailCaches,
+} = require('./services/roomDetailCacheService');
+const {
     prepareCustomerAnalysis,
     runCustomerAnalysis,
     normalizeAnalysisPayload,
@@ -541,14 +546,6 @@ function buildAllTimeLeaderboardsCacheKey(roomId) {
     return cacheService.buildCacheKey('room_detail', 'alltime_leaderboards', roomId);
 }
 
-function buildRoomSessionsCacheKey(roomId) {
-    return cacheService.buildCacheKey('room_detail', 'sessions', roomId);
-}
-
-function buildArchivedStatsDetailCacheKey(roomId, sessionId) {
-    return cacheService.buildCacheKey('room_detail', 'stats_detail', roomId, sessionId);
-}
-
 async function getCachedRoomSessions(roomId) {
     if (!roomId || !cacheService.isRoomCacheEnabled() || ROOM_SESSIONS_CACHE_TTL_MS <= 0) {
         return manager.getSessions(roomId);
@@ -575,15 +572,6 @@ async function getCachedArchivedStatsDetail(roomId, sessionId) {
     const data = await manager.getRoomDetailStats(roomId, sessionId);
     await cacheService.setJson(cacheKey, data, { ttlMs: ARCHIVED_STATS_DETAIL_CACHE_TTL_MS });
     return data;
-}
-
-async function invalidateRoomDetailCaches(roomId, sessionId = null) {
-    if (!roomId || !cacheService.isRoomCacheEnabled()) return;
-
-    await cacheService.del(buildRoomSessionsCacheKey(roomId));
-    if (sessionId) {
-        await cacheService.del(buildArchivedStatsDetailCacheKey(roomId, sessionId));
-    }
 }
 
 function normalizeRoomFilterCacheKey(roomFilter) {

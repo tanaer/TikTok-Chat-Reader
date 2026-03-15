@@ -7,6 +7,7 @@ const path = require('path');
 const { initDb, query, run, get, pool } = require('./db');
 const metricsService = require('./services/metricsService');
 const { getSchemeAConfig } = require('./services/featureFlagService');
+const { invalidateRoomDetailCaches } = require('./services/roomDetailCacheService');
 
 const PRICE_FILE = path.join(__dirname, 'prices.json');
 
@@ -826,6 +827,25 @@ class Manager {
         return result && result.oldest ? new Date(result.oldest).getTime() : null;
     }
 
+    async getOrphanEventBounds(roomId) {
+        await this.ensureDb();
+        const result = await get(`
+            SELECT
+                COUNT(*) as cnt,
+                MIN(timestamp) as oldest,
+                MAX(timestamp) as newest
+            FROM event
+            WHERE room_id = ? AND session_id IS NULL
+        `, [roomId]);
+
+        const eventCount = parseInt(result?.cnt, 10) || 0;
+        return {
+            eventCount,
+            oldestTimeMs: result?.oldest ? new Date(result.oldest).getTime() : null,
+            newestTimeMs: result?.newest ? new Date(result.newest).getTime() : null,
+        };
+    }
+
     // Tag all untagged events for a room with a session_id (called when ending session)
     async tagEventsWithSession(roomId, sessionId, startTime = null) {
         await this.ensureDb();
@@ -1085,9 +1105,57 @@ class Manager {
     }
 
     async _mergeSessionList(sessions, gapMs) {
-        if (sessions.length < 2) return 0;
+        const detail = await this._mergeSessionListDetailed(sessions, gapMs);
+        return detail.mergedCount;
+    }
+
+    async consolidateRoomSessions(roomId, options = {}) {
+        await this.ensureDb();
+        const normalizedRoomId = String(roomId || '').trim();
+        if (!normalizedRoomId) {
+            return { mergedCount: 0, roomId: normalizedRoomId, touchedSessionIds: [] };
+        }
+
+        const safeHours = Number.isFinite(Number(options.lookbackHours)) && Number(options.lookbackHours) > 0
+            ? Number(options.lookbackHours)
+            : 48;
+        const safeGapMinutes = Number.isFinite(Number(options.gapMinutes)) && Number(options.gapMinutes) > 0
+            ? Number(options.gapMinutes)
+            : 60;
+        const timeLimit = new Date(Date.now() - safeHours * 60 * 60 * 1000).toISOString();
+        const gapMs = safeGapMinutes * 60 * 1000;
+
+        const sessions = await query(`
+            SELECT s.session_id, s.room_id, s.created_at,
+                   MIN(e.timestamp) as start_time,
+                   MAX(e.timestamp) as end_time
+            FROM session s
+            LEFT JOIN event e ON s.session_id = e.session_id
+            WHERE s.room_id = ? AND s.created_at > ?
+            GROUP BY s.session_id, s.room_id, s.created_at
+            ORDER BY s.created_at ASC
+        `, [normalizedRoomId, timeLimit]);
+
+        const detail = await this._mergeSessionListDetailed(sessions, gapMs);
+        return {
+            mergedCount: detail.mergedCount,
+            roomId: normalizedRoomId,
+            lookbackHours: safeHours,
+            gapMinutes: safeGapMinutes,
+            touchedSessionIds: detail.touchedSessionIds,
+        };
+    }
+
+    async _mergeSessionListDetailed(sessions, gapMs) {
+        if (sessions.length < 2) {
+            return {
+                mergedCount: 0,
+                touchedSessionIds: [],
+            };
+        }
         let mergedCount = 0;
         let prev = sessions[0];
+        const touchedSessionIds = new Set();
 
         for (let i = 1; i < sessions.length; i++) {
             const curr = sessions[i];
@@ -1135,13 +1203,24 @@ class Manager {
                     prev.endTime = currEndTime;
                 }
                 mergedCount++;
+                touchedSessionIds.add(prevSessionId);
+                touchedSessionIds.add(currSessionId);
                 await this.markRoomStatsDirty([prev.room_id || prev.roomId], 'merge-sessions');
             } else {
                 // No merge, advance prev
                 prev = curr;
             }
         }
-        return mergedCount;
+
+        const normalizedRoomId = String(sessions[0]?.room_id || sessions[0]?.roomId || '').trim();
+        if (mergedCount > 0 && normalizedRoomId) {
+            await invalidateRoomDetailCaches(normalizedRoomId, Array.from(touchedSessionIds));
+        }
+
+        return {
+            mergedCount,
+            touchedSessionIds: Array.from(touchedSessionIds),
+        };
     }
 
     // Startup Cleanup: Archive any "live" events that are old (orphaned from crash)
@@ -5022,6 +5101,7 @@ class Manager {
                 WHERE room_id = ? AND session_id IS NULL AND timestamp <= ?
             `, [finalSessionId, roomId, lastT]);
             await this.markRoomStatsDirty([roomId], 'archive-stale-live-events');
+            await invalidateRoomDetailCaches(roomId, [finalSessionId]);
 
             return {
                 archived: staleEvents.length,
