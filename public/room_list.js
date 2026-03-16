@@ -13,7 +13,6 @@ let roomRenameJobPollTimer = null;
 let roomRenameJobPanelOpen = false;
 let selectedRoomRenameJobId = 0;
 let latestRoomRenameJobs = [];
-let roomListForceFreshToken = 0;
 const roomRenamePendingMap = new Map();
 const roomRenameInFlight = new Set();
 const roomRenameCompletedJobs = new Set();
@@ -398,7 +397,6 @@ async function refreshRoomRenameJobs(options = {}) {
         }
 
         if (shouldRefreshRoomList) {
-            queueFreshRoomListReload();
             renderRoomList();
         }
     } catch (error) {
@@ -467,10 +465,6 @@ function roomListShowToast(message, type = 'info') {
     } else {
         console.log(`[RoomList:${type}] ${message}`);
     }
-}
-
-function queueFreshRoomListReload() {
-    roomListForceFreshToken = Date.now();
 }
 
 
@@ -679,9 +673,10 @@ function renderRoomRow(r, index = 0) {
     </tr>`;
 }
 
-async function renderRoomList() {
+async function renderRoomList(options = {}) {
     const container = $('#roomListContainer');
     applyRoomSortButtonState();
+    const forceFresh = options.forceFresh === true;
 
     // Show loading indicator immediately
     container.html(`
@@ -693,20 +688,16 @@ async function renderRoomList() {
 
     try {
         // Build query string with pagination and search
-        const forceFreshToken = roomListForceFreshToken;
         const params = new URLSearchParams({
             page: roomListPage,
             limit: roomListLimit,
             search: roomListSearch,
             sort: roomListSort
         });
-        if (forceFreshToken) {
-            params.set('forceFresh', String(forceFreshToken));
+        if (forceFresh) {
+            params.set('forceFresh', '1');
         }
         const result = await $.get(`/api/rooms/stats?${params}`);
-        if (forceFreshToken && roomListForceFreshToken === forceFreshToken) {
-            roomListForceFreshToken = 0;
-        }
 
         // Fetch active recordings
         try {
@@ -729,7 +720,7 @@ async function renderRoomList() {
         <div class="col-span-full mb-4">
             <div class="flex gap-2 items-center justify-between flex-wrap">
                 <div class="flex gap-2 items-center flex-1">
-                    <button class="btn btn-sm btn-ghost" onclick="refreshRoomList()" title="刷新数据">
+                    <button class="btn btn-sm btn-ghost" onclick="refreshRoomList(true)" title="刷新数据">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
                     </button>
                     <input type="text" id="roomSearchInput" 
@@ -903,8 +894,8 @@ function stopRoomListAutoRefresh() {
 // });
 
 // Manual refresh function
-function refreshRoomList() {
-    renderRoomList();
+function refreshRoomList(forceFresh = false) {
+    renderRoomList({ forceFresh: forceFresh === true });
 }
 window.refreshRoomList = refreshRoomList;
 
@@ -1289,13 +1280,11 @@ window.renameRoom = async function (oldRoomId) {
         if (response.code === 'ROOM_ALREADY_MIGRATED') {
             toggleRoomRenameJobPanel(true);
             roomListShowToast(response.error || '原房间可能已完成迁移，请刷新列表确认', 'info');
-            queueFreshRoomListReload();
             renderRoomList();
             return;
         }
         if (response.code === 'ROOM_NOT_FOUND') {
             alert('该房间已不存在，可能已被删除或已完成迁移。请刷新列表后再试。');
-            queueFreshRoomListReload();
             renderRoomList();
             return;
         }
