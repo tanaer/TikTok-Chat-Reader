@@ -48,7 +48,9 @@ function saveRoomViewModePreference(mode) {
 
 roomListViewMode = loadRoomViewModePreference();
 
-const MONTHLY_GIFT_TOOLTIP = '自然月累计（从每月1日开始统计）；括号内按26天折算日均';
+const MONTHLY_EFFECTIVE_DAYS_BASELINE = 26;
+const MONTHLY_GIFT_TOOLTIP = `自然月累计（从每月1日开始统计）&#10;括号内为按本月有效日均推算的整月预估收入（按 ${MONTHLY_EFFECTIVE_DAYS_BASELINE} 个有效开播日估算）`;
+const DAILY_GIFT_TOOLTIP = '有效日均：仅统计单日开播超过 4 小时的日期，反映单个有效开播日的平均礼物值';
 
 // Column header tooltips for list view
 const COL_TIPS = {
@@ -56,8 +58,8 @@ const COL_TIPS = {
     visits:      '本场进入直播间的总人次',
     comments:    '本场弹幕总条数',
     giftNow:     '本场礼物总价值（钻石）',
-    giftMonth:   MONTHLY_GIFT_TOOLTIP,
-    giftDaily:   '有效日均：仅统计开播超过2小时的日期',
+    giftMonth:   `自然月累计（从每月1日开始统计）；括号内为按本月有效日均推算的整月预估收入（按 ${MONTHLY_EFFECTIVE_DAYS_BASELINE} 个有效开播日估算）`,
+    giftDaily:   DAILY_GIFT_TOOLTIP,
     giftEff:     '赚钱效率 = 礼物总价值 ÷ 进房人次，衡量单个观众的付费贡献',
     interact:    '话题度 = 弹幕数 ÷ 进房人次，衡量观众互动活跃程度',
     quality:     '账号质量 = 进房人次 ÷ 开播分钟数，衡量流量获取能力',
@@ -80,12 +82,28 @@ function thWithTip(label, tipKey, extraClass) {
         label + '<span class="opacity-30 text-[10px] font-normal">?</span></span></th>';
 }
 
-// Helper to format monthly total with daily average: "260（10）"
-// Total = current calendar month; average in parentheses = total / 26 (fixed divisor)
-const formatMonthlyWithAvg = (total) => {
-    const avg = Math.round(total / 26);
-    return `${total.toLocaleString()}（${avg.toLocaleString()}）`;
+function estimateFullMonthGift(monthlyValidDailyAvg, monthlyValidDays) {
+    const safeDailyAvg = Number(monthlyValidDailyAvg) || 0;
+    const safeValidDays = Number(monthlyValidDays) || 0;
+    if (safeValidDays <= 0 || safeDailyAvg <= 0) return 0;
+    return Math.round(safeDailyAvg * MONTHLY_EFFECTIVE_DAYS_BASELINE);
+}
+
+// Format monthly total with full-month projection: "260（520）"
+// Left = current month actual total; parentheses = estimated full-month income.
+const formatMonthlyWithEstimate = (total, monthlyValidDailyAvg, monthlyValidDays) => {
+    const safeTotal = Number(total) || 0;
+    const estimate = estimateFullMonthGift(monthlyValidDailyAvg, monthlyValidDays);
+    return `${safeTotal.toLocaleString()}（${estimate.toLocaleString()}）`;
 };
+
+function getValidDailyTitle(validDays) {
+    return `${DAILY_GIFT_TOOLTIP}&#10;有效天数：${validDays || 0} 天`;
+}
+
+function getMonthlyGiftTitle(monthlyValidDays) {
+    return `${MONTHLY_GIFT_TOOLTIP}&#10;本月有效天数：${monthlyValidDays || 0} 天`;
+}
 
 // Helper to format time ago in human-readable format (e.g., "3天前", "7天前", "1个月前")
 const formatTimeAgo = (dateStr) => {
@@ -541,12 +559,12 @@ function renderRoomCard(r, index = 0) {
                     <div class="stat-title text-[10px] uppercase tracking-wider">💎N</div>
                     <div class="stat-value text-sm text-warning font-mono">${(r.totalGiftValue || 0).toLocaleString()}</div>
                 </div>
-                <div class="stat p-2 place-items-center" title="${MONTHLY_GIFT_TOOLTIP}">
+                <div class="stat p-2 place-items-center" title="${getMonthlyGiftTitle(r.monthlyValidDays || 0)}">
                     <div class="stat-title text-[10px] uppercase tracking-wider">💎月</div>
-                    <div class="stat-value text-sm text-success font-mono">${formatMonthlyWithAvg(r.monthlyGiftValue || 0)}</div>
+                    <div class="stat-value text-sm text-success font-mono">${formatMonthlyWithEstimate(r.monthlyGiftValue || 0, r.monthlyValidDailyAvg || 0, r.monthlyValidDays || 0)}</div>
                 </div>
                 ${roomListSort.includes('daily_avg') ? `
-                <div class="stat p-2 place-items-center" title="有效日均 (开播>2h的日期)&#10;有效天数: ${r.validDays || 0}天">
+                <div class="stat p-2 place-items-center" title="${getValidDailyTitle(r.validDays || 0)}">
                     <div class="stat-title text-[10px] uppercase tracking-wider">💎日</div>
                     <div class="stat-value text-sm text-primary font-mono">${(r.validDailyAvg || 0).toLocaleString()}</div>
                 </div>
@@ -621,8 +639,8 @@ function renderRoomRow(r, index = 0) {
         <td class="p-2 text-center font-mono text-sm">${(r.totalVisits || 0).toLocaleString()}</td>
         <td class="p-2 text-center font-mono text-sm">${(r.totalComments || 0).toLocaleString()}</td>
         <td class="p-2 text-center font-mono text-sm text-warning">${(r.totalGiftValue || 0).toLocaleString()}</td>
-        <td class="p-2 text-center font-mono text-sm text-success" title="${MONTHLY_GIFT_TOOLTIP}">${formatMonthlyWithAvg(r.monthlyGiftValue || 0)}</td>
-        ${roomListSort.includes('daily_avg') ? `<td class="p-2 text-center font-mono text-sm text-primary" title="有效天数: ${r.validDays || 0}天">${(r.validDailyAvg || 0).toLocaleString()}</td>` : ''}
+        <td class="p-2 text-center font-mono text-sm text-success" title="${getMonthlyGiftTitle(r.monthlyValidDays || 0)}">${formatMonthlyWithEstimate(r.monthlyGiftValue || 0, r.monthlyValidDailyAvg || 0, r.monthlyValidDays || 0)}</td>
+        ${roomListSort.includes('daily_avg') ? `<td class="p-2 text-center font-mono text-sm text-primary" title="${getValidDailyTitle(r.validDays || 0)}">${(r.validDailyAvg || 0).toLocaleString()}</td>` : ''}
         <td class="p-2 text-center">
             <span class="badge badge-warning badge-sm">💰${r.giftEfficiency || 0}</span>
         </td>
