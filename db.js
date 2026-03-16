@@ -6,6 +6,9 @@ require('dotenv').config();
 const { Pool } = require('pg');
 const path = require('path');
 
+const DB_BOOTSTRAP_SETTING_KEY = '_db_schema_bootstrap_version';
+const DB_BOOTSTRAP_VERSION = '2026-03-16-room-stats-monthly-valid-v1';
+
 // PostgreSQL connection configuration
 const pool = new Pool({
     host: process.env.PG_HOST || 'localhost',
@@ -118,6 +121,24 @@ async function initDb() {
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         `);
+        await pool.query(`UPDATE room SET is_monitor_enabled = 1 WHERE is_monitor_enabled IS NULL`);
+        await pool.query(`UPDATE room SET is_recording_enabled = 0 WHERE is_recording_enabled IS NULL`);
+
+        try {
+            const bootstrapState = await pool.query(
+                'SELECT value FROM settings WHERE key = $1 LIMIT 1',
+                [DB_BOOTSTRAP_SETTING_KEY]
+            );
+            const appliedVersion = bootstrapState.rows?.[0]?.value || '';
+            if (appliedVersion === DB_BOOTSTRAP_VERSION) {
+                console.log(`[DB] Schema bootstrap already at ${DB_BOOTSTRAP_VERSION}, skipping startup DDL.`);
+                isInitialized = true;
+                setupShutdownHandlers();
+                return;
+            }
+        } catch (bootstrapCheckError) {
+            console.warn('[DB] Bootstrap version check failed, continuing full init:', bootstrapCheckError.message);
+        }
 
 
         await pool.query(`
@@ -248,12 +269,16 @@ async function initDb() {
                 interact_efficiency NUMERIC(10,2) DEFAULT 0,
                 account_quality NUMERIC(10,2) DEFAULT 0,
                 monthly_gift_value BIGINT DEFAULT 0,
+                monthly_valid_daily_avg INTEGER DEFAULT 0,
+                monthly_valid_days INTEGER DEFAULT 0,
                 last_session_time TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT NOW()
             )
         `);
         // Migration: Add new columns if they don't exist
         await pool.query(`ALTER TABLE room_stats ADD COLUMN IF NOT EXISTS monthly_gift_value BIGINT DEFAULT 0`);
+        await pool.query(`ALTER TABLE room_stats ADD COLUMN IF NOT EXISTS monthly_valid_daily_avg INTEGER DEFAULT 0`);
+        await pool.query(`ALTER TABLE room_stats ADD COLUMN IF NOT EXISTS monthly_valid_days INTEGER DEFAULT 0`);
         await pool.query(`ALTER TABLE room_stats ADD COLUMN IF NOT EXISTS last_session_time TIMESTAMP`);
         // Indexes for fast sorting on pre-aggregated columns
         await pool.query(`CREATE INDEX IF NOT EXISTS idx_room_stats_daily_avg ON room_stats(valid_daily_avg DESC)`);
@@ -1001,7 +1026,14 @@ async function initDb() {
             console.warn('[DB] Migration note:', migErr.message);
         }
 
-            console.log('[DB] Tables and indexes created.');
+            await pool.query(
+                `INSERT INTO settings (key, value, updated_at)
+                 VALUES ($1, $2, NOW())
+                 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = NOW()`,
+                [DB_BOOTSTRAP_SETTING_KEY, DB_BOOTSTRAP_VERSION]
+            );
+
+            console.log(`[DB] Tables and indexes created. Bootstrap version=${DB_BOOTSTRAP_VERSION}`);
             isInitialized = true;
 
             // Setup graceful shutdown
@@ -1082,6 +1114,10 @@ async function seedDefaultData() {
  */
 function setupShutdownHandlers() {
     const shutdown = async (signal) => {
+        if (global.__TIKTOK_MONITOR_APP_SHUTTING_DOWN__) {
+            console.log(`[DB] Received ${signal}, app-level graceful shutdown is already handling pool teardown.`);
+            return;
+        }
         console.log(`[DB] Received ${signal}, closing connection pool...`);
         try {
             await pool.end();
@@ -1094,6 +1130,19 @@ function setupShutdownHandlers() {
 
     process.on('SIGINT', () => shutdown('SIGINT'));
     process.on('SIGTERM', () => shutdown('SIGTERM'));
+}
+
+async function closePool() {
+    try {
+        await pool.end();
+        console.log('[DB] Connection pool closed.');
+    } catch (e) {
+        const message = String(e?.message || e || '');
+        if (message.includes('Called end on pool more than once')) {
+            return;
+        }
+        throw e;
+    }
 }
 
 /**
@@ -1285,5 +1334,6 @@ module.exports = {
     saveDb,
     backupDb,
     toCamelCase,
+    closePool,
     pool
 };

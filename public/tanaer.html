@@ -904,6 +904,139 @@
                             </div>
 
                             <div class="card bg-base-100 shadow">
+                                <div class="card-body space-y-5">
+                                    <div class="flex flex-wrap items-start justify-between gap-3">
+                                        <div>
+                                            <h3 class="card-title">自动监控诊断</h3>
+                                            <p class="text-sm text-base-content/60 mt-1">直接查看自动扫描优先级、Key 池负载、房间冷却与近期失败，判断当前漏监测到底卡在哪一层。</p>
+                                        </div>
+                                        <div class="flex items-center gap-3">
+                                            <span id="auto-monitor-diagnostics-generated-at"
+                                                class="text-xs text-base-content/50">尚未加载</span>
+                                            <button class="btn btn-ghost btn-sm"
+                                                onclick="loadAutoMonitorDiagnostics()">刷新</button>
+                                        </div>
+                                    </div>
+
+                                    <div id="auto-monitor-diagnostics-stats"
+                                        class="grid grid-cols-1 sm:grid-cols-2 2xl:grid-cols-4 gap-4">
+                                        <div
+                                            class="rounded-box border border-base-300 bg-base-100 px-5 py-5 text-sm text-base-content/60">
+                                            正在同步自动监控运行态...</div>
+                                    </div>
+
+                                    <div id="auto-monitor-diagnostics-alerts" class="space-y-3">
+                                        <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                            正在分析自动监控瓶颈...</div>
+                                    </div>
+
+                                    <div
+                                        class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1.2fr)_minmax(18rem,0.8fr)] gap-6 items-start">
+                                        <div class="space-y-4">
+                                            <div class="rounded-[1.5rem] border border-base-300 bg-base-100 px-5 py-5">
+                                                <div class="mb-3">
+                                                    <h4 class="font-semibold">Key 池与全局建连状态</h4>
+                                                    <p class="text-xs text-base-content/55 mt-1">只返回掩码和计数，不暴露原始 Key。</p>
+                                                </div>
+                                                <div id="auto-monitor-diagnostics-keys"
+                                                    class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                    正在读取 Key 池运行态...</div>
+                                            </div>
+                                        </div>
+
+                                        <div class="space-y-4">
+                                            <div class="rounded-[1.5rem] border border-base-300 bg-base-100 px-5 py-5">
+                                                <div class="mb-3">
+                                                    <h4 class="font-semibold">扫描优先级分层</h4>
+                                                    <p class="text-xs text-base-content/55 mt-1">用来确认当前扫描预算主要分配给了哪些房间。</p>
+                                                </div>
+                                                <div id="auto-monitor-diagnostics-buckets"
+                                                    class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                                                    <div
+                                                        class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                        正在读取分层数据...</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-1 2xl:grid-cols-2 gap-6 items-start">
+                                        <div class="rounded-[1.5rem] border border-base-300 bg-base-100 px-5 py-5">
+                                            <div class="mb-3">
+                                                <h4 class="font-semibold">当前最高优先级房间</h4>
+                                                <p class="text-xs text-base-content/55 mt-1">这些房间最应该在当前时段优先探活或建连。</p>
+                                            </div>
+                                            <div id="auto-monitor-diagnostics-hot-rooms">
+                                                <div
+                                                    class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                    正在读取热点房间...</div>
+                                            </div>
+                                        </div>
+
+                                        <div class="rounded-[1.5rem] border border-base-300 bg-base-100 px-5 py-5">
+                                            <div class="mb-3">
+                                                <h4 class="font-semibold">被时段退避的房间</h4>
+                                                <p class="text-xs text-base-content/55 mt-1">这些房间不是没监控，而是根据历史开播时段暂时降低了扫描频率。</p>
+                                            </div>
+                                            <div id="auto-monitor-diagnostics-schedule-cooldowns">
+                                                <div
+                                                    class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                    正在读取时段退避...</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="grid grid-cols-1 2xl:grid-cols-2 gap-6 items-start">
+                                        <div class="rounded-[1.5rem] border border-base-300 bg-base-100 px-5 py-5">
+                                            <div class="mb-3">
+                                                <h4 class="font-semibold">连接冷却中的房间</h4>
+                                                <p class="text-xs text-base-content/55 mt-1">用于确认当前是否被上游限流、房间号解析失败或建连重试拉长了恢复时间。</p>
+                                            </div>
+                                            <div id="auto-monitor-diagnostics-connect-cooldowns">
+                                                <div
+                                                    class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                    正在读取连接冷却列表...</div>
+                                            </div>
+                                        </div>
+
+                                        <div class="rounded-[1.5rem] border border-base-300 bg-base-100 px-5 py-5">
+                                            <div class="mb-3">
+                                                <h4 class="font-semibold">连续失败房间</h4>
+                                                <p class="text-xs text-base-content/55 mt-1">用于快速盯住反复解析失败、反复重试但未恢复的房间。</p>
+                                            </div>
+                                            <div id="auto-monitor-diagnostics-failure-rooms">
+                                                <div
+                                                    class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                    正在读取失败房间...</div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="rounded-[1.5rem] border border-base-300 bg-base-100 px-5 py-5">
+                                        <div class="mb-3">
+                                            <h4 class="font-semibold">短期动态画像</h4>
+                                            <p class="text-xs text-base-content/55 mt-1">只记录最近证据，不做永久白名单。用于识别“探活常被拦，但近期直连仍可达”的房间，并随时间自动衰减。</p>
+                                        </div>
+                                        <div id="auto-monitor-diagnostics-dynamic-profiles">
+                                            <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                正在读取动态画像...</div>
+                                        </div>
+                                    </div>
+
+                                    <div class="rounded-[1.5rem] border border-base-300 bg-base-100 px-5 py-5">
+                                        <div class="mb-3">
+                                            <h4 class="font-semibold">近期失败记录</h4>
+                                            <p class="text-xs text-base-content/55 mt-1">看最近几次到底是 live 页面抓不到、房间号解析失败，还是连接启动被限流。</p>
+                                        </div>
+                                        <div id="auto-monitor-diagnostics-recent-failures" class="space-y-3">
+                                            <div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">
+                                                正在读取近期失败记录...</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="card bg-base-100 shadow">
                                 <div class="card-body">
                                     <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
                                         <div>

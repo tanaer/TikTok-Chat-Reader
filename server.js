@@ -19,6 +19,7 @@ const { router: userManagementRouter, startPeriodicTasks } = require('./routes/i
 const { optionalAuth, authenticate, requireAdmin, requireAdminPermission, hasAdminPermission } = require('./middleware/auth');
 const { checkRoomQuota, getUserQuota } = require('./middleware/quota');
 const db = require('./db');
+const { closePool } = require('./db');
 const {
     PROMPT_TEMPLATE_PREFIX,
     getPromptTemplate,
@@ -111,6 +112,12 @@ const ADMIN_ASYNC_JOB_WEB_FALLBACK_INTERVAL_MS = 5000;
 const ADMIN_ASYNC_JOB_WEB_FALLBACK_STARTUP_DELAY_MS = 2000;
 const ADMIN_ASYNC_JOB_WEB_FALLBACK_MAX_JOBS = 2;
 const ADMIN_ASYNC_JOB_WEB_FALLBACK_RECOVER_LIMIT = 2;
+const ROOM_LIST_LIVE_FALLBACK_WINDOW_MS = 2 * 60 * 1000;
+const ROOM_LIST_LIVE_FALLBACK_CACHE_TTL_MS = 15 * 1000;
+let recentLiveEventFallbackCache = {
+    roomIds: [],
+    expiresAt: 0,
+};
 
 function getEffectiveRecordingAccessConfig() {
     const accessConfig = getRecordingAccessConfig();
@@ -497,6 +504,7 @@ async function checkRoomOwnership(req, roomId) {
 
 const app = express();
 app.locals.refreshSchemeARuntimeConfig = refreshSchemeARuntimeConfig;
+global.__TIKTOK_MONITOR_APP_MANAGES_SHUTDOWN__ = true;
 const httpServer = createServer(app);
 
 // Start Auto Recorder (Dynamic interval from DB)
@@ -736,7 +744,8 @@ async function getRoomListCacheVersion() {
 }
 
 async function readRoomListCache(endpoint, req, params = {}) {
-    const forceFresh = Boolean(req?.query?.forceFresh);
+    const rawForceFresh = req?.query?.forceFresh;
+    const forceFresh = rawForceFresh === '1' || rawForceFresh === 'true' || rawForceFresh === 1 || rawForceFresh === true;
     const cacheVersion = await getRoomListCacheVersion();
     const cacheKey = buildRoomListCacheKey(endpoint, req, params, cacheVersion);
 
@@ -790,13 +799,34 @@ async function invalidateRoomListCaches(reason = 'manual') {
 }
 
 async function getEffectiveLiveRoomIds() {
+    const trackedRoomIdSet = new Set(autoRecorder.getTrackedRoomIds());
     const liveRoomIdSet = new Set(autoRecorder.getLiveRoomIds());
+    const precheckedLiveRoomIds = typeof autoRecorder.getPrecheckedLiveRoomIds === 'function'
+        ? autoRecorder.getPrecheckedLiveRoomIds()
+        : [];
+
+    for (const roomId of precheckedLiveRoomIds) {
+        const normalizedRoomId = String(roomId || '').trim();
+        if (!normalizedRoomId) continue;
+        liveRoomIdSet.add(normalizedRoomId);
+    }
 
     if (liveStateService.isLiveStateEnabled()) {
         const redisLiveRoomIds = await liveStateService.listLiveRoomIds();
         for (const roomId of redisLiveRoomIds) {
-            if (roomId) liveRoomIdSet.add(roomId);
+            const normalizedRoomId = String(roomId || '').trim();
+            if (!normalizedRoomId) continue;
+            if (trackedRoomIdSet.has(normalizedRoomId) && autoRecorder.isConnectionUsable(normalizedRoomId)) continue;
+            liveRoomIdSet.add(normalizedRoomId);
         }
+    }
+
+    const fallbackLiveRoomIds = await getRecentLiveEventFallbackRoomIds();
+    for (const roomId of fallbackLiveRoomIds) {
+        const normalizedRoomId = String(roomId || '').trim();
+        if (!normalizedRoomId || liveRoomIdSet.has(normalizedRoomId)) continue;
+        if (trackedRoomIdSet.has(normalizedRoomId) && autoRecorder.isConnectionUsable(normalizedRoomId)) continue;
+        liveRoomIdSet.add(normalizedRoomId);
     }
 
     return Array.from(liveRoomIdSet);
@@ -831,16 +861,63 @@ async function getEffectiveRoomLiveFlag(roomId) {
     const normalizedRoomId = String(roomId || '').trim();
     if (!normalizedRoomId) return false;
 
-    if (autoRecorder.getLiveRoomIds().includes(normalizedRoomId)) {
+    if (typeof autoRecorder.isRoomPrecheckedLive === 'function' && autoRecorder.isRoomPrecheckedLive(normalizedRoomId)) {
         return true;
     }
 
+    const trackedRoomIdSet = new Set(autoRecorder.getTrackedRoomIds());
+    const liveRoomIdSet = new Set(autoRecorder.getLiveRoomIds());
+    if (trackedRoomIdSet.has(normalizedRoomId)) {
+        if (autoRecorder.isConnectionUsable(normalizedRoomId)) {
+            return liveRoomIdSet.has(normalizedRoomId);
+        }
+    }
+
     if (!liveStateService.isLiveStateEnabled()) {
-        return false;
+        return isRoomRecentlyActiveByEvents(normalizedRoomId);
     }
 
     const liveState = await liveStateService.getLiveState(normalizedRoomId);
-    return liveStateService.isRoomLive(liveState);
+    if (liveStateService.isRoomLive(liveState)) {
+        return true;
+    }
+
+    return isRoomRecentlyActiveByEvents(normalizedRoomId);
+}
+
+async function getRecentLiveEventFallbackRoomIds() {
+    if (recentLiveEventFallbackCache.expiresAt > Date.now()) {
+        return recentLiveEventFallbackCache.roomIds;
+    }
+
+    const recentSince = new Date(Date.now() - ROOM_LIST_LIVE_FALLBACK_WINDOW_MS).toISOString();
+    const rows = await db.all(
+        `SELECT DISTINCT room_id
+         FROM event
+         WHERE session_id IS NULL
+           AND timestamp >= ?
+         ORDER BY room_id ASC`,
+        [recentSince]
+    );
+
+    const roomIds = rows
+        .map((row) => String(row.roomId || row.room_id || '').trim())
+        .filter(Boolean);
+
+    recentLiveEventFallbackCache = {
+        roomIds,
+        expiresAt: Date.now() + ROOM_LIST_LIVE_FALLBACK_CACHE_TTL_MS,
+    };
+
+    return roomIds;
+}
+
+async function isRoomRecentlyActiveByEvents(roomId) {
+    const normalizedRoomId = String(roomId || '').trim();
+    if (!normalizedRoomId) return false;
+
+    const liveRoomIds = await getRecentLiveEventFallbackRoomIds();
+    return liveRoomIds.includes(normalizedRoomId);
 }
 
 function buildRoomListMetricContext(endpoint, req, params = {}) {
@@ -1060,17 +1137,28 @@ io.on('connection', (socket) => {
         subscribedRoomId = uniqueId;
 
         // Check if AutoRecorder is already connected to this room
-        if (autoRecorder.isConnected(uniqueId)) {
+        if (autoRecorder.isConnectionUsable(uniqueId)) {
             console.log(`[Socket] Room ${uniqueId} already connected via AutoRecorder, subscribing to events`);
             const wrapper = autoRecorder.getConnection(uniqueId);
             subscribeToWrapper(socket, wrapper, uniqueId);
-            socket.emit('tiktokConnected', { roomId: uniqueId, alreadyConnected: true });
+            const state = autoRecorder.getConnectionState(uniqueId) || {
+                uniqueId,
+                roomId: null,
+                liveValidated: false,
+                isLive: false,
+                wsConnected: false,
+            };
+            socket.emit('tiktokConnected', {
+                ...state,
+                uniqueId,
+                alreadyConnected: true,
+            });
             return;
         }
 
         // Start recording via AutoRecorder (runs independently of socket)
         try {
-            socket.emit('tiktokConnecting', { roomId: uniqueId });
+            socket.emit('tiktokConnecting', { uniqueId });
             const result = await autoRecorder.startRoom(uniqueId);
 
             // Subscribe to events
@@ -1078,7 +1166,10 @@ io.on('connection', (socket) => {
             if (wrapper) {
                 subscribeToWrapper(socket, wrapper, uniqueId);
             }
-            socket.emit('tiktokConnected', result.state);
+            socket.emit('tiktokConnected', {
+                uniqueId,
+                ...(result.state || {}),
+            });
         } catch (err) {
             // Clear subscriptions on failure to prevent receiving wrong room's events
             eventListeners = [];
@@ -1278,7 +1369,7 @@ app.post('/api/settings', authenticate, requireAdmin, requireAdminPermission('se
         // Refresh Euler API keys if they were updated
         if (settings.euler_keys !== undefined) {
             const dbSettings = await manager.getAllSettings();
-            keyManager.refreshKeys(dbSettings);
+            await keyManager.refreshKeys(dbSettings);
         }
         // Reset email transporter if SMTP settings changed
         if (Object.keys(settings).some(k => k.startsWith('smtp_') || k === 'email_verification_enabled')) {
@@ -1306,7 +1397,7 @@ app.post('/api/config', authenticate, requireAdmin, requireAdminPermission('sett
         // Refresh Euler API keys if they were updated
         if (settings.euler_keys !== undefined) {
             const dbSettings = await manager.getAllSettings();
-            keyManager.refreshKeys(dbSettings);
+            await keyManager.refreshKeys(dbSettings);
         }
         // Reset email transporter if SMTP settings changed
         if (Object.keys(settings).some(k => k.startsWith('smtp_') || k === 'email_verification_enabled')) {
@@ -4507,6 +4598,12 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
             if (isMonitorEnabled === false || isMonitorEnabled === 0 || isMonitorEnabled === '0') {
                 console.log(`[API] Room ${roomId} monitor disabled. Triggering immediate disconnect...`);
                 await autoRecorder.disconnectRoom(roomId);
+            } else if (room?.is_monitor_enabled !== 0) {
+                autoRecorder.requestImmediateCheck({
+                    roomId,
+                    name: room?.name || roomId,
+                    isMonitorEnabled: room?.is_monitor_enabled,
+                }, 'admin-room-upsert');
             }
 
             await invalidateRoomListCaches('admin room update');
@@ -4596,6 +4693,12 @@ app.post('/api/rooms', optionalAuth, async (req, res) => {
             );
             console.log(`[API] User ${req.user.id} added new room copy: ${roomId}`);
         }
+
+        autoRecorder.requestImmediateCheck({
+            roomId,
+            name: name || roomId,
+            isMonitorEnabled: 1,
+        }, existingRoom ? 'member-room-restore' : 'member-room-create');
 
         await invalidateRoomListCaches('member room upsert');
         res.json({ success: true, room: { room_id: roomId, name: alias || roomId } });
@@ -5439,6 +5542,7 @@ httpServer.listen(PORT, async () => {
     console.log(`Server started on http://localhost:${PORT}`);
 
     await db.initDb();
+    await keyManager.loadFromDb();
     await refreshSchemeARuntimeConfig('startup-db-sync');
     await repairCriticalPromptTemplates().catch((err) => {
         console.error('[AI Prompt] Critical template repair skipped:', err.message);
@@ -5609,21 +5713,29 @@ httpServer.listen(PORT, async () => {
 // Graceful shutdown handling - save all active recordings before exit
 async function gracefulShutdown(signal) {
     console.log(`\n[Server] Received ${signal}, initiating graceful shutdown...`);
+    if (global.__TIKTOK_MONITOR_APP_SHUTTING_DOWN__) {
+        console.log('[Server] Graceful shutdown already in progress.');
+        return;
+    }
+    global.__TIKTOK_MONITOR_APP_SHUTTING_DOWN__ = true;
 
     try {
         await stopManagedWorkers(signal);
 
         // Stop all active recordings and save their state
         await recordingManager.stopAllRecordings();
+        await autoRecorder.saveConnectionState();
 
         liveStateService.shutdownLiveStateService();
         await disconnectRedisClient();
-
-        // Close HTTP server
-        httpServer.close(() => {
-            console.log('[Server] HTTP server closed.');
-            process.exit(0);
+        await new Promise((resolve) => {
+            httpServer.close(() => {
+                console.log('[Server] HTTP server closed.');
+                resolve();
+            });
         });
+        await closePool();
+        process.exit(0);
 
         // Force exit after 10 seconds if server doesn't close
         setTimeout(() => {

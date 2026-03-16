@@ -71,6 +71,15 @@ router.post('/', authenticate, checkRoomQuota, [
             );
         }
 
+        const autoRecorder = req.app?.locals?.autoRecorder;
+        if (autoRecorder?.requestImmediateCheck) {
+            autoRecorder.requestImmediateCheck({
+                roomId,
+                name: alias || roomId,
+                isMonitorEnabled: 1,
+            }, deletedAssoc ? 'user-room-restore' : 'user-room-create');
+        }
+
         res.status(201).json({
             message: '房间添加成功',
             roomId,

@@ -265,6 +265,7 @@ let currentAdminAiWorkDetailId = null;
 let sessionMaintenanceOverviewCache = null;
 let sessionMaintenanceConfigCache = null;
 let sessionMaintenanceLogsCache = [];
+let autoMonitorDiagnosticsCache = null;
 let adminAccessProfile = null;
 let adminPermissionGroups = [];
 let allAdminPermissions = [];
@@ -1646,6 +1647,395 @@ function renderSessionMaintenanceConfigForm() {
     `).join('');
 }
 
+function formatAutoMonitorBucketLabel(bucket) {
+    const normalized = String(bucket || 'other');
+    if (normalized === 'live') return { label: '已预确认直播', badge: 'badge-success' };
+    if (normalized === 'scheduled-hot') return { label: '热点时段', badge: 'badge-warning' };
+    if (normalized === 'scheduled-warm') return { label: '近热点时段', badge: 'badge-info' };
+    if (normalized === 'cold') return { label: '冷房间', badge: 'badge-ghost' };
+    if (normalized === 'invalid') return { label: '无效配置', badge: 'badge-error' };
+    return { label: '其他', badge: 'badge-neutral' };
+}
+
+function formatAutoMonitorDiagnosisLevel(level) {
+    const normalized = String(level || 'info').toLowerCase();
+    if (normalized === 'critical') return { cls: 'alert-error', label: '关键' };
+    if (normalized === 'warning') return { cls: 'alert-warning', label: '警告' };
+    return { cls: 'alert-info', label: '说明' };
+}
+
+function formatAutoMonitorDuration(value, fallback = '—') {
+    const durationMs = Number(value);
+    if (!Number.isFinite(durationMs) || durationMs <= 0) return fallback;
+    if (durationMs < 1000) return `${durationMs}ms`;
+    const totalSeconds = Math.round(durationMs / 1000);
+    if (totalSeconds < 60) return `${totalSeconds}s`;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes < 60) return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+    const hours = Math.floor(minutes / 60);
+    const remainMinutes = minutes % 60;
+    return remainMinutes > 0 ? `${hours}h ${remainMinutes}m` : `${hours}h`;
+}
+
+function formatAutoMonitorReason(reason) {
+    const normalized = String(reason || '').trim();
+    if (!normalized) return '—';
+    return normalized
+        .replace(/-/g, ' ')
+        .replace(/_/g, ' ')
+        .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function formatAutoMonitorRanges(ranges) {
+    if (!Array.isArray(ranges) || ranges.length === 0) return '—';
+    return ranges.slice(0, 3).map((item) => {
+        const start = Number(item?.startHour);
+        const end = Number(item?.endHour);
+        if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+        const prefix = item?.wrapsMidnight ? '跨日 ' : '';
+        return `${prefix}${String(start).padStart(2, '0')}:00-${String(end).padStart(2, '0')}:59`;
+    }).filter(Boolean).join(' / ');
+}
+
+function formatAutoMonitorDynamicProfile(profile) {
+    if (!profile || typeof profile !== 'object') return '';
+    const score = Number(profile.score || 0);
+    const successCount = Number(profile.successCount || 0);
+    const failureCount = Number(profile.failureCount || 0);
+    const expiresAt = profile.expiresAt ? formatSessionMaintenanceDateTime(profile.expiresAt) : '—';
+    const probeError = profile.lastProbeError ? ` · 最近探活拦截 ${String(profile.lastProbeError).slice(0, 60)}` : '';
+    return `动态画像 ${score} 分 · 成功 ${successCount} / 失败 ${failureCount} · 过期 ${expiresAt}${probeError}`;
+}
+
+function renderAutoMonitorRoomList(containerId, items, emptyText, options = {}) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const rows = Array.isArray(items) ? items : [];
+    if (rows.length === 0) {
+        container.innerHTML = `<div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">${escapeHtml(emptyText)}</div>`;
+        return;
+    }
+
+    const showPreferredRanges = options.showPreferredRanges === true;
+    const showScheduleCooldown = options.showScheduleCooldown === true;
+    const showConnectCooldown = options.showConnectCooldown === true;
+    const showFailures = options.showFailures === true;
+
+    container.innerHTML = `
+        <div class="overflow-x-auto">
+            <table class="table table-sm">
+                <thead>
+                    <tr>
+                        <th>房间</th>
+                        <th>优先级</th>
+                        <th>状态</th>
+                        <th>原因</th>
+                        ${showPreferredRanges ? '<th>高频时间窗</th>' : ''}
+                        ${showScheduleCooldown ? '<th>下次调度</th>' : ''}
+                        ${showConnectCooldown ? '<th>连接冷却</th>' : ''}
+                        ${showFailures ? '<th>连续失败</th>' : ''}
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map((item) => {
+        const bucketMeta = formatAutoMonitorBucketLabel(item.bucket);
+        const reasons = Array.isArray(item.reasons) && item.reasons.length > 0
+            ? item.reasons.map(reason => `<span class="badge badge-ghost badge-xs">${escapeHtml(reason)}</span>`).join(' ')
+            : '—';
+        const stateParts = [];
+        if (item.hasActiveConnection) stateParts.push('<span class="badge badge-success badge-xs">已跟踪</span>');
+        if (item.usableConnection) stateParts.push('<span class="badge badge-success badge-xs">连接可用</span>');
+        if (item.isConnecting) stateParts.push('<span class="badge badge-warning badge-xs">连接中</span>');
+        if (item.isDisconnecting) stateParts.push('<span class="badge badge-warning badge-xs">断开中</span>');
+        if (item.dynamicProfile?.profileType === 'blocked_probe_connectable') stateParts.push('<span class="badge badge-info badge-xs">动态画像</span>');
+        if (stateParts.length === 0) stateParts.push('<span class="badge badge-ghost badge-xs">待扫描</span>');
+        return `
+                        <tr>
+                            <td class="align-top min-w-[10rem]">
+                                <div class="font-medium">${escapeHtml(String(item.roomId || '—'))}</div>
+                                <div class="text-xs text-base-content/50 mt-1">${escapeHtml(String(item.name || '—'))}</div>
+                            </td>
+                            <td class="align-top whitespace-nowrap">
+                                <div class="font-semibold">${escapeHtml(String(item.score ?? '—'))}</div>
+                                <div class="text-xs text-base-content/50 mt-1">手工优先级 ${escapeHtml(String(item.priorityValue ?? 0))}</div>
+                            </td>
+                            <td class="align-top min-w-[8rem]">
+                                <div><span class="badge ${bucketMeta.badge} badge-sm">${escapeHtml(bucketMeta.label)}</span></div>
+                                <div class="flex flex-wrap gap-1 mt-2">${stateParts.join('')}</div>
+                            </td>
+                            <td class="align-top min-w-[14rem] leading-6">${reasons}${item.dynamicProfile ? `<div class="text-xs text-base-content/50 mt-2 leading-6">${escapeHtml(formatAutoMonitorDynamicProfile(item.dynamicProfile))}</div>` : ''}</td>
+                            ${showPreferredRanges ? `<td class="align-top text-xs leading-6 min-w-[11rem]">${escapeHtml(formatAutoMonitorRanges(item.preferredRanges))}<div class="text-base-content/50 mt-1">样本 ${escapeHtml(String(item.profileSampleSessions || 0))} 场</div></td>` : ''}
+                            ${showScheduleCooldown ? `<td class="align-top text-xs whitespace-nowrap">${escapeHtml(formatAutoMonitorDuration(item.scheduleCooldownRemainingMs))}</td>` : ''}
+                            ${showConnectCooldown ? `<td class="align-top text-xs min-w-[10rem]">${escapeHtml(formatAutoMonitorDuration(item.connectCooldownRemainingMs))}<div class="text-base-content/50 mt-1">${escapeHtml(formatAutoMonitorReason(item.connectCooldownReason))}</div></td>` : ''}
+                            ${showFailures ? `<td class="align-top text-xs whitespace-nowrap">${escapeHtml(String(item.failureCount || 0))}</td>` : ''}
+                        </tr>
+                    `;
+    }).join('')}
+                </tbody>
+            </table>
+        </div>
+    `;
+}
+
+function renderAutoMonitorFailures(containerId, items, emptyText) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const rows = Array.isArray(items) ? items : [];
+    if (rows.length === 0) {
+        container.innerHTML = `<div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">${escapeHtml(emptyText)}</div>`;
+        return;
+    }
+
+    container.innerHTML = rows.map((item) => `
+        <div class="rounded-2xl border border-base-300 bg-base-200/60 px-4 py-4">
+            <div class="flex flex-wrap items-center justify-between gap-2">
+                <div class="font-medium">${escapeHtml(String(item.roomId || '未知房间'))}</div>
+                <div class="flex items-center gap-2">
+                    <span class="badge badge-outline badge-sm">${escapeHtml(formatAutoMonitorReason(item.category))}</span>
+                    <span class="text-xs text-base-content/50">${escapeHtml(formatSessionMaintenanceDateTime(item.recordedAt))}</span>
+                </div>
+            </div>
+            <div class="text-sm text-base-content/75 mt-2 leading-6">${escapeHtml(String(item.errorMessage || '暂无错误详情'))}</div>
+            <div class="text-xs text-base-content/50 mt-2">
+                阶段：${escapeHtml(formatAutoMonitorReason(item.stage))} · 原因：${escapeHtml(formatAutoMonitorReason(item.reason))}${item.source ? ` · 来源：${escapeHtml(String(item.source))}` : ''}
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderAutoMonitorDiagnostics() {
+    const overview = autoMonitorDiagnosticsCache || {};
+    const summaryWrap = document.getElementById('auto-monitor-diagnostics-stats');
+    const diagnosisWrap = document.getElementById('auto-monitor-diagnostics-alerts');
+    const keyWrap = document.getElementById('auto-monitor-diagnostics-keys');
+    const bucketsWrap = document.getElementById('auto-monitor-diagnostics-buckets');
+    const generatedAtWrap = document.getElementById('auto-monitor-diagnostics-generated-at');
+    const dynamicProfilesWrap = document.getElementById('auto-monitor-diagnostics-dynamic-profiles');
+
+    if (generatedAtWrap) {
+        generatedAtWrap.textContent = overview.generatedAt
+            ? `更新于 ${formatSessionMaintenanceDateTime(overview.generatedAt)}`
+            : '尚未加载';
+    }
+
+    if (summaryWrap) {
+        const summary = overview.summary || {};
+        const cards = [
+            {
+                title: '启用监控房间',
+                value: summary.enabledRooms ?? '—',
+                desc: `可立即尝试 ${summary.eligibleRooms ?? 0} 个 · 时段退避 ${summary.scheduleSkippedRooms ?? 0} 个`,
+            },
+            {
+                title: '有效连接',
+                value: `${summary.usableConnections ?? 0}/${summary.activeConnections ?? 0}`,
+                desc: `预确认直播 ${summary.precheckedLiveRooms ?? 0} 个 · 连接中 ${summary.connectingRooms ?? 0} 个`,
+            },
+            {
+                title: '预探活并发',
+                value: summary.precheckConcurrency ?? '—',
+                desc: `扫描间隔 ${summary.scanIntervalMinutes ?? '—'} 分钟 · Key 画像覆盖 ${summary.scheduleProfileCoverage ?? 0}%`,
+            },
+            {
+                title: '连接冷却房间',
+                value: summary.connectCooldownRooms ?? 0,
+                desc: `连续失败 ${summary.failureRooms ?? 0} 个 · 动态画像 ${summary.blockedProbeProfiles ?? 0} 个`,
+            },
+        ];
+        summaryWrap.innerHTML = cards.map(card => `
+            <div class="rounded-[1.4rem] border border-base-300 bg-base-100 px-5 py-5 shadow-sm">
+                <div class="text-sm text-base-content/60">${escapeHtml(String(card.title))}</div>
+                <div class="text-3xl font-bold mt-3">${escapeHtml(String(card.value))}</div>
+                <div class="text-xs text-base-content/55 mt-2 leading-6">${escapeHtml(String(card.desc))}</div>
+            </div>
+        `).join('');
+    }
+
+    if (diagnosisWrap) {
+        const diagnosis = Array.isArray(overview.diagnosis) ? overview.diagnosis : [];
+        if (diagnosis.length === 0) {
+            diagnosisWrap.innerHTML = '<div class="alert alert-success py-3 text-sm">当前没有明显的系统级阻塞信号，自动监控链路处于可运行状态。</div>';
+        } else {
+            diagnosisWrap.innerHTML = diagnosis.map((item) => {
+                const meta = formatAutoMonitorDiagnosisLevel(item.level);
+                return `
+                    <div class="alert ${meta.cls} py-3 text-sm">
+                        <div>
+                            <div class="font-semibold">${escapeHtml(meta.label)}</div>
+                            <div class="mt-1 leading-6">${escapeHtml(String(item.text || ''))}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+    }
+
+    if (keyWrap) {
+        const keys = overview.keys || {};
+        const globalCooldown = overview.globalCooldown || {};
+        const samples = Array.isArray(keys.samples) ? keys.samples : [];
+        keyWrap.innerHTML = `
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+                <div class="rounded-2xl border border-base-300 bg-base-200/60 px-4 py-4">
+                    <div class="text-sm text-base-content/60">Key 池</div>
+                    <div class="text-xl font-semibold mt-2">${escapeHtml(String(keys.active ?? 0))}/${escapeHtml(String(keys.total ?? 0))}</div>
+                    <div class="text-xs text-base-content/55 mt-2">活跃 / 总数 · 冷却 ${escapeHtml(String(keys.disabled ?? 0))} 把</div>
+                </div>
+                <div class="rounded-2xl border border-base-300 bg-base-200/60 px-4 py-4">
+                    <div class="text-sm text-base-content/60">连接模式</div>
+                    <div class="text-xl font-semibold mt-2">${escapeHtml(String(keys.connectivityMode || 'unknown'))}</div>
+                    <div class="text-xs text-base-content/55 mt-2">最近路径 ${escapeHtml(String(keys.lastConnectPath || '—'))}</div>
+                </div>
+                <div class="rounded-2xl border border-base-300 bg-base-200/60 px-4 py-4">
+                    <div class="text-sm text-base-content/60">请求消耗</div>
+                    <div class="text-xl font-semibold mt-2">${escapeHtml(String(keys.roomLookupRequestCount ?? 0))} / ${escapeHtml(String(keys.liveCheckRequestCount ?? 0))}</div>
+                    <div class="text-xs text-base-content/55 mt-2">房间解析 / 判活请求</div>
+                </div>
+                <div class="rounded-2xl border border-base-300 bg-base-200/60 px-4 py-4">
+                    <div class="text-sm text-base-content/60">全局连接冷却</div>
+                    <div class="text-xl font-semibold mt-2">${globalCooldown.active ? escapeHtml(formatAutoMonitorDuration(globalCooldown.remainingMs)) : '无'}</div>
+                    <div class="text-xs text-base-content/55 mt-2">${escapeHtml(formatAutoMonitorReason(globalCooldown.reason))}</div>
+                </div>
+            </div>
+            <div class="mt-4 rounded-[1.25rem] border border-base-300 bg-base-100 px-4 py-4">
+                <div class="flex items-center justify-between gap-3 flex-wrap">
+                    <div>
+                        <div class="font-medium">最近活跃 Key 样本</div>
+                        <div class="text-xs text-base-content/55 mt-1">只展示掩码和运行计数，不返回原始 Key。</div>
+                    </div>
+                </div>
+                ${samples.length === 0 ? '<div class="text-sm text-base-content/60 mt-3">暂无运行中 Key 样本。</div>' : `
+                    <div class="overflow-x-auto mt-3">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr>
+                                    <th>Key</th>
+                                    <th>状态</th>
+                                    <th>选择 / 成功</th>
+                                    <th>房间解析 / 判活</th>
+                                    <th>最近错误</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${samples.map((item) => `
+                                    <tr>
+                                        <td class="align-top min-w-[11rem]">
+                                            <div class="font-medium">${escapeHtml(String(item.name || item.keyMasked || '未命名'))}</div>
+                                            <div class="text-xs text-base-content/50 mt-1">${escapeHtml(String(item.keyMasked || '—'))}</div>
+                                        </td>
+                                        <td class="align-top min-w-[8rem]">
+                                            ${item.isDisabled ? '<span class="badge badge-warning badge-sm">冷却中</span>' : '<span class="badge badge-success badge-sm">活跃</span>'}
+                                            <div class="text-xs text-base-content/50 mt-2">${escapeHtml(String(item.premiumRoomLookupState || 'unknown'))}</div>
+                                        </td>
+                                        <td class="align-top text-xs min-w-[9rem]">${escapeHtml(String(item.selectedCount || 0))} / ${escapeHtml(String(item.successCount || 0))}<div class="text-base-content/50 mt-1">${escapeHtml(formatSessionMaintenanceDateTime(item.lastConnectAt))}</div></td>
+                                        <td class="align-top text-xs min-w-[10rem]">${escapeHtml(String(item.roomLookupRequestCount || 0))} / ${escapeHtml(String(item.liveCheckRequestCount || 0))}<div class="text-base-content/50 mt-1">限流 ${escapeHtml(String(item.rateLimitCount || 0))} 次</div></td>
+                                        <td class="align-top text-xs min-w-[14rem] leading-6">${escapeHtml(String(item.lastError || '—'))}</td>
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+                `}
+            </div>
+        `;
+    }
+
+    if (bucketsWrap) {
+        const buckets = overview.buckets || {};
+        const bucketCards = [
+            { title: '已预确认直播', value: buckets.live ?? 0, desc: '刚通过探活或连接状态确认 live 的房间。' },
+            { title: '热点时段', value: buckets.scheduledHot ?? 0, desc: '当前时间正落在历史高概率开播窗口附近。' },
+            { title: '近热点时段', value: buckets.scheduledWarm ?? 0, desc: '接近历史时段，仍保持正常频率扫描。' },
+            { title: '冷房间', value: buckets.cold ?? 0, desc: '远离历史时段，会被自动退避扫描。' },
+        ];
+        bucketsWrap.innerHTML = bucketCards.map(item => `
+            <div class="rounded-2xl border border-base-300 bg-base-200/60 px-4 py-4">
+                <div class="text-sm text-base-content/60">${escapeHtml(item.title)}</div>
+                <div class="text-2xl font-semibold mt-2">${escapeHtml(String(item.value))}</div>
+                <div class="text-xs text-base-content/55 mt-2 leading-6">${escapeHtml(item.desc)}</div>
+            </div>
+        `).join('');
+    }
+
+    if (dynamicProfilesWrap) {
+        const dynamicProfiles = overview.dynamicProfiles || {};
+        const samples = Array.isArray(dynamicProfiles.samples) ? dynamicProfiles.samples : [];
+        if (samples.length === 0) {
+            dynamicProfilesWrap.innerHTML = '<div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">当前没有激活的短期动态画像。</div>';
+        } else {
+            dynamicProfilesWrap.innerHTML = `
+                <div class="overflow-x-auto">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr>
+                                <th>房间</th>
+                                <th>画像</th>
+                                <th>成功 / 失败</th>
+                                <th>最近证据</th>
+                                <th>过期时间</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${samples.map((item) => `
+                                <tr>
+                                    <td class="align-top min-w-[10rem]">
+                                        <div class="font-medium">${escapeHtml(String(item.roomId || '—'))}</div>
+                                        <div class="text-xs text-base-content/50 mt-1">${escapeHtml(String(item.source || 'runtime'))}</div>
+                                    </td>
+                                    <td class="align-top min-w-[10rem]">
+                                        <div class="font-semibold">${escapeHtml(String(item.score || 0))} 分</div>
+                                        <div class="text-xs text-base-content/50 mt-1">${escapeHtml(formatAutoMonitorReason(item.profileType || 'unknown'))}</div>
+                                    </td>
+                                    <td class="align-top text-xs whitespace-nowrap">
+                                        ${escapeHtml(String(item.successCount || 0))} / ${escapeHtml(String(item.failureCount || 0))}
+                                        <div class="text-base-content/50 mt-1">${escapeHtml(String(item.lastProbeError || '—').slice(0, 80))}</div>
+                                    </td>
+                                    <td class="align-top text-xs min-w-[10rem]">
+                                        <div>成功 ${escapeHtml(formatSessionMaintenanceDateTime(item.lastSuccessAt))}</div>
+                                        <div class="text-base-content/50 mt-1">失败 ${escapeHtml(formatSessionMaintenanceDateTime(item.lastFailureAt))}</div>
+                                    </td>
+                                    <td class="align-top text-xs whitespace-nowrap">${escapeHtml(formatSessionMaintenanceDateTime(item.expiresAt))}</td>
+                                </tr>
+                            `).join('')}
+                        </tbody>
+                    </table>
+                </div>
+            `;
+        }
+    }
+
+    renderAutoMonitorRoomList(
+        'auto-monitor-diagnostics-hot-rooms',
+        overview.hotRooms,
+        '当前没有需要立即优先扫描的房间。',
+        { showPreferredRanges: true }
+    );
+    renderAutoMonitorRoomList(
+        'auto-monitor-diagnostics-schedule-cooldowns',
+        overview.scheduleCooldownRooms,
+        '当前没有房间因为历史时段退避而被跳过。',
+        { showPreferredRanges: true, showScheduleCooldown: true }
+    );
+    renderAutoMonitorRoomList(
+        'auto-monitor-diagnostics-connect-cooldowns',
+        overview.connectCooldownRooms,
+        '当前没有房间处于连接冷却。',
+        { showConnectCooldown: true }
+    );
+    renderAutoMonitorRoomList(
+        'auto-monitor-diagnostics-failure-rooms',
+        overview.failureRooms,
+        '当前没有累计失败中的房间。',
+        { showFailures: true }
+    );
+    renderAutoMonitorFailures(
+        'auto-monitor-diagnostics-recent-failures',
+        overview.recentFailures,
+        '最近没有新的探活或建连失败记录。'
+    );
+}
+
 function renderSessionMaintenanceOverview() {
     const statsWrap = document.getElementById('session-maintenance-overview-stats');
     const overviewPanel = document.getElementById('session-maintenance-overview-panel');
@@ -1799,6 +2189,26 @@ async function loadSessionMaintenanceOverview() {
     }
 }
 
+async function loadAutoMonitorDiagnostics() {
+    const statsWrap = document.getElementById('auto-monitor-diagnostics-stats');
+    if (statsWrap && !autoMonitorDiagnosticsCache) {
+        statsWrap.innerHTML = '<div class="rounded-box bg-base-200/80 px-4 py-4 text-sm text-base-content/60">正在同步自动监控运行态...</div>';
+    }
+    try {
+        const res = await Auth.apiFetch('/api/admin/session-maintenance/auto-monitor-diagnostics');
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || '获取自动监控诊断失败');
+        autoMonitorDiagnosticsCache = data.diagnostics || data;
+        renderAutoMonitorDiagnostics();
+    } catch (err) {
+        console.error('Load auto monitor diagnostics error:', err);
+        const alertsWrap = document.getElementById('auto-monitor-diagnostics-alerts');
+        if (alertsWrap) {
+            alertsWrap.innerHTML = `<div class="rounded-box border border-error/30 bg-error/10 px-4 py-4 text-sm text-error">${escapeHtml(err.message || '获取自动监控诊断失败')}</div>`;
+        }
+    }
+}
+
 async function loadSessionMaintenanceConfig() {
     const form = document.getElementById('session-maintenance-config-form');
     if (form && !sessionMaintenanceConfigCache) {
@@ -1898,6 +2308,7 @@ async function loadSessionMaintenanceSection() {
     renderSessionMaintenanceHeroMeta();
     await Promise.allSettled([
         loadSessionMaintenanceOverview(),
+        loadAutoMonitorDiagnostics(),
         loadSessionMaintenanceConfig(),
         loadSessionMaintenanceLogs(),
     ]);

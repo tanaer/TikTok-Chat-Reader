@@ -6,6 +6,7 @@ require('dotenv').config();
 const { TikTokLiveConnection, SignConfig } = require('tiktok-live-connector');
 const { SocksProxyAgent } = require('socks-proxy-agent');
 const { EventEmitter } = require('events');
+const { getLivePageSnapshot } = require('./utils/tiktok_spider');
 
 // KeyManager for API key rotation
 const keyManager = require('./utils/keyManager');
@@ -36,6 +37,79 @@ function extractRoomStatus(payload) {
 
 function isStrictLiveStatus(status) {
     return Number(status) === 2;
+}
+
+function buildCompatibleRoomInfoFromHtml(htmlRoomInfo = {}) {
+    const user = htmlRoomInfo?.user || {};
+    const liveRoom = htmlRoomInfo?.liveRoom || {};
+    const roomId = String(user?.roomId || liveRoom?.roomId || '').trim() || null;
+    const status = Number(
+        liveRoom?.status
+        ?? user?.status
+        ?? htmlRoomInfo?.status
+        ?? 0
+    );
+
+    const owner = {
+        id: user?.id || null,
+        id_str: user?.id ? String(user.id) : null,
+        nickname: user?.nickname || '',
+        uniqueId: user?.uniqueId || '',
+        sec_uid: user?.secUid || '',
+    };
+
+    return {
+        status,
+        owner,
+        data: {
+            status,
+            user: {
+                ...user,
+                roomId: roomId || user?.roomId || '',
+            },
+            liveRoom: {
+                ...liveRoom,
+                roomId: roomId || liveRoom?.roomId || '',
+                status,
+            },
+            owner,
+        },
+        htmlFallback: true,
+        htmlRoomInfo,
+    };
+}
+
+function buildCachedRoomInfoStub(uniqueId, roomId) {
+    const normalizedRoomId = String(roomId || '').trim();
+    return {
+        status: 2,
+        owner: {
+            id: null,
+            id_str: null,
+            nickname: '',
+            uniqueId: uniqueId || '',
+            sec_uid: '',
+        },
+        data: {
+            status: 2,
+            user: {
+                uniqueId: uniqueId || '',
+                roomId: normalizedRoomId,
+            },
+            liveRoom: {
+                roomId: normalizedRoomId,
+                status: 2,
+            },
+            owner: {
+                id: null,
+                id_str: null,
+                nickname: '',
+                uniqueId: uniqueId || '',
+                sec_uid: '',
+            },
+        },
+        cachedRoomInfo: true,
+    };
 }
 
 
@@ -100,6 +174,7 @@ class TikTokConnectionWrapper extends EventEmitter {
         this.currentEulerKeySource = keySource;
         this.currentEulerKeyEntry = activeKeyEntry;
         this.lastConnectPath = 'unknown';
+        this.lastKnownRoomId = null;
 
         const legacyPremiumEnabled = keySource !== 'key_pool' && String(process.env.EULER_ENABLE_ROOM_LOOKUP_PREMIUM || '').trim().toLowerCase() === 'true';
         const selectedKeySupportsPremium = Boolean(activeKeyEntry && supportsPremiumRoomLookup(activeKeyEntry));
@@ -381,6 +456,17 @@ class TikTokConnectionWrapper extends EventEmitter {
                 errors.push(error);
             }
 
+            try {
+                const snapshot = await getLivePageSnapshot(resolvedUniqueId);
+                if (!snapshot?.roomId) {
+                    throw new Error('Failed to extract Room ID from live page snapshot.');
+                }
+                this.lastConnectPath = 'tiktok_html_snapshot';
+                return String(snapshot.roomId);
+            } catch (error) {
+                errors.push(error);
+            }
+
             if (this.canUseEulerFallbacks) {
                 try {
                     return await this.performEulerRoomLookup({
@@ -420,6 +506,17 @@ class TikTokConnectionWrapper extends EventEmitter {
                 errors.push(error);
             }
 
+            try {
+                const snapshot = await getLivePageSnapshot(this.uniqueId);
+                if (snapshot?.status === null || snapshot?.status === undefined) {
+                    throw new Error('Failed to extract status from live page snapshot.');
+                }
+                this.lastConnectPath = 'tiktok_html_snapshot';
+                return isOnline(snapshot.status);
+            } catch (error) {
+                errors.push(error);
+            }
+
             if (this.canUseEulerFallbacks) {
                 try {
                     return await this.performEulerRoomLookup({
@@ -435,6 +532,63 @@ class TikTokConnectionWrapper extends EventEmitter {
 
             throw this.createCompositeFetchError('Failed to retrieve live status from all sources.', errors);
         };
+
+        const originalFetchRoomInfo = typeof this.connection.fetchRoomInfo === 'function'
+            ? this.connection.fetchRoomInfo.bind(this.connection)
+            : null;
+
+        if (originalFetchRoomInfo) {
+            this.connection.fetchRoomInfo = async () => {
+                let primaryError = null;
+
+                try {
+                    const roomInfo = await originalFetchRoomInfo();
+                    const status = extractRoomStatus(roomInfo);
+                    if (isStrictLiveStatus(status)) {
+                        return roomInfo;
+                    }
+                    primaryError = new Error(`Primary room info returned non-live status: ${status}`);
+                } catch (error) {
+                    primaryError = error;
+                }
+
+                try {
+                    const htmlRoomInfo = await webClient.fetchRoomInfoFromHtml({ uniqueId: this.uniqueId });
+                    const fallbackStatus = extractRoomStatus(htmlRoomInfo);
+                    const fallbackRoomId = String(htmlRoomInfo?.user?.roomId || htmlRoomInfo?.liveRoom?.roomId || '').trim();
+                    if (!fallbackRoomId) {
+                        throw new Error('Failed to extract Room ID from HTML room info fallback.');
+                    }
+                    if (!isStrictLiveStatus(fallbackStatus)) {
+                        throw new Error(`HTML room info fallback returned non-live status: ${fallbackStatus}`);
+                    }
+
+                    this.lastConnectPath = 'tiktok_html';
+                    return buildCompatibleRoomInfoFromHtml(htmlRoomInfo);
+                } catch (fallbackError) {
+                    try {
+                        const snapshot = await getLivePageSnapshot(this.uniqueId);
+                        if (!snapshot?.roomId) {
+                            throw new Error('Failed to extract Room ID from live page snapshot roomInfo fallback.');
+                        }
+                        if (!isStrictLiveStatus(snapshot.status)) {
+                            throw new Error(`Live page snapshot roomInfo fallback returned non-live status: ${snapshot?.status}`);
+                        }
+
+                        this.lastConnectPath = 'tiktok_html_snapshot';
+                        return buildCompatibleRoomInfoFromHtml({
+                            user: snapshot.user,
+                            liveRoom: snapshot.liveRoom,
+                        });
+                    } catch (snapshotError) {
+                        if (primaryError) {
+                            throw primaryError;
+                        }
+                        throw snapshotError || fallbackError;
+                    }
+                }
+            };
+        }
     }
 
 
@@ -475,12 +629,38 @@ class TikTokConnectionWrapper extends EventEmitter {
     }
 
     connect(isReconnect, cachedRoomId = null) {
+        const shouldSkipRoomInfoPrefetch = Boolean(cachedRoomId);
+        const originalFetchRoomInfoOnConnect = this.connection?.options?.fetchRoomInfoOnConnect;
+        const originalFetchRoomInfo = typeof this.connection?.fetchRoomInfo === 'function'
+            ? this.connection.fetchRoomInfo.bind(this.connection)
+            : null;
+
+        if (shouldSkipRoomInfoPrefetch && this.connection?.options) {
+            // A cached numeric roomId is already enough to enter the webcast.
+            // Skip the pre-connect roomInfo fetch here because TikTok's room info endpoints
+            // are currently much less reliable than the websocket itself.
+            this.connection.options.fetchRoomInfoOnConnect = false;
+
+            if (originalFetchRoomInfo) {
+                this.connection.fetchRoomInfo = async () => buildCachedRoomInfoStub(this.uniqueId, cachedRoomId);
+            }
+        }
+
         // Pass cached room ID to skip fetching from TikTok page
         return this.connection.connect(cachedRoomId || undefined).then(async (state) => {
+            if (cachedRoomId) {
+                this.lastConnectPath = 'cached_room_id';
+            }
+            this.lastKnownRoomId = String(state?.roomId || cachedRoomId || this.lastKnownRoomId || '').trim() || null;
             this.log(`${isReconnect ? 'Reconnected' : 'Connected'} to roomId ${state.roomId}`);
 
             let roomStatus = extractRoomStatus(state.roomInfo);
-            if (roomStatus === null) {
+            if (shouldSkipRoomInfoPrefetch) {
+                if (!isStrictLiveStatus(roomStatus)) {
+                    state.roomInfo = buildCachedRoomInfoStub(this.uniqueId, this.lastKnownRoomId || cachedRoomId);
+                    roomStatus = 2;
+                }
+            } else if (roomStatus === null) {
                 try {
                     const liveCheck = await this.connection.fetchIsLive();
                     roomStatus = liveCheck ? 2 : 0;
@@ -529,6 +709,13 @@ class TikTokConnectionWrapper extends EventEmitter {
                 this.emit('disconnected', err.toString());
             }
             throw err; // Re-throw for await callers
+        }).finally(() => {
+            if (shouldSkipRoomInfoPrefetch && originalFetchRoomInfo) {
+                this.connection.fetchRoomInfo = originalFetchRoomInfo;
+            }
+            if (shouldSkipRoomInfoPrefetch && this.connection?.options) {
+                this.connection.options.fetchRoomInfoOnConnect = originalFetchRoomInfoOnConnect;
+            }
         });
     }
 
@@ -560,7 +747,7 @@ class TikTokConnectionWrapper extends EventEmitter {
             this.reconnectWaitMs *= 2;
 
             // CRITICAL: Must catch reconnect errors to prevent UnhandledPromiseRejection crash
-            this.connect(true).catch(err => {
+            this.connect(true, this.lastKnownRoomId).catch(err => {
                 this.log(`Reconnect failed, ${err?.message || err}`);
                 // Schedule another reconnect attempt if we haven't exceeded max
                 this.scheduleReconnect(err?.message || 'Reconnect failed');

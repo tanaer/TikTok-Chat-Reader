@@ -412,6 +412,9 @@ class Manager {
 
         // Check if room exists to preserve existing values when null is passed
         const existing = await get('SELECT name, address, is_monitor_enabled, language, priority, is_recording_enabled, recording_account_id FROM room WHERE room_id = ?', [roomId]);
+        const existingMonitorEnabled = Number(existing?.isMonitorEnabled ?? existing?.is_monitor_enabled ?? 1);
+        const existingRecordingEnabled = Number(existing?.isRecordingEnabled ?? existing?.is_recording_enabled ?? 0);
+        const existingRecordingAccountId = existing?.recordingAccountId ?? existing?.recording_account_id ?? null;
 
         // Preserve name if null/undefined passed
         let finalName = name;
@@ -445,7 +448,7 @@ class Manager {
 
         if (isMonitorEnabled === undefined || isMonitorEnabled === null) {
             if (existing) {
-                monitorVal = existing.is_monitor_enabled;
+                monitorVal = Number.isFinite(existingMonitorEnabled) ? existingMonitorEnabled : 1;
             } else {
                 monitorVal = 1; // Default to enabled for new rooms only
             }
@@ -458,7 +461,7 @@ class Manager {
         // Handle recording enabled
         let recordingVal;
         if (isRecordingEnabled === undefined || isRecordingEnabled === null) {
-            recordingVal = existing ? existing.is_recording_enabled : 0; // Default disabled
+            recordingVal = existing ? (Number.isFinite(existingRecordingEnabled) ? existingRecordingEnabled : 0) : 0; // Default disabled
         } else if (isRecordingEnabled === false || isRecordingEnabled === 'false' || isRecordingEnabled === 0 || isRecordingEnabled === '0') {
             recordingVal = 0;
         } else {
@@ -468,7 +471,7 @@ class Manager {
         // Handle recording account
         let recAccountVal = recordingAccountId;
         if (recAccountVal === undefined) {
-            recAccountVal = existing ? existing.recording_account_id : null;
+            recAccountVal = existing ? existingRecordingAccountId : null;
         }
 
 
@@ -511,7 +514,7 @@ class Manager {
         const offset = (page - 1) * limit;
 
         let whereClauses = [];
-        let sql = 'SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled, is_recording_enabled, recording_account_id FROM room';
+        let sql = 'SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled, priority, is_recording_enabled, recording_account_id FROM room';
         let countSql = 'SELECT COUNT(*) as total FROM room';
         const params = [];
         const countParams = [];
@@ -580,7 +583,7 @@ class Manager {
 
     async getRoom(roomId) {
         await this.ensureDb();
-        return await get('SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled, is_recording_enabled, recording_account_id FROM room WHERE room_id = ?', [roomId]);
+        return await get('SELECT room_id, numeric_room_id, name, address, updated_at, is_monitor_enabled, priority, is_recording_enabled, recording_account_id FROM room WHERE room_id = ?', [roomId]);
     }
 
 
@@ -1104,11 +1107,6 @@ class Manager {
         return { mergedCount: totalMerged, lookbackHours: safeHours, gapMinutes: safeGapMinutes };
     }
 
-    async _mergeSessionList(sessions, gapMs) {
-        const detail = await this._mergeSessionListDetailed(sessions, gapMs);
-        return detail.mergedCount;
-    }
-
     async consolidateRoomSessions(roomId, options = {}) {
         await this.ensureDb();
         const normalizedRoomId = String(roomId || '').trim();
@@ -1144,6 +1142,11 @@ class Manager {
             gapMinutes: safeGapMinutes,
             touchedSessionIds: detail.touchedSessionIds,
         };
+    }
+
+    async _mergeSessionList(sessions, gapMs) {
+        const detail = await this._mergeSessionListDetailed(sessions, gapMs);
+        return detail.mergedCount;
     }
 
     async _mergeSessionListDetailed(sessions, gapMs) {
@@ -3936,7 +3939,7 @@ class Manager {
                        rs.valid_daily_avg, rs.valid_days,
                        rs.top1_ratio, rs.top3_ratio, rs.top10_ratio, rs.top30_ratio,
                        rs.gift_efficiency, rs.interact_efficiency, rs.account_quality,
-                       rs.monthly_gift_value, rs.last_session_time
+                       rs.monthly_gift_value, rs.monthly_valid_daily_avg, rs.monthly_valid_days, rs.last_session_time
                 FROM room r
                 LEFT JOIN room_stats rs ON r.room_id = rs.room_id
                 ${whereClause}
@@ -3971,6 +3974,9 @@ class Manager {
         // Get room IDs for batch queries
         const roomIds = normalizeRoomIdList(rooms.map(r => r.roomId));
         const placeholders = roomIds.map(() => '?').join(',');
+        const monthStart = new Date();
+        monthStart.setDate(1);
+        monthStart.setHours(0, 0, 0, 0);
 
         // Fetch current session stats only for live rooms on the current page
         // PERF: room list主要展示当前直播表现，离线房间直接返回 0，可避免对大 event 表做无意义聚合
@@ -3996,6 +4002,32 @@ class Manager {
             `, currentStatRoomIds);
             currentStatsMap = Object.fromEntries(currentStats.map(r => [r.roomId, r]));
         }
+
+        // Compute current-month valid daily stats for the current page so monthly estimate is correct
+        // even before the background room_stats cache is fully refreshed.
+        const monthlyDailyStats = await query(`
+            WITH daily_stats AS (
+                SELECT
+                    room_id,
+                    DATE(timestamp) as day,
+                    SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as gift_value,
+                    EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 as hours
+                FROM event
+                WHERE room_id IN (${placeholders})
+                  AND timestamp >= ?
+                GROUP BY room_id, DATE(timestamp)
+                HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 4
+            )
+            SELECT room_id,
+                   AVG(gift_value) as avg_gift,
+                   COUNT(*) as valid_days
+            FROM daily_stats
+            GROUP BY room_id
+        `, [...roomIds, monthStart.toISOString()]);
+        const monthlyDailyMap = Object.fromEntries(monthlyDailyStats.map(r => [r.roomId, {
+            avgGift: Math.round(parseFloat(r.avgGift)) || 0,
+            validDays: parseInt(r.validDays) || 0
+        }]));
 
         // If we didn't use room_stats JOIN, fetch cached stats now
         let cachedStatsMap = {};
@@ -4033,6 +4065,9 @@ class Manager {
             const validDays = parseInt(cached.validDays) || 0;
             // Use cached monthly gift and last session time (no more slow queries!)
             const monthlyGift = parseInt(cached.monthlyGiftValue) || 0;
+            const monthlyDaily = monthlyDailyMap[r.roomId] || null;
+            const monthlyValidDailyAvg = monthlyDaily ? monthlyDaily.avgGift : (parseInt(cached.monthlyValidDailyAvg) || 0);
+            const monthlyValidDays = monthlyDaily ? monthlyDaily.validDays : (parseInt(cached.monthlyValidDays) || 0);
             const lastSession = cached.lastSessionTime || null;
 
             return {
@@ -4065,7 +4100,9 @@ class Manager {
                 top10Ratio: top10Ratio,
                 top30Ratio: top30Ratio,
                 validDailyAvg: validDailyAvg,
-                validDays: validDays
+                validDays: validDays,
+                monthlyValidDailyAvg: monthlyValidDailyAvg,
+                monthlyValidDays: monthlyValidDays
             };
         });
 
@@ -5266,7 +5303,7 @@ class Manager {
             `, roomIds);
             const basicMap = Object.fromEntries(basicStats.map(r => [r.roomId, r]));
 
-            // 2. Valid daily average (days with >= 2 hours of activity)
+            // 2. Valid daily average (days with >= 4 hours of activity)
             const dailyStats = await query(`
                 WITH daily_stats AS (
                     SELECT
@@ -5277,7 +5314,7 @@ class Manager {
                     FROM event
                     WHERE room_id IN (${placeholders})
                     GROUP BY room_id, DATE(timestamp)
-                    HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 2
+                    HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 4
                 )
                 SELECT room_id,
                        AVG(gift_value) as avg_gift,
@@ -5290,7 +5327,36 @@ class Manager {
                 validDays: parseInt(r.validDays) || 0
             }]));
 
-            // 3. TOP concentration stats
+            const monthStart = new Date();
+            monthStart.setDate(1);
+            monthStart.setHours(0, 0, 0, 0);
+
+            // 3. Current-month valid daily average (days with >= 4 hours of activity this month)
+            const monthlyDailyStats = await query(`
+                WITH daily_stats AS (
+                    SELECT
+                        room_id,
+                        DATE(timestamp) as day,
+                        SUM(CASE WHEN type = 'gift' THEN COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1) ELSE 0 END) as gift_value,
+                        EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 as hours
+                    FROM event
+                    WHERE room_id IN (${placeholders})
+                      AND timestamp >= ?
+                    GROUP BY room_id, DATE(timestamp)
+                    HAVING EXTRACT(EPOCH FROM (MAX(timestamp) - MIN(timestamp))) / 3600 >= 4
+                )
+                SELECT room_id,
+                       AVG(gift_value) as avg_gift,
+                       COUNT(*) as valid_days
+                FROM daily_stats
+                GROUP BY room_id
+            `, [...roomIds, monthStart.toISOString()]);
+            const monthlyDailyMap = Object.fromEntries(monthlyDailyStats.map(r => [r.roomId, {
+                avgGift: Math.round(parseFloat(r.avgGift)) || 0,
+                validDays: parseInt(r.validDays) || 0
+            }]));
+
+            // 4. TOP concentration stats
             const concentrationStats = await query(`
                 WITH user_gifts AS (
                     SELECT room_id, user_id,
@@ -5322,10 +5388,7 @@ class Manager {
                 total: parseInt(r.totalValue) || 0
             }]));
 
-            // 4. Monthly gift values (current month)
-            const monthStart = new Date();
-            monthStart.setDate(1);
-            monthStart.setHours(0, 0, 0, 0);
+            // 5. Monthly gift values (current month)
             const monthlyStats = await query(`
                 SELECT room_id,
                        COALESCE(SUM(COALESCE(diamond_count, 0) * COALESCE(repeat_count, 1)), 0) as monthly_gift
@@ -5337,7 +5400,7 @@ class Manager {
             `, [...roomIds, monthStart.toISOString()]);
             const monthlyMap = Object.fromEntries(monthlyStats.map(r => [r.roomId, parseInt(r.monthlyGift) || 0]));
 
-            // 5. Last session times
+            // 6. Last session times
             const lastSessionStats = await query(`
                 SELECT s1.room_id, s1.created_at as last_session
                 FROM session s1
@@ -5350,11 +5413,12 @@ class Manager {
             `, roomIds);
             const sessionMap = Object.fromEntries(lastSessionStats.map(r => [r.roomId, r.lastSession]));
 
-            // 6. Upsert room_stats for each room
+            // 7. Upsert room_stats for each room
             let refreshed = 0;
             for (const roomId of roomIds) {
                 const basic = basicMap[roomId] || {};
                 const daily = dailyMap[roomId] || {};
+                const monthlyDaily = monthlyDailyMap[roomId] || {};
                 const conc = concentrationMap[roomId] || {};
 
                 const allGift = parseInt(basic.allGift) || 0;
@@ -5379,8 +5443,8 @@ class Manager {
                         room_id, all_time_gift_value, all_time_visit_count, all_time_chat_count,
                         valid_daily_avg, valid_days, top1_ratio, top3_ratio, top10_ratio, top30_ratio,
                         gift_efficiency, interact_efficiency, account_quality,
-                        monthly_gift_value, last_session_time, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
+                        monthly_gift_value, monthly_valid_daily_avg, monthly_valid_days, last_session_time, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())
                     ON CONFLICT (room_id) DO UPDATE SET
                         all_time_gift_value = EXCLUDED.all_time_gift_value,
                         all_time_visit_count = EXCLUDED.all_time_visit_count,
@@ -5395,6 +5459,8 @@ class Manager {
                         interact_efficiency = EXCLUDED.interact_efficiency,
                         account_quality = EXCLUDED.account_quality,
                         monthly_gift_value = EXCLUDED.monthly_gift_value,
+                        monthly_valid_daily_avg = EXCLUDED.monthly_valid_daily_avg,
+                        monthly_valid_days = EXCLUDED.monthly_valid_days,
                         last_session_time = EXCLUDED.last_session_time,
                         updated_at = NOW()
                 `, [
@@ -5402,7 +5468,7 @@ class Manager {
                     daily.avgGift || 0, daily.validDays || 0,
                     top1Ratio, top3Ratio, top10Ratio, top30Ratio,
                     giftEfficiency, interactEfficiency, accountQuality,
-                    monthlyGift, lastSession
+                    monthlyGift, monthlyDaily.avgGift || 0, monthlyDaily.validDays || 0, lastSession
                 ]);
                 refreshed++;
             }

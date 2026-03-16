@@ -15,6 +15,198 @@ function getRandomUA() {
     return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)];
 }
 
+function normalizeUniqueId(uniqueId) {
+    let normalized = String(uniqueId || '').trim();
+    if (normalized.startsWith('@')) {
+        normalized = normalized.substring(1);
+    }
+    return normalized;
+}
+
+async function fetchLivePageHtml(uniqueId, proxyUrl = null, cookie = null) {
+    const normalizedUniqueId = normalizeUniqueId(uniqueId);
+    const url = `https://www.tiktok.com/@${normalizedUniqueId}/live`;
+    const ua = getRandomUA();
+
+    const executeCurl = (headerMode = 'full') => new Promise((resolve, reject) => {
+        const curlArgs = [
+            '-4',
+            '-s',
+            '-S',
+            '-L',
+            '--connect-timeout', '15',
+            '--max-time', '30',
+            '--http2',
+            '-H', `User-Agent: ${ua}`,
+            '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
+            '-H', 'Accept-Language: en-US,en;q=0.9',
+            '-H', 'Accept-Encoding: gzip, deflate, br',
+            '--compressed',
+            '-H', 'Referer: https://www.tiktok.com/',
+        ];
+
+        if (headerMode === 'full') {
+            curlArgs.push(
+                '--tlsv1.2',
+                '--tls13-ciphers', 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256',
+                '--ciphers', 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305',
+                '-H', 'Cache-Control: no-cache',
+                '-H', 'Pragma: no-cache',
+                '-H', 'DNT: 1',
+                '-H', 'sec-ch-ua: "Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
+                '-H', 'sec-ch-ua-mobile: ?0',
+                '-H', 'sec-ch-ua-platform: "Windows"',
+                '-H', 'sec-fetch-dest: document',
+                '-H', 'sec-fetch-mode: navigate',
+                '-H', 'sec-fetch-site: same-origin',
+                '-H', 'sec-fetch-user: ?1',
+                '-H', 'upgrade-insecure-requests: 1',
+                '-H', 'Connection: keep-alive',
+            );
+        }
+
+        if (cookie) {
+            curlArgs.push('--cookie', cookie);
+        }
+
+        if (proxyUrl) {
+            const curlProxy = proxyUrl.replace('socks5://', 'socks5h://');
+            curlArgs.push('-x', curlProxy);
+        }
+
+        curlArgs.push(url);
+
+        const curl = spawn('curl', curlArgs);
+        const stdoutChunks = [];
+        const stderrChunks = [];
+
+        curl.stdout.on('data', chunk => stdoutChunks.push(chunk));
+        curl.stderr.on('data', chunk => stderrChunks.push(chunk));
+
+        curl.on('close', (code) => {
+            if (code !== 0) {
+                const errorMsg = Buffer.concat(stderrChunks).toString('utf8');
+                reject(new Error(`Curl exited with code ${code}: ${errorMsg}`));
+            } else {
+                resolve(Buffer.concat(stdoutChunks).toString('utf8'));
+            }
+        });
+
+        curl.on('error', reject);
+    });
+
+    console.log(`[Spider] Fetching ${url} with proxy ${proxyUrl ? 'YES' : 'NO'} via Curl`);
+    const primaryHtml = await executeCurl('full');
+    const primarySnapshot = extractLivePageSnapshotFromHtml(primaryHtml);
+    if (primarySnapshot?.roomId || primarySnapshot?.isLive) {
+        return primaryHtml;
+    }
+
+    console.log('[Spider] Full-header page lacked usable live snapshot, retrying with simplified headers...');
+    return await executeCurl('simple');
+}
+
+function extractLivePageSnapshotFromHtml(html = '') {
+    if (!html || typeof html !== 'string') return null;
+
+    const sigiStateMatch = html.match(/<script id="SIGI_STATE" type="application\/json">(.*?)<\/script>/);
+    if (sigiStateMatch) {
+        try {
+            const sigiData = JSON.parse(sigiStateMatch[1]);
+            const liveRoomUserInfo = sigiData?.LiveRoom?.liveRoomUserInfo;
+            const user = liveRoomUserInfo?.user || null;
+            const liveRoom = liveRoomUserInfo?.liveRoom || null;
+            const roomId = String(user?.roomId || liveRoom?.roomId || '').trim();
+            const rawStatus = liveRoom?.status ?? user?.status;
+            const status = Number.isFinite(Number(rawStatus)) ? Number(rawStatus) : null;
+            if (roomId || status !== null) {
+                return {
+                    source: 'SIGI_STATE',
+                    roomId: roomId || null,
+                    status,
+                    isLive: Number(status) === 2,
+                    user,
+                    liveRoom,
+                    raw: liveRoomUserInfo,
+                };
+            }
+        } catch (e) {
+            console.warn('[Spider] Failed to parse SIGI_STATE snapshot', e.message);
+        }
+    }
+
+    const universalDataMatch = html.match(/<script id="__UNIVERSAL_DATA_FOR_REHYDRATION__" type="application\/json">(.*?)<\/script>/);
+    if (universalDataMatch) {
+        try {
+            const universalData = JSON.parse(universalDataMatch[1]);
+            const defaultScope = universalData?.['__DEFAULT_SCOPE__'] || {};
+            const scopeValues = Object.values(defaultScope);
+            for (const scopeValue of scopeValues) {
+                const user = scopeValue?.user || scopeValue?.owner || scopeValue?.liveRoomUserInfo?.user || null;
+                const liveRoom = scopeValue?.liveRoom || scopeValue?.roomInfo?.liveRoom || scopeValue?.liveRoomUserInfo?.liveRoom || null;
+                const roomId = String(user?.roomId || liveRoom?.roomId || '').trim();
+                const rawStatus = liveRoom?.status ?? user?.status ?? scopeValue?.status;
+                const status = Number.isFinite(Number(rawStatus)) ? Number(rawStatus) : null;
+                if (roomId || status !== null) {
+                    return {
+                        source: 'UNIVERSAL_DATA',
+                        roomId: roomId || null,
+                        status,
+                        isLive: Number(status) === 2,
+                        user,
+                        liveRoom,
+                        raw: scopeValue,
+                    };
+                }
+            }
+        } catch (e) {
+            console.warn('[Spider] Failed to parse UNIVERSAL_DATA snapshot', e.message);
+        }
+    }
+
+    const titleMatch = html.match(/<title>(.*?)<\/title>/i);
+    const pageTitle = titleMatch?.[1] || '';
+    const roomIdMatch = html.match(/"roomId"\s*:\s*"?(\\u003\d+|\d{10,})"?/i) || html.match(/"roomId"\s*:\s*"?(\\d{10,}|\d{10,})"?/i) || html.match(/"roomId"\s*:\s*"?(\\u0037\d+|7\d{9,})"?/i) || html.match(/"roomId"\s*:\s*"?(7\d{9,})"?/i);
+    const roomId = roomIdMatch?.[1] ? String(roomIdMatch[1]).trim() : null;
+    const normalizedRoomId = roomId ? roomId.replace(/^"+|"+$/g, '') : null;
+
+    if (pageTitle.includes('is LIVE - TikTok LIVE') && normalizedRoomId) {
+        return {
+            source: 'TITLE_REGEX',
+            roomId: normalizedRoomId,
+            status: 2,
+            isLive: true,
+            user: {
+                roomId: normalizedRoomId,
+            },
+            liveRoom: {
+                roomId: normalizedRoomId,
+                status: 2,
+                title: '',
+            },
+            raw: {
+                pageTitle,
+            },
+        };
+    }
+
+    return null;
+}
+
+async function getLivePageSnapshot(uniqueId, proxyUrl = null, cookie = null) {
+    const normalizedUniqueId = normalizeUniqueId(uniqueId);
+    const html = await fetchLivePageHtml(normalizedUniqueId, proxyUrl, cookie);
+    const snapshot = extractLivePageSnapshotFromHtml(html);
+    if (!snapshot) {
+        throw new Error('Could not extract live page snapshot from HTML');
+    }
+    return {
+        uniqueId: normalizedUniqueId,
+        html,
+        ...snapshot,
+    };
+}
+
 /**
  * Get TikTok Stream URL
  * @param {string} uniqueId - The uniqueId of the user (e.g. 'username')
@@ -45,85 +237,8 @@ async function getStreamUrl(uniqueId, proxyUrl = null, cookie = null) {
 
 async function _fetchStreamUrl(uniqueId, proxyUrl = null, cookie = null) {
     try {
-        // Handle @ prefix
-        if (uniqueId.startsWith('@')) {
-            uniqueId = uniqueId.substring(1);
-        }
-
-        const url = `https://www.tiktok.com/@${uniqueId}/live`;
-        const ua = getRandomUA();
-
-        console.log(`[Spider] Fetching ${url} with proxy ${proxyUrl ? 'YES' : 'NO'} via Curl`);
-
-        // Use Curl to fetch HTML with FULL browser-like headers
-        const html = await new Promise((resolve, reject) => {
-            const curlArgs = [
-                '-4',                   // Force IPv4
-                '-s',                   // Silent mode
-                '-S',                   // Show errors
-                '-L',                   // Follow redirects
-                '--connect-timeout', '15',
-                '--max-time', '30',
-                // --- TLS Configuration (mimic Chrome's TLS fingerprint) ---
-                '--tlsv1.2',            // Minimum TLS 1.2
-                '--tls13-ciphers', 'TLS_AES_128_GCM_SHA256:TLS_AES_256_GCM_SHA384:TLS_CHACHA20_POLY1305_SHA256',
-                '--ciphers', 'ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305',
-                '--http2',              // Use HTTP/2 like Chrome
-                // --- Full Chrome Browser Headers ---
-                '-H', `User-Agent: ${ua}`,
-                '-H', 'Accept: text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8,application/signed-exchange;v=b3;q=0.7',
-                '-H', 'Accept-Language: en-US,en;q=0.9',
-                '-H', 'Accept-Encoding: gzip, deflate, br',
-                '--compressed',         // Handle compressed responses
-                '-H', 'Cache-Control: no-cache',
-                '-H', 'Pragma: no-cache',
-                '-H', 'DNT: 1',
-                '-H', 'Referer: https://www.tiktok.com/',
-                '-H', 'sec-ch-ua: "Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
-                '-H', 'sec-ch-ua-mobile: ?0',
-                '-H', 'sec-ch-ua-platform: "Windows"',
-                '-H', 'sec-fetch-dest: document',
-                '-H', 'sec-fetch-mode: navigate',
-                '-H', 'sec-fetch-site: same-origin',
-                '-H', 'sec-fetch-user: ?1',
-                '-H', 'upgrade-insecure-requests: 1',
-                '-H', 'Connection: keep-alive',
-            ];
-
-            // Add cookie if provided (critical for anti-bot bypass)
-            if (cookie) {
-                curlArgs.push('--cookie', cookie);
-            }
-
-            if (proxyUrl) {
-                // Force remote DNS resolution via socks5h
-                const curlProxy = proxyUrl.replace('socks5://', 'socks5h://');
-                curlArgs.push('-x', curlProxy);
-            }
-
-            curlArgs.push(url);
-
-            const curl = spawn('curl', curlArgs);
-            let stdoutChunks = [];
-            let stderrChunks = [];
-
-            curl.stdout.on('data', chunk => stdoutChunks.push(chunk));
-            curl.stderr.on('data', chunk => stderrChunks.push(chunk));
-
-            curl.on('close', (code) => {
-                if (code !== 0) {
-                    const errorMsg = Buffer.concat(stderrChunks).toString('utf8');
-                    reject(new Error(`Curl exited with code ${code}: ${errorMsg}`));
-                } else {
-                    const body = Buffer.concat(stdoutChunks).toString('utf8');
-                    resolve(body);
-                }
-            });
-
-            curl.on('error', (err) => {
-                reject(err);
-            });
-        });
+        uniqueId = normalizeUniqueId(uniqueId);
+        const html = await fetchLivePageHtml(uniqueId, proxyUrl, cookie);
 
 
         console.log(`[Spider] Page fetched, HTML length: ${html.length}`);
@@ -381,4 +496,9 @@ function extractUrlFromStreamData(streamDataJson) {
     return null;
 }
 
-module.exports = { getStreamUrl };
+module.exports = {
+    getStreamUrl,
+    getLivePageSnapshot,
+    fetchLivePageHtml,
+    extractLivePageSnapshotFromHtml,
+};

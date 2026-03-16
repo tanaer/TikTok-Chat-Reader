@@ -1414,6 +1414,23 @@ router.get('/session-maintenance/overview', async (req, res) => {
     }
 });
 
+router.get('/session-maintenance/auto-monitor-diagnostics', async (req, res) => {
+    try {
+        const diagnostics = await req.app.locals.autoRecorder?.getMonitoringRuntimeSnapshot?.({
+            sampleSize: req.query.sampleSize,
+        });
+
+        if (!diagnostics) {
+            return res.status(503).json({ error: '自动监控运行态尚未就绪' });
+        }
+
+        res.json({ diagnostics });
+    } catch (err) {
+        console.error('[Admin] Load auto monitor diagnostics error:', err.message);
+        res.status(500).json({ error: '获取自动监控诊断失败' });
+    }
+});
+
 router.get('/session-maintenance/logs', async (req, res) => {
     try {
         const logs = await listSessionMaintenanceLogs({
